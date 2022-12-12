@@ -35,7 +35,6 @@
         let cfg = config.services.hydra-crystal-notify;
         inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
         in {
-            nixpkgs.overlays = [ overlays ];
             options = {
                 services.hydra-crystal-notify = {
                 enable = mkEnableOption "hydra crystal notify";
