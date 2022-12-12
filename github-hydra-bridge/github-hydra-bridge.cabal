@@ -1,0 +1,45 @@
+cabal-version:       2.2
+name:                github-hydra-bridge
+version:             0.1.0
+synopsis:            A Haskell project for building a GitHub webhook-based CI system
+description:         This project uses servant and aeson-schemas to handle incoming webhook requests from GitHub and run desired CI tasks.
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              Moritz Angermann
+maintainer:          moritz.angermann@gmail.com
+copyright:           (c) 2022 Moritz Angermann
+category:            CI
+build-type:          Simple
+extra-source-files:  CHANGELOG.md
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Lib
+                     , Hydra
+  build-depends:       base >=4.7 && <5
+                     , aeson < 2.0
+                     , aeson-schemas
+                     , aeson-casing
+                     , servant
+                     , servant-server
+                     , servant-client
+                     , servant-github-webhook
+                     , github-webhooks
+                     , bytestring
+                     , text
+                     , http-client
+                     , http-client-tls
+                     , stm
+  default-language:    Haskell2010
+
+executable github-hydra-bridge
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  build-depends:       base
+                     , github-hydra-bridge
+                     , wai
+                     , warp
+                     , bytestring
+                     , stm
+                     , text
+  default-language:    Haskell2010
