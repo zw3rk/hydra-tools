@@ -25,9 +25,9 @@
         flake = pkgs.github-hydra-bridge.flake { };
     in flake // rec {
       # Built by `nix build .`
-      packages.default = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
+      packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
       packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
-      hydraJobs.github-hydra-bridge = packages.default;
+      hydraJobs.github-hydra-bridge = packages.github-hydra-bridge;
       hydraJobs.hydra-crystal-notify = packages.hydra-crystal-notify;
     }) // {
         nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
