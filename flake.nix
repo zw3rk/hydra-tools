@@ -30,7 +30,7 @@
       hydraJobs.github-hydra-bridge = packages.default;
       hydraJobs.hydra-crystal-notify = packages.hydra-crystal-notify;
     }) // {
-        nixosModule.default = { config, lib, pkgs, ... }:
+        nixosModules.default = { config, lib, pkgs, ... }:
         with lib;
         let cfg = config.services.hydra-crystal-notify;
         inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
