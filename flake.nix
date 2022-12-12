@@ -30,7 +30,78 @@
       hydraJobs.github-hydra-bridge = packages.default;
       hydraJobs.hydra-crystal-notify = packages.hydra-crystal-notify;
     }) // {
-        nixosModules.default = { config, lib, pkgs, ... }:
+        nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
+        with lib;
+        let cfg = config.services.github-hydra-bridge;
+        inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
+        in {
+            options = {
+                services.github-hydra-bridge = {
+                    enable = mkEnableOption "github hydra bridge";
+                    package = mkOption {
+                        type = types.package;
+                        default = self.packages.${pkgs.system}.github-hydra-bridge;
+                        defaultText = "github-hydra-bridge";
+                        description = "The github to hydra webhook bridge";
+                    };
+                    hydraUser = mkOption {
+                        type = types.str;
+                        default = "";
+                        description = ''
+                        The user to authenticate as with hydra.
+                        '';
+                    };
+                    hydraPass = mkOption {
+                        type = types.str;
+                        default = "";
+                        description = ''
+                        The password to authenticate as with hydra.
+                        '';
+                    };
+                    ghSecret = mkOption {
+                        type = types.str;
+                        default = "";
+                        description = ''
+                        The agreed upon secret with GitHub for the Webhook
+                        payloards.
+                        '';
+                    };
+                    port = mkOption {
+                        type = types.int;
+                        default = 8811;
+                        description = ''
+                        the port to listen on for webhooks.
+                        '';
+                    }
+                };
+            };
+            config = mkIf cfg.enable {
+                systemd.services.github-hydra-bridge = {
+                    wantedBy = [ "multi-user.target" ];
+                    after = [ "postgresql.service" ];
+                    startLimitIntervalSec = 0;
+
+                    script = ''
+                        ${cfg.package}/bin/github-hydra-bridge
+                    '';
+
+                    serviceConfig = {
+                        User = "hydra";
+                        Group = "hydra";
+                        Restart = "always";
+                        RestartSec = "10s";
+                    };
+
+                    environment = {
+                        KEY = cfg.ghSecret;
+                        HYDRA_USER = cfg.hydraUser;
+                        HYDRA_PASS = cfg.hydraPass;
+                        PORT = "${toString cfg.port}";
+                    };
+                }
+            };            
+        };
+        nixosModules.hydra-crystal-notify = { config, lib, pkgs, ... }:
         with lib;
         let cfg = config.services.hydra-crystal-notify;
         inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
