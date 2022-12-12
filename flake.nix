@@ -72,7 +72,7 @@
                         description = ''
                         the port to listen on for webhooks.
                         '';
-                    }
+                    };
                 };
             };
             config = mkIf cfg.enable {
