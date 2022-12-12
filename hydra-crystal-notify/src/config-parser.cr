@@ -26,7 +26,7 @@ def parseConfig(cfgFile)
   tagVal = /\<(?<stag>[^\>]+)\>\n(?<body>[^\<]+)\n\<\/(?<etag>[^\>]+)\>?/
 
   # Auth regex format
-  authVal = /\s*[\w-]+\s*=\s*[\w-]+\s[0-9a-f]+\s*$/
+  authVal = /\s*[\w-]+\s*=\s*[\w-]+\s[0-9a-fA-Z_]+\s*$/
 
   # Optional notify job conf keys and regex format
   notifyOptVal = {"context" => /^[\w-:]+$/}
