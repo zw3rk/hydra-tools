@@ -123,12 +123,14 @@ class HydraNotifier
         end
       end
     elsif flags[:evalFailed]
-      if p.size != 1
-        Log.error { "#{n.channel}: #{n.payload}, Size: #{p.size} -- EVAL_FAILED DOES NOT HAVE 1 FIELD" }
+      if p.size != 2
+        Log.error { "#{n.channel}: #{n.payload}, Size: #{p.size} -- EVAL_FAILED DOES NOT HAVE 2 FIELD" }
         return nil
       else
         id = p[0]
-        if id !~ /^\d+\.\d+\.\d+$/
+        evalId = p[1]
+        Log.debug { "EVAL_FAILED: id: #{id}, evalId: #{evalId}" }
+        if (id !~ /^\d+\.\d+\.\d+$/ || evalId !~ /^\d+$/)
           Log.error { "#{n.channel}: #{n.payload}, Size: #{p.size} -- EVAL_FAILED FIELD VALIDATION ERROR" }
           return nil
         end
