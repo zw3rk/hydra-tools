@@ -28,7 +28,7 @@
       packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
       packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
       hydraJobs.github-hydra-bridge = packages.github-hydra-bridge;
-      hydraJobs.hydra-crystal-notify = packages.hydra-crystal-notify;
+      hydraJobs.hydra-crystal-notify = if system == "x86_64-linux" then packages.hydra-crystal-notify else null;
     }) // {
         nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
         with lib;
