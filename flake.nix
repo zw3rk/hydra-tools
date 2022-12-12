@@ -98,7 +98,7 @@
                         HYDRA_PASS = cfg.hydraPass;
                         PORT = "${toString cfg.port}";
                     };
-                }
+                };
             };            
         };
         nixosModules.hydra-crystal-notify = { config, lib, pkgs, ... }:
