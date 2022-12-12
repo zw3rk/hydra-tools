@@ -110,8 +110,8 @@ class HydraNotifier
         end
       end
     elsif flags[:evalAdded]
-      if p.size != 2
-        Log.error { "#{n.channel}: #{n.payload}, Size: #{p.size} -- EVAL_ADDED DOES NOT HAVE 2 FIELDS" }
+      if p.size != 3
+        Log.error { "#{n.channel}: #{n.payload}, Size: #{p.size} -- EVAL_ADDED DOES NOT HAVE 3 FIELDS" }
         return nil
       else
         id = p[0]
