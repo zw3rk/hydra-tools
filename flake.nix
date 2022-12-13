@@ -25,7 +25,7 @@
         flake = pkgs.github-hydra-bridge.flake { };
         packages = {
             github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
-        } // pkgs.lib.optionals (pkgs.stdenv.isLinux) {
+        } // pkgs.lib.optional (pkgs.stdenv.isLinux) {
             hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
         };
     in flake
