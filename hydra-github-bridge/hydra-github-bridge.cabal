@@ -19,6 +19,14 @@ executable hydra-github-bridge
                     , postgresql-simple
                     , bytestring
                     , text
+                    , stm
+                    , http-client
+                    , http-client-tls
+                    , servant
+                    , servant-client
+                    , aeson < 2.0
+                    , aeson-casing
+
     ghc-options: -threaded -rtsopts
     hs-source-dirs:   app
     default-language: Haskell2010
