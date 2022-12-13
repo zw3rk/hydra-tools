@@ -23,13 +23,15 @@
     let
         pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
         flake = pkgs.github-hydra-bridge.flake { };
-    in flake // rec {
-      # Built by `nix build .`
-      packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
-      packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
-      hydraJobs.github-hydra-bridge = packages.github-hydra-bridge;
-      hydraJobs.hydra-crystal-notify = if system == "x86_64-linux" then packages.hydra-crystal-notify else null;
-    }) // {
+        packages = {
+            github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
+        } // pkgs.lib.optionals (pkgs.stdenv.isLinux) {
+            hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
+        };
+    in flake
+    // { inherit packages; }
+    // { hydraJobs = packages; }
+    ) // {
         nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
         with lib;
         let cfg = config.services.github-hydra-bridge;
