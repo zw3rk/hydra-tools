@@ -130,6 +130,13 @@
                         E.g. "token <pat>"
                         '';
                     };
+                    host = mkOption {
+                        type = type.str;
+                        default = "";
+                        description = ''
+                        Hydra DB host string. Empty means unix socket.
+                        '';
+                    }
                 };
             };
             config = mkIf cfg.enable {
@@ -151,6 +158,7 @@
 
                     environment = {
                         GITHUB_TOKEN = cfg.ghToken;
+                        HYDRA_HOST = cfg.host;
                     };
                 };
             };            
