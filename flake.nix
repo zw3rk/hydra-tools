@@ -16,6 +16,12 @@
                 };
             })
             (final: prev: {
+                github-hydra-bridge = final.haskell-nix.project' {
+                    src = ./hydra-github-bridge;
+                    compiler-nix-name = "ghc8107";
+                };
+            })
+            (final: prev: {
                 hydra-crystal-notify = final.callPackage ./hydra-crystal-notify {};
             })
         ];
@@ -26,9 +32,9 @@
     in flake // rec {
       # Built by `nix build .`
       packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
+      packages.hydra-github-bridge  = flake.packages."hydra-github-bridge:exe:hydra-github-bridge";
       packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
-      hydraJobs.github-hydra-bridge = packages.github-hydra-bridge;
-      hydraJobs.hydra-crystal-notify = packages.hydra-crystal-notify;
+      hydraJobs = packages;
     }) // {
         nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
         with lib;
@@ -101,6 +107,53 @@
                 };
             };            
         };
+        nixosModules.hydra-github-bridge = { config, lib, pkgs, ...}: 
+        with lib;
+        let cfg = config.services.hydra-github-bridge;
+        inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
+        in {
+            options = {
+                services.hydra-github-bridge = {
+                    enable = mkEnableOption "hydra github bridge";
+                    package = mkOption {
+                        type = types.package;
+                        default = self.packages.${pkgs.system}.hydra-github-bridge;
+                        defaultText = "hydra-github-bridge";
+                        description = "The hydra to github webhook bridge";
+                    };
+                    ghToken = mkOption {
+                        type = types.str;
+                        default = "";
+                        description = ''
+                        The GH token for authorization with GH.
+                        E.g. "token <pat>"
+                        '';
+                    };
+                };
+            };
+            config = mkIf cfg.enable {
+                systemd.services.hydra-github-bridge = {
+                    wantedBy = [ "multi-user.target" ];
+                    after = [ "postgresql.service" ];
+                    startLimitIntervalSec = 0;
+
+                    script = ''
+                        ${cfg.package}/bin/hydra-github-bridge
+                    '';
+
+                    serviceConfig = {
+                        User = "hydra";
+                        Group = "hydra";
+                        Restart = "always";
+                        RestartSec = "10s";
+                    };
+
+                    environment = {
+                        GITHUB_TOKEN = cfg.ghToken;
+                    };
+                };
+            };            
+        };        
         nixosModules.hydra-crystal-notify = { config, lib, pkgs, ... }:
         with lib;
         let cfg = config.services.hydra-crystal-notify;
