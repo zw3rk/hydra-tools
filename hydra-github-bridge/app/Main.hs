@@ -118,8 +118,8 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
-                (Just err,_) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     (EvalCached jid eid) -> do
@@ -128,8 +128,8 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
-                (Just err,_) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     (EvalFailed jid) -> do
