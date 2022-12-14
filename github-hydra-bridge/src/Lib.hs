@@ -132,7 +132,7 @@ pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
 repoToProject :: Text -> Text
-repoToProject = Text.replace "/" "-"
+repoToProject = Text.replace "/" "-" . Text.replace "." "-"
 
 -- Issue Comment Hook
 type IssueCommentHookAPI =
