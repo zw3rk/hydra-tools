@@ -191,12 +191,13 @@ statusHandler token queue = do
 -- Main
 main :: IO ()
 main = do 
+    host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
     queue <- atomically $ newTChan
     forkIO $ forever $ statusHandler token queue
-    withConnect (ConnectInfo "localhost" 5432 user pass "hydra") $ \conn -> do
+    withConnect (ConnectInfo host 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
