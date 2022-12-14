@@ -16,7 +16,7 @@
                 };
             })
             (final: prev: {
-                github-hydra-bridge = final.haskell-nix.project' {
+                hydra-github-bridge = final.haskell-nix.project' {
                     src = ./hydra-github-bridge;
                     compiler-nix-name = "ghc8107";
                 };
