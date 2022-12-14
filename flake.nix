@@ -29,10 +29,11 @@
     let
         pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
         flake = pkgs.github-hydra-bridge.flake { };
+        flake2 = pkgs.hydra-github-bridge.flake { };
     in flake // rec {
       # Built by `nix build .`
       packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
-      packages.hydra-github-bridge  = flake.packages."hydra-github-bridge:exe:hydra-github-bridge";
+      packages.hydra-github-bridge  = flake2.packages."hydra-github-bridge:exe:hydra-github-bridge";
       packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
       hydraJobs = packages;
     }) // {
