@@ -136,7 +136,7 @@
                         description = ''
                         Hydra DB host string. Empty means unix socket.
                         '';
-                    }
+                    };
                 };
             };
             config = mkIf cfg.enable {
