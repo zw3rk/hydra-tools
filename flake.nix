@@ -131,7 +131,7 @@
                         '';
                     };
                     host = mkOption {
-                        type = type.str;
+                        type = types.str;
                         default = "";
                         description = ''
                         Hydra DB host string. Empty means unix socket.
