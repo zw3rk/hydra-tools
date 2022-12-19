@@ -34,7 +34,8 @@ import Control.Monad (forever)
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
 
 data Command
-    = UpdateJobset Text Text HydraJobset
+    = UpdateJobset Text Text HydraJobset         -- only update it, never create
+    | CreateOrUpdateJobset Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
     deriving (Show)
 
@@ -50,8 +51,8 @@ type PushHookAPI =
     :> GitHubSignedReqBody '[JSON] PushEvent
     :> Post '[JSON] ()
 
-pushHook :: RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook _ (_, ev) = liftIO $ do
+pushHook :: TChan Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook _queue _ (_, ev) = liftIO $ do
   putStrLn $ (show . whUserLogin . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
   print $ (fromJust . evPushHeadSha) ev
 
@@ -120,13 +121,28 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
         projName = repoToProject (whRepoFullName (evPullReqRepo ev))
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
-    liftIO $ writeQ queue (UpdateJobset projName jobsetName jobset)
+    liftIO $ writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
 
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
     let projName = repoToProject (whRepoFullName (evPullReqRepo ev))
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
-    liftIO $ writeQ queue (DeleteJobset projName jobsetName)
+    let jobset = defHydraFlakeJobset
+            { hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
+            , hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev)
+            , hjFlake = "github:" <> whRepoFullName (evPullReqRepo ev)
+                                <> "/"
+                                <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
+            -- setting visiblity seems to have no effect...
+            , hjVisible = False
+            -- ... so we just disable it.
+            , hjEnabled = 0
+            }
+
+    -- We Update the Jobset instead of Delete, so that past build results will
+    -- still be available.  This should update the sha to 000000, and as such 
+    -- allow us to find them and delete them later.
+    liftIO $ writeQ queue (UpdateJobset projName jobsetName jobset)
 
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
@@ -148,11 +164,20 @@ issueCommentHook _ (_, ev) = liftIO $ do
 type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI)
 
 singleEndpoint :: TChan Command -> Server SingleHookEndpointAPI
-singleEndpoint queue = pushHook :<|> issueCommentHook :<|> (pullRequestHook queue)
+singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue)
 
 handleCmd :: Command -> ClientM ()
-handleCmd (UpdateJobset projName jobsetName jobset) = do
+handleCmd (CreateOrUpdateJobset projName jobsetName jobset) = do
     mkJobset projName jobsetName jobset
+    push $ Just (projName <> ":" <> jobsetName)
+    return ()
+
+handleCmd (UpdateJobset projName jobsetName jobset) = do
+    -- ensure we try to get this first, ...
+    getJobset projName jobsetName
+    -- if get fails, no point in making one.
+    mkJobset projName jobsetName jobset
+    -- or triggering an eval
     push $ Just (projName <> ":" <> jobsetName)
     return ()
 

@@ -103,6 +103,10 @@ type HydraAPI = "jobset"
                 -- allow 200 (update) and 201 (created) responses.
                 :> UVerb 'PUT '[JSON] '[WithStatus 200 Object, WithStatus 201 Object]
               :<|> "jobset"
+                :> Capture "project-id" Text
+                :> Capture "jobset-id" Text
+                :> Get '[JSON] Value 
+              :<|> "jobset"
                 :> Capture "project-id" Text 
                 :> Capture "jobset-id" Text 
                 :> Delete '[JSON] Value
@@ -116,8 +120,9 @@ type HydraAPI = "jobset"
                 :> Put '[JSON] Value
 
 mkJobset :: Text -> Text -> HydraJobset -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
+getJobset :: Text -> Text -> ClientM Value
 rmJobset :: Text -> Text -> ClientM Value
 login :: Maybe Text -> HydraLogin -> ClientM Value
 push :: Maybe Text -> ClientM Value
 
-mkJobset :<|> rmJobset :<|> login :<|> push = client (Proxy @HydraAPI)
+mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push = client (Proxy @HydraAPI)
