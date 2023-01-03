@@ -80,6 +80,14 @@
                         the port to listen on for webhooks.
                         '';
                     };
+                    environmentFile = mkOption {
+                        type = types.nullOr types.path;
+                        default = null;
+                        description = ''
+                        plaintext environment file, containing `KEY`, 
+                        `HYDRA_USER`, `HYDRA_PASS`, and `PORT`.
+                        '';
+                    };
                 };
             };
             config = mkIf cfg.enable {
@@ -97,14 +105,13 @@
                         Group = "hydra";
                         Restart = "always";
                         RestartSec = "10s";
-                    };
+                    } // optionalAttrs (cfg.environmentFile != null)
+                    { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
-                    environment = {
-                        KEY = cfg.ghSecret;
-                        HYDRA_USER = cfg.hydraUser;
-                        HYDRA_PASS = cfg.hydraPass;
-                        PORT = "${toString cfg.port}";
-                    };
+                    environment = { PORT = "${toString cfg.port}"; }
+                      // optionalAttrs (cfg.ghSecret != "") { KEY = cfg.ghSecret; }
+                      // optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
+                      // optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
                 };
             };            
         };
@@ -137,6 +144,13 @@
                         Hydra DB host string. Empty means unix socket.
                         '';
                     };
+                    environmentFile = mkOption {
+                        type = types.nullOr types.path;
+                        default = null;
+                        description = ''
+                        plaintext environment file, containing `GITHUB_TOKEN`, and `HYDRA_HOST`.
+                        '';
+                    };
                 };
             };
             config = mkIf cfg.enable {
@@ -154,12 +168,13 @@
                         Group = "hydra";
                         Restart = "always";
                         RestartSec = "10s";
-                    };
+                    } // optionalAttrs (cfg.environmentFile != null)
+                    { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
                     environment = {
-                        GITHUB_TOKEN = cfg.ghToken;
                         HYDRA_HOST = cfg.host;
-                    };
+                    } // optionalAttrs (cfg.ghToken != "")
+                    { GITHUB_TOKEN = cfg.ghToken; };
                 };
             };            
         };        
