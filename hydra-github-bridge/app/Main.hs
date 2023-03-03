@@ -30,6 +30,7 @@ import           Servant.API
 import           Network.HTTP.Client (newManager, defaultManagerSettings)
 import           Network.HTTP.Client.TLS (tlsManagerSettings)
 
+import System.IO (hSetBuffering, stdin, stdout, stderr, BufferMode(LineBuffering))
 
 -- Data Types
 type JobSetId = Int
@@ -191,6 +192,11 @@ statusHandler token queue = do
 -- Main
 main :: IO ()
 main = do 
+
+    hSetBuffering stdin LineBuffering
+    hSetBuffering stdout LineBuffering
+    hSetBuffering stderr LineBuffering
+
     host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"

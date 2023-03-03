@@ -20,8 +20,15 @@ import Control.Concurrent.STM (newTChan, atomically)
 import Control.Concurrent (forkIO)
 import qualified Data.Text as Text
 
+import System.IO (hSetBuffering, stdin, stdout, stderr, BufferMode(LineBuffering))
+
 main :: IO ()
 main = do
+
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+
   port <- maybe 8080 read <$> lookupEnv "PORT"
   key <- maybe mempty C8.pack <$> lookupEnv "KEY"
   user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
