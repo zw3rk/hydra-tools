@@ -121,7 +121,9 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
         projName = repoToProject (whRepoFullName (evPullReqRepo ev))
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
-    liftIO $ writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
+    liftIO $ do 
+        putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
 
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
     let projName = repoToProject (whRepoFullName (evPullReqRepo ev))
@@ -142,7 +144,9 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
     -- We Update the Jobset instead of Delete, so that past build results will
     -- still be available.  This should update the sha to 000000, and as such 
     -- allow us to find them and delete them later.
-    liftIO $ writeQ queue (UpdateJobset projName jobsetName jobset)
+    liftIO $ do
+        putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        writeQ queue (UpdateJobset projName jobsetName jobset)
 
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
@@ -168,16 +172,20 @@ singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestH
 
 handleCmd :: Command -> ClientM ()
 handleCmd (CreateOrUpdateJobset projName jobsetName jobset) = do
+    liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     mkJobset projName jobsetName jobset
+    liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
 
 handleCmd (UpdateJobset projName jobsetName jobset) = do
+    liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     -- ensure we try to get this first, ...
     getJobset projName jobsetName
     -- if get fails, no point in making one.
     mkJobset projName jobsetName jobset
     -- or triggering an eval
+    liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
 
