@@ -96,11 +96,8 @@
                     after = [ "postgresql.service" ];
                     startLimitIntervalSec = 0;
 
-                    script = ''
-                        ${cfg.package}/bin/github-hydra-bridge
-                    '';
-
                     serviceConfig = {
+                        ExecStart = "@${cfg.package}/bin/github-hydra-bridge github-hydra-bridge";
                         User = "hydra";
                         Group = "hydra";
                         Restart = "always";
@@ -159,11 +156,8 @@
                     after = [ "postgresql.service" ];
                     startLimitIntervalSec = 0;
 
-                    script = ''
-                        ${cfg.package}/bin/hydra-github-bridge
-                    '';
-
                     serviceConfig = {
+                        ExecStart = "@${cfg.package}/bin/hydra-github-bridge hydra-github-bridge";
                         User = "hydra";
                         Group = "hydra";
                         Restart = "always";
