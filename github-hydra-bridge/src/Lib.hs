@@ -28,6 +28,7 @@ import qualified Servant.GitHub.Webhook as SGH
 import Hydra
 import qualified Data.Text as Text
 import Data.Text (Text)
+import Text.Read (readMaybe)
 import Control.Concurrent.STM (newTVarIO, TChan, readTChan, writeTChan, atomically)
 import Control.Monad (forever)
 
@@ -51,19 +52,71 @@ type PushHookAPI =
     :> GitHubSignedReqBody '[JSON] PushEvent
     :> Post '[JSON] ()
 
+parseMergeQueueRef :: Text -> Maybe (Text, Int)
+parseMergeQueueRef input = do
+    let prefix = "refs/heads/gh-readonly-queue/"
+    let suffix = Text.drop (Text.length prefix) input
+
+    let (branchName, prPart) = Text.breakOn "/pr-" suffix
+    prNumberText <- Text.stripPrefix "/pr-" prPart
+
+    prNumber <- readMaybe (Text.unpack prNumberText) :: Maybe Int
+
+    return (branchName, prNumber)
+
 pushHook :: TChan Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
+    | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
+    , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
+    , "0000000000000000000000000000000000000000" == headSha
+    = liftIO $ do
+        let projName = repoToProject repoName
+            jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
+
+        let jobset = defHydraFlakeJobset
+                { hjName = "merge-queue-" <> Text.pack (show pullReqNumber)
+                , hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch
+                , hjFlake = "github:" <> repoName <> "/" <> headSha
+                -- setting visiblity seems to have no effect...
+                , hjVisible = False
+                -- ... so we just disable it.
+                , hjEnabled = 0
+                }
+        -- We Update the Jobset instead of Delete, so that past build results will
+        -- still be available.  This should update the sha to 000000, and as such
+        -- allow us to find them and delete them later.
+        liftIO $ do
+            putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+            writeQ queue (UpdateJobset projName jobsetName jobset)
+
+    | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
+    , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
+    = liftIO $ do
+        let jobset = defHydraFlakeJobset
+                { hjName = "merge-queue-" <> Text.pack (show pullReqNumber)
+                , hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch
+                , hjFlake = "github:" <> repoName <> "/" <> headSha
+                }
+
+            projName = repoToProject repoName
+            jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
+
+        liftIO $ do
+            putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+            writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
+
 pushHook _queue _ (_, ev) = liftIO $ do
-  putStrLn $ (show . whUserLogin . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
-  print $ (fromJust . evPushHeadSha) ev
+    putStrLn $ (show . whUserLogin . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
+    print $ (fromJust . evPushHeadSha) ev
 
 -- PullRequest Hook
-type PullRequestHookAPI = 
+type PullRequestHookAPI =
     GitHubEvent '[ 'WebhookPullRequestEvent ]
     :> GitHubSignedReqBody '[JSON] PullRequestEvent
     :> Post '[JSON] ()
 
 pullRequestHook :: TChan Command -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
-pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action }) 
+pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
     | action `elem` [ PullRequestOpenedAction
                     , PullRequestReopenedAction
                     , (PullRequestActionOther "synchronize") ]
@@ -102,14 +155,14 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
     -- checkinterval = 60;
     -- enableemail = false;
     -- emailoverride = "";
-    -- 
+    --
     --  type: 1
     --
     --  name: pullrequest-{n}
     --  description: PR {n}: {pr title}
     --  flake = "github:${info.head.repo.owner.login}/${info.head.repo.name}/${info.head.ref}";
     --
-    --  
+    --
     let jobset = defHydraFlakeJobset
             { hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
             , hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev)
@@ -121,7 +174,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
         projName = repoToProject (whRepoFullName (evPullReqRepo ev))
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
-    liftIO $ do 
+    liftIO $ do
         putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
         writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
 
@@ -142,7 +195,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
             }
 
     -- We Update the Jobset instead of Delete, so that past build results will
-    -- still be available.  This should update the sha to 000000, and as such 
+    -- still be available.  This should update the sha to 000000, and as such
     -- allow us to find them and delete them later.
     liftIO $ do
         putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
