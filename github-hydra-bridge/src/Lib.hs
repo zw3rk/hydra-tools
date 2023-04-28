@@ -13,6 +13,7 @@ import Data.Aeson
 import           Control.Monad.IO.Class       ( liftIO )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C8
+import Data.Char (isNumber)
 import Data.Maybe (fromJust)
 import GHC.Generics
 import GitHub.Data.Webhooks.Events (IssueCommentEvent (..), PushEvent (..), PullRequestEvent (..), PullRequestEventAction (..))
@@ -53,13 +54,12 @@ type PushHookAPI =
     :> Post '[JSON] ()
 
 parseMergeQueueRef :: Text -> Maybe (Text, Int)
-parseMergeQueueRef input = do
-    let prefix = "refs/heads/gh-readonly-queue/"
-    let suffix = Text.drop (Text.length prefix) input
+parseMergeQueueRef ref = do
 
+    suffix <- Text.stripPrefix "refs/heads/gh-readonly-queue/" ref
     let (branchName, prPart) = Text.breakOn "/pr-" suffix
-    prNumberText <- Text.stripPrefix "/pr-" prPart
-
+    rest <- Text.stripPrefix "/pr-" prPart
+    let prNumberText = Text.takeWhile isNumber rest
     prNumber <- readMaybe (Text.unpack prNumberText) :: Maybe Int
 
     return (branchName, prNumber)
