@@ -94,6 +94,8 @@
                 systemd.services.github-hydra-bridge = {
                     wantedBy = [ "multi-user.target" ];
                     after = [ "postgresql.service" ];
+                    partOf = [ "hydra-server.service" ]; # implies after (systemd/systemd#13847)
+                    
                     startLimitIntervalSec = 0;
 
                     serviceConfig = {
@@ -102,6 +104,7 @@
                         Group = "hydra";
                         Restart = "always";
                         RestartSec = "10s";
+
                     } // optionalAttrs (cfg.environmentFile != null)
                     { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
