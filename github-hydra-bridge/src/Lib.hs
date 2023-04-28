@@ -106,7 +106,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
             writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
 
 pushHook _queue _ (_, ev) = liftIO $ do
-    putStrLn $ (show . whUserLogin . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
+    putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
     print $ (fromJust . evPushHeadSha) ev
 
 -- PullRequest Hook

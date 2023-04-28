@@ -24,7 +24,7 @@ library
                      , servant-server
                      , servant-client
                      , servant-github-webhook
-                     , github-webhooks
+                     , github-webhooks >= 0.17.0
                      , bytestring
                      , text
                      , http-client
