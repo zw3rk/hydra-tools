@@ -249,15 +249,15 @@ handleCmd (DeleteJobset projName jobsetName) = do
 readQ = atomically . readTChan
 writeQ ch v = atomically $ writeTChan ch v
 
-hydraClient :: Text -> Text -> TChan Command -> IO ()
-hydraClient user pass queue = do
+hydraClient :: Text -> Text -> Text -> TChan Command -> IO ()
+hydraClient host user pass queue = do
     manager <- newManager tlsManagerSettings
     jar <- newTVarIO mempty
-    let env = (mkClientEnv manager (BaseUrl Https "ci.zw3rk.com" 443 ""))
+    let env = (mkClientEnv manager (BaseUrl Https (Text.unpack host) 443 ""))
                 { cookieJar = Just jar}
 
     -- login first
-    _ <- flip runClientM env $ login (Just "https://ci.zw3rk.com") (HydraLogin user pass)
+    _ <- flip runClientM env $ login (Just $ Text.append "https://" host) (HydraLogin user pass)
 
     -- loop forever, working down the hydra commands
     forever $ readQ queue >>= flip runClientM env . handleCmd
