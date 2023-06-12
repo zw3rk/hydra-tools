@@ -3,8 +3,14 @@
     inputs.treefmt-nix.flakeModule
   ];
 
-  perSystem.treefmt = {
-    projectRootFile = "flake.nix";
-    programs.alejandra.enable = true;
+  perSystem = {pkgs, ...}: {
+    treefmt = {
+      projectRootFile = "flake.nix";
+
+      programs = {
+        alejandra.enable = true;
+        stylish-haskell.enable = true;
+      };
+    };
   };
 }

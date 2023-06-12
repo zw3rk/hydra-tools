@@ -1,26 +1,27 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeOperators     #-}
 
 -- import Data.Aeson
 -- import Data.Aeson.Schemas
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
-import GHC.Generics
-import Lib
-import Network.Wai (Application)
-import Network.Wai.Handler.Warp (run)
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as C8
+import           GHC.Generics
+import           Lib
+import           Network.Wai              (Application)
+import           Network.Wai.Handler.Warp (run)
 -- import Servant
 -- import Servant.API.ContentTypes
-import System.Environment (lookupEnv)
-import Control.Concurrent.STM (newTChan, atomically)
-import Control.Concurrent (forkIO)
-import qualified Data.Text as Text
+import           Control.Concurrent       (forkIO)
+import           Control.Concurrent.STM   (atomically, newTChan)
+import qualified Data.Text                as Text
+import           System.Environment       (lookupEnv)
 
-import System.IO (hSetBuffering, stdin, stdout, stderr, BufferMode(LineBuffering))
+import           System.IO                (BufferMode (LineBuffering),
+                                           hSetBuffering, stderr, stdin, stdout)
 
 main :: IO ()
 main = do

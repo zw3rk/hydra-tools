@@ -1,36 +1,41 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# language TypeOperators     #-}
-{-# language DataKinds         #-}
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE TypeOperators     #-}
 
 module Main where
 
-import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.Notification
-import Control.Concurrent
-import Control.Monad
-import Control.Exception (catch, displayException, SomeException)
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Char8 as BSL
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
-import GHC.Generics
-import Data.Text (Text)
-import System.Environment (lookupEnv)
-import Control.Concurrent.STM (newTChan, atomically)
-import Control.Concurrent.STM (newTVarIO, TChan, readTChan, writeTChan, atomically)
+import           Control.Concurrent
+import           Control.Concurrent.STM                  (TChan, atomically,
+                                                          newTChan, newTVarIO,
+                                                          readTChan, writeTChan)
+import           Control.Exception                       (SomeException, catch,
+                                                          displayException)
+import           Control.Monad
+import qualified Data.ByteString.Char8                   as BS
+import qualified Data.ByteString.Lazy.Char8              as BSL
+import           Data.Text                               (Text)
+import qualified Data.Text                               as Text
+import qualified Data.Text.IO                            as Text
+import           Database.PostgreSQL.Simple
+import           Database.PostgreSQL.Simple.Notification
+import           GHC.Generics
+import           System.Environment                      (lookupEnv)
 
-import           Data.Aeson hiding (Success, Error)
+import           Data.Aeson                              hiding (Error, Success)
 import           Data.Aeson.Casing
-import Servant.Client
 import           Data.Proxy
+import           Network.HTTP.Client                     (defaultManagerSettings,
+                                                          newManager)
+import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
 import           Servant.API
-import           Network.HTTP.Client (newManager, defaultManagerSettings)
-import           Network.HTTP.Client.TLS (tlsManagerSettings)
+import           Servant.Client
 
-import System.IO (hSetBuffering, stdin, stdout, stderr, BufferMode(LineBuffering))
+import           System.IO                               (BufferMode (LineBuffering),
+                                                          hSetBuffering, stderr,
+                                                          stdin, stdout)
 
 -- Data Types
 type JobSetId = Int
@@ -57,10 +62,10 @@ instance FromJSON StatusState where
 
 data GitHubStatusPayload
     = GitHubStatusPayload
-    { state :: StatusState
-    , target_url :: Text
+    { state       :: StatusState
+    , target_url  :: Text
     , description :: Maybe Text
-    , context :: Text
+    , context     :: Text
     } deriving (Show, Eq, Generic)
 
 instance ToJSON GitHubStatusPayload where
@@ -70,10 +75,10 @@ instance FromJSON GitHubStatusPayload where
     parseJSON = genericParseJSON $ aesonDrop 0 camelCase
 
 data GitHubStatus
-    = GitHubStatus 
-    { owner :: Text
-    , repo :: Text
-    , sha :: Text
+    = GitHubStatus
+    { owner   :: Text
+    , repo    :: Text
+    , sha     :: Text
     , payload :: GitHubStatusPayload
     }
     deriving (Show, Eq, Generic)
@@ -118,7 +123,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
+            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
@@ -128,7 +133,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
+            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
@@ -145,7 +150,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         handler n ex = print (show n ++ " triggert exception " ++ displayException ex) >> pure Nothing
 
 -- GitHub Status PI
--- /repos/{owner}/{repo}/statuses/{sha} with 
+-- /repos/{owner}/{repo}/statuses/{sha} with
 -- {"state":"success"
 --  ,"target_url":"https://example.com/build/status"
 --  ,"description":"The build succeeded!"
@@ -191,7 +196,7 @@ statusHandler token queue = do
 
 -- Main
 main :: IO ()
-main = do 
+main = do
 
     hSetBuffering stdin LineBuffering
     hSetBuffering stdout LineBuffering
@@ -209,8 +214,8 @@ main = do
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
         _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
         -- _ <- forkIO $ do
-        forever $ do 
+        forever $ do
             note <- toHydraNotification <$> getNotification conn
             handleHydraNotification conn note >>= \case
                 Just status -> atomically (writeTChan queue status)
-                Nothing -> pure ()
+                Nothing     -> pure ()

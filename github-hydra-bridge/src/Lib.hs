@@ -1,37 +1,47 @@
-{-# language RankNTypes #-}
-{-# language TypeOperators #-}
-{-# language DataKinds #-}
-{-# language FlexibleInstances #-}
-{-# language MultiParamTypeClasses #-}
-{-# language TypeFamilies #-}
-{-# language OverloadedStrings #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
 module Lib where
 
-import Data.Aeson
+import           Data.Aeson
 -- import Data.Aeson.Schemas
 
-import           Control.Monad.IO.Class       ( liftIO )
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
-import Data.Char (isNumber)
-import Data.Maybe (fromJust)
-import GHC.Generics
-import GitHub.Data.Webhooks.Events (IssueCommentEvent (..), PushEvent (..), PullRequestEvent (..), PullRequestEventAction (..))
-import GitHub.Data.Webhooks.Payload (HookIssueComment (..), HookUser (..), HookPullRequest (..), HookRepository (..), PullRequestTarget (..))
-import Servant
-import Servant.Client
-import           Network.HTTP.Client (newManager, defaultManagerSettings)
-import           Network.HTTP.Client.TLS (tlsManagerSettings)
+import           Control.Concurrent.STM       (TChan, atomically, newTVarIO,
+                                               readTChan, writeTChan)
+import           Control.Monad                (forever)
+import           Control.Monad.IO.Class       (liftIO)
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Char8        as C8
+import           Data.Char                    (isNumber)
+import           Data.Maybe                   (fromJust)
+import           Data.Text                    (Text)
+import qualified Data.Text                    as Text
+import           GHC.Generics
+import           GitHub.Data.Webhooks.Events  (IssueCommentEvent (..),
+                                               PullRequestEvent (..),
+                                               PullRequestEventAction (..),
+                                               PushEvent (..))
+import           GitHub.Data.Webhooks.Payload (HookIssueComment (..),
+                                               HookPullRequest (..),
+                                               HookRepository (..),
+                                               HookUser (..),
+                                               PullRequestTarget (..))
+import           Hydra
+import           Network.HTTP.Client          (defaultManagerSettings,
+                                               newManager)
+import           Network.HTTP.Client.TLS      (tlsManagerSettings)
+import           Servant
 import           Servant.API
-import Servant.API.ContentTypes
-import Servant.GitHub.Webhook (GitHubEvent, GitHubSignedReqBody, RepoWebhookEvent (..))
-import qualified Servant.GitHub.Webhook as SGH
-import Hydra
-import qualified Data.Text as Text
-import Data.Text (Text)
-import Text.Read (readMaybe)
-import Control.Concurrent.STM (newTVarIO, TChan, readTChan, writeTChan, atomically)
-import Control.Monad (forever)
+import           Servant.API.ContentTypes
+import           Servant.Client
+import qualified Servant.GitHub.Webhook       as SGH
+import           Servant.GitHub.Webhook       (GitHubEvent, GitHubSignedReqBody,
+                                               RepoWebhookEvent (..))
+import           Text.Read                    (readMaybe)
 
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
 
