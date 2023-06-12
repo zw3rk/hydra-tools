@@ -153,7 +153,7 @@ parts: {
             };
 
           environment =
-            { HYDRA_HOST = cfg.host; }
+            {HYDRA_HOST = cfg.host;}
             // lib.optionalAttrs (cfg.ghToken != "") {
               GITHUB_TOKEN = cfg.ghToken;
             };

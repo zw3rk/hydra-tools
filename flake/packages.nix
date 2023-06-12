@@ -3,7 +3,11 @@
   config,
   ...
 }: {
-  perSystem = {system, pkgs, ...}: {
+  perSystem = {
+    system,
+    pkgs,
+    ...
+  }: {
     packages = let
       haskellPkgs = import inputs.nixpkgs {
         inherit system;
