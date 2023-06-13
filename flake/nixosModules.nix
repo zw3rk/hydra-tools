@@ -1,4 +1,4 @@
-parts: {
+{withSystem, ...}: {
   flake.nixosModules = {
     github-hydra-bridge = {
       config,
@@ -13,7 +13,7 @@ parts: {
 
         package = mkOption {
           type = types.package;
-          default = parts.config.perSystem.packages.${pkgs.system}.github-hydra-bridge;
+          default = withSystem pkgs.system ({config, ...}: config.packages.github-hydra-bridge);
           defaultText = "github-hydra-bridge";
           description = "The github to hydra webhook bridge";
         };
@@ -103,7 +103,7 @@ parts: {
 
         package = mkOption {
           type = types.package;
-          default = parts.config.perSystem.packages.${pkgs.system}.hydra-github-bridge;
+          default = withSystem pkgs.system ({config, ...}: config.packages.hydra-github-bridge);
           defaultText = "hydra-github-bridge";
           description = "The hydra to github webhook bridge";
         };
@@ -174,7 +174,7 @@ parts: {
 
         package = mkOption {
           type = types.package;
-          default = parts.config.perSystem.packages.${pkgs.system}.hydra-crystal-notify;
+          default = withSystem pkgs.system ({config, ...}: config.packages.hydra-crystal-notify);
           defaultText = "hydra-crystal-notify";
           description = " The hydra crystal notify package to be used";
         };
