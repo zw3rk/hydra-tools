@@ -68,8 +68,9 @@
           startLimitIntervalSec = 0;
 
           serviceConfig = {
-            User = "hydra";
-            Group = "hydra";
+            User = config.users.users.hydra.name;
+            Group = config.users.groups.hydra.name;
+
             Restart = "always";
             RestartSec = "10s";
 
