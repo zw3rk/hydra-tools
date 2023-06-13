@@ -122,7 +122,15 @@
           '';
         };
 
-        host = mkOption {
+        hydraHost = mkOption {
+          type = types.str;
+          default = "localhost";
+          description = ''
+            The host (domain or IP address, with optional port) of hydra.
+          '';
+        };
+
+        hydraDb = mkOption {
           type = types.str;
           default = "";
           description = ''
@@ -154,7 +162,10 @@
             exec ${lib.getExe cfg.package}
           '';
 
-          environment.HYDRA_HOST = cfg.host;
+          environment = {
+            HYDRA_HOST = cfg.hydraHost;
+            HYDRA_DB = cfg.hydraDb;
+          };
         };
       };
     });

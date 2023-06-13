@@ -110,13 +110,13 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "eval_cached"  = let [_, jid, eid] = words (BS.unpack payload) in EvalCached (read jid) (read eid)
     | chan == "eval_failed"  = let [_, jid]      = words (BS.unpack payload) in EvalFailed (read jid)
 
-handleHydraNotification :: Connection -> HydraNotification -> IO (Maybe GitHubStatus)
-handleHydraNotification conn e = flip catch (handler e) $ case e of
+handleHydraNotification :: Connection -> Text -> HydraNotification -> IO (Maybe GitHubStatus)
+handleHydraNotification conn host e = flip catch (handler e) $ case e of
     (EvalStarted jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://ci.zw3rk.com/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     (EvalAdded jid eid) -> do
         [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
@@ -124,9 +124,9 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
-                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
+                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     (EvalCached jid eid) -> do
         [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
@@ -134,15 +134,15 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
-                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
+                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     (EvalFailed jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
     _ -> print e >> pure Nothing
 
@@ -203,12 +203,13 @@ main = do
     hSetBuffering stderr LineBuffering
 
     host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
+    db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
     queue <- atomically $ newTChan
     forkIO $ forever $ statusHandler token queue
-    withConnect (ConnectInfo host 5432 user pass "hydra") $ \conn -> do
+    withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
@@ -216,6 +217,6 @@ main = do
         -- _ <- forkIO $ do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
-            handleHydraNotification conn note >>= \case
+            handleHydraNotification conn (Text.pack host) note >>= \case
                 Just status -> atomically (writeTChan queue status)
                 Nothing     -> pure ()
