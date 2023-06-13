@@ -114,12 +114,11 @@
           description = "The hydra to github webhook bridge";
         };
 
-        ghToken = mkOption {
-          type = types.str;
+        ghTokenFile = mkOption {
+          type = types.path;
           default = "";
           description = ''
-            The GH token for authorization with GH.
-            E.g. "token <pat>"
+            Path to a file containing the GitHub token for authorization with GitHub.
           '';
         };
 
@@ -130,39 +129,32 @@
             Hydra DB host string. Empty means unix socket.
           '';
         };
-
-        environmentFile = mkOption {
-          type = types.nullOr types.path;
-          default = null;
-          description = ''
-            plaintext environment file, containing `GITHUB_TOKEN`, and `HYDRA_HOST`.
-          '';
-        };
       };
 
       config = lib.mkIf cfg.enable {
         systemd.services.hydra-github-bridge = {
           wantedBy = ["multi-user.target"];
           after = ["postgresql.service"];
+
           startLimitIntervalSec = 0;
 
-          serviceConfig =
-            {
-              ExecStart = "@${cfg.package}/bin/hydra-github-bridge hydra-github-bridge";
-              User = "hydra";
-              Group = "hydra";
-              Restart = "always";
-              RestartSec = "10s";
-            }
-            // lib.optionalAttrs (cfg.environmentFile != null) {
-              EnvironmentFile = builtins.toPath cfg.environmentFile;
-            };
+          serviceConfig = {
+            User = config.users.users.hydra.name;
+            Group = config.users.groups.hydra.name;
 
-          environment =
-            {HYDRA_HOST = cfg.host;}
-            // lib.optionalAttrs (cfg.ghToken != "") {
-              GITHUB_TOKEN = cfg.ghToken;
-            };
+            Restart = "always";
+            RestartSec = "10s";
+
+            LoadCredential = lib.optional (cfg.ghTokenFile != "") "github-token:${cfg.ghTokenFile}";
+          };
+
+          script = ''
+            ${lib.optionalString (cfg.ghTokenFile != "") ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+
+            exec ${lib.getExe cfg.package}
+          '';
+
+          environment.HYDRA_HOST = cfg.host;
         };
       };
     };
