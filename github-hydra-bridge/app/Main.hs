@@ -35,7 +35,7 @@ main = do
   user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
   pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
   host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
-  putStrLn $ "Server is starting on port " ++ show port ++ " using test secret " ++ show key
+  putStrLn $ "Server is starting on port " ++ show port
   queue <- atomically $ newTChan
   forkIO $ hydraClient host user pass queue
   run port (app queue (gitHubKey $ pure key))
