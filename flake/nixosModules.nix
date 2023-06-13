@@ -1,6 +1,6 @@
-{withSystem, ...}: {
+{moduleWithSystem, ...}: {
   flake.nixosModules = {
-    github-hydra-bridge = {
+    github-hydra-bridge = moduleWithSystem (perSystem @ {config}: {
       config,
       lib,
       pkgs,
@@ -13,7 +13,7 @@
 
         package = mkOption {
           type = types.package;
-          default = withSystem pkgs.system ({config, ...}: config.packages.github-hydra-bridge);
+          default = perSystem.config.packages.github-hydra-bridge;
           defaultText = "github-hydra-bridge";
           description = "The github to hydra webhook bridge";
         };
@@ -94,9 +94,9 @@
             // lib.optionalAttrs (cfg.hydraUser != "") {HYDRA_USER = cfg.hydraUser;};
         };
       };
-    };
+    });
 
-    hydra-github-bridge = {
+    hydra-github-bridge = moduleWithSystem (perSystem @ {config}: {
       config,
       lib,
       pkgs,
@@ -109,7 +109,7 @@
 
         package = mkOption {
           type = types.package;
-          default = withSystem pkgs.system ({config, ...}: config.packages.hydra-github-bridge);
+          default = perSystem.config.packages.hydra-github-bridge;
           defaultText = "hydra-github-bridge";
           description = "The hydra to github webhook bridge";
         };
@@ -157,9 +157,9 @@
           environment.HYDRA_HOST = cfg.host;
         };
       };
-    };
+    });
 
-    hydra-crystal-notify = {
+    hydra-crystal-notify = moduleWithSystem (perSystem @ {config}: {
       config,
       lib,
       pkgs,
@@ -172,7 +172,7 @@
 
         package = mkOption {
           type = types.package;
-          default = withSystem pkgs.system ({config, ...}: config.packages.hydra-crystal-notify);
+          default = perSystem.config.packages.hydra-crystal-notify;
           defaultText = "hydra-crystal-notify";
           description = " The hydra crystal notify package to be used";
         };
@@ -359,6 +359,6 @@
           };
         };
       };
-    };
+    });
   };
 }
