@@ -18,6 +18,14 @@
           description = "The github to hydra webhook bridge";
         };
 
+        hydraHost = mkOption {
+          type = types.str;
+          example = "hydra.ci.iog.io:8080";
+          description = ''
+            The host (domain or IP address, with optional port) of hydra.
+          '';
+        };
+
         hydraUser = mkOption {
           type = types.str;
           default = "";
@@ -26,37 +34,27 @@
           '';
         };
 
-        hydraPass = mkOption {
-          type = types.str;
+        hydraPassFile = mkOption {
+          type = types.path;
           default = "";
           description = ''
-            The password to authenticate as with hydra.
+            A file containing the password to authenticate with against hydra.
           '';
         };
 
-        ghSecret = mkOption {
-          type = types.str;
+        ghSecretFile = mkOption {
+          type = types.path;
           default = "";
           description = ''
-            The agreed upon secret with GitHub for the Webhook
-            payloards.
+            The agreed upon secret with GitHub for the Webhook payloads.
           '';
         };
 
         port = mkOption {
-          type = types.int;
+          type = types.port;
           default = 8811;
           description = ''
-            the port to listen on for webhooks.
-          '';
-        };
-
-        environmentFile = mkOption {
-          type = types.nullOr types.path;
-          default = null;
-          description = ''
-            plaintext environment file, containing `KEY`,
-            `HYDRA_USER`, `HYDRA_PASS`, and `PORT`.
+            The port to listen on for webhooks.
           '';
         };
       };
@@ -69,22 +67,29 @@
 
           startLimitIntervalSec = 0;
 
-          serviceConfig =
-            {
-              ExecStart = "@${cfg.package}/bin/github-hydra-bridge github-hydra-bridge";
-              User = "hydra";
-              Group = "hydra";
-              Restart = "always";
-              RestartSec = "10s";
-            }
-            // lib.optionalAttrs (cfg.environmentFile != null) {
-              EnvironmentFile = builtins.toPath cfg.environmentFile;
-            };
+          serviceConfig = {
+            User = "hydra";
+            Group = "hydra";
+            Restart = "always";
+            RestartSec = "10s";
+
+            LoadCredential =
+              lib.optional (cfg.hydraPassFile != "") "hydra-pass:${cfg.hydraPassFile}"
+              ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
+          };
+
+          script = ''
+            ${lib.optionalString (cfg.hydraPassFile != "") ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
+            ${lib.optionalString (cfg.ghSecretFile != "") ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
+
+            exec ${lib.getExe cfg.package}
+          '';
 
           environment =
-            {PORT = "${toString cfg.port}";}
-            // lib.optionalAttrs (cfg.ghSecret != "") {KEY = cfg.ghSecret;}
-            // lib.optionalAttrs (cfg.hydraPass != "") {HYDRA_PASS = cfg.hydraPass;}
+            {
+              HYDRA_HOST = cfg.hydraHost;
+              PORT = toString cfg.port;
+            }
             // lib.optionalAttrs (cfg.hydraUser != "") {HYDRA_USER = cfg.hydraUser;};
         };
       };
