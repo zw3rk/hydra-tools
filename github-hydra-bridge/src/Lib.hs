@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE LambdaCase            #-}
 module Lib where
 
 import           Data.Aeson
@@ -41,6 +42,7 @@ import           Servant.Client
 import qualified Servant.GitHub.Webhook       as SGH
 import           Servant.GitHub.Webhook       (GitHubEvent, GitHubSignedReqBody,
                                                RepoWebhookEvent (..))
+import           System.Exit                  (die)
 import           Text.Read                    (readMaybe)
 
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
@@ -267,10 +269,14 @@ hydraClient host user pass queue = do
                 { cookieJar = Just jar}
 
     -- login first
-    _ <- flip runClientM env $ login (Just $ Text.append "https://" host) (HydraLogin user pass)
+    flip runClientM env (login (Just $ Text.append "https://" host) (HydraLogin user pass)) >>= \case
+        Left e  -> die (show e)
+        Right _ -> pure ()
 
     -- loop forever, working down the hydra commands
-    forever $ readQ queue >>= flip runClientM env . handleCmd
+    forever $ readQ queue >>= flip runClientM env . handleCmd >>= \case
+        Left e  -> print e
+        Right _ -> pure ()
 
 app :: TChan Command -> GitHubKey -> Application
 app queue key
