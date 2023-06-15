@@ -62,8 +62,8 @@
       config = lib.mkIf cfg.enable {
         systemd.services.github-hydra-bridge = {
           wantedBy = ["multi-user.target"];
-          after = ["postgresql.service"];
-          partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
+          after = ["postgresql.service" "hydra-server.service"];
+          partOf = ["hydra-server.service"];
 
           startLimitIntervalSec = 0;
 
