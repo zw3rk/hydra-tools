@@ -157,7 +157,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             _ -> pure $ Nothing
     -- Builds
     (BuildQueued bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
                      | otherwise   = Failure
@@ -166,7 +166,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             _ -> pure $ Nothing
 
     (BuildStarted bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
                      | otherwise   = Failure
@@ -175,7 +175,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             _ -> pure $ Nothing
 
     (BuildFinished bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
                      | otherwise   = Failure
