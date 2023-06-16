@@ -40,12 +40,18 @@ import           System.IO                               (BufferMode (LineBuffer
 -- Data Types
 type JobSetId = Int
 type EvalRecordId = Int
+type BuildId = Int
 
 data HydraNotification
     = EvalStarted JobSetId
     | EvalAdded JobSetId EvalRecordId
     | EvalCached JobSetId EvalRecordId
     | EvalFailed JobSetId
+    | BuildQueued BuildId
+    | BuildStarted BuildId
+    | BuildFinished BuildId
+    -- | CachedBuildQueued EvalId BuildId
+    -- | CachedBuildFinished EvalId BuildId
     deriving (Show, Eq)
 
 data StatusState = Error | Failure | Pending | Success
@@ -105,13 +111,18 @@ parseGitHubFlakeURI _ = Nothing
 
 toHydraNotification :: Notification -> HydraNotification
 toHydraNotification Notification { notificationChannel = chan, notificationData = payload}
-    | chan == "eval_started" = let [_, jid]      = words (BS.unpack payload) in EvalStarted (read jid)
-    | chan == "eval_added"   = let [_, jid, eid] = words (BS.unpack payload) in EvalAdded (read jid) (read eid)
-    | chan == "eval_cached"  = let [_, jid, eid] = words (BS.unpack payload) in EvalCached (read jid) (read eid)
-    | chan == "eval_failed"  = let [_, jid]      = words (BS.unpack payload) in EvalFailed (read jid)
+    | chan == "eval_started"   = let [_, jid]      = words (BS.unpack payload) in EvalStarted (read jid)
+    | chan == "eval_added"     = let [_, jid, eid] = words (BS.unpack payload) in EvalAdded (read jid) (read eid)
+    | chan == "eval_cached"    = let [_, jid, eid] = words (BS.unpack payload) in EvalCached (read jid) (read eid)
+    | chan == "eval_failed"    = let [_, jid]      = words (BS.unpack payload) in EvalFailed (read jid)
+    | chan == "build_queued"   = let [bid]         = words (BS.unpack payload) in BuildQueued (read bid)
+    | chan == "build_started"  = let [bid]         = words (BS.unpack payload) in BuildStarted (read bid)
+    | chan == "build_finished" = let [bid]         = words (BS.unpack payload) in BuildFinished (read bid)
+
 
 handleHydraNotification :: Connection -> Text -> HydraNotification -> IO (Maybe GitHubStatus)
 handleHydraNotification conn host e = flip catch (handler e) $ case e of
+    -- Evaluations
     (EvalStarted jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
@@ -144,6 +155,34 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
             _ -> pure $ Nothing
+    -- Builds
+    (BuildQueued bid) -> do
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
+        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+                     | otherwise   = Failure
+        case parseGitHubFlakeURI flake of
+            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
+            _ -> pure $ Nothing
+
+    (BuildStarted bid) -> do
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
+        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+                     | otherwise   = Failure
+        case parseGitHubFlakeURI flake of
+            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
+            _ -> pure $ Nothing
+
+    (BuildFinished bid) -> do
+        [(proj, name, flake, job, desc, finished, status)] <- query conn "select select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> (desc :: Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
+        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+                     | otherwise   = Failure
+        case parseGitHubFlakeURI flake of
+            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
+            _ -> pure $ Nothing
+
     _ -> print e >> pure Nothing
 
   where handler :: HydraNotification -> SomeException -> IO (Maybe GitHubStatus)
@@ -214,6 +253,11 @@ main = do
         _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
         _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
+        _ <- execute_ conn "LISTEN build_queued" -- (build id)
+        _ <- execute_ conn "LISTEN build_started" -- (build id)
+        _ <- execute_ conn "LISTEN build_finished" -- (build id)
+        -- _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
+        -- _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
         -- _ <- forkIO $ do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
