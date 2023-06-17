@@ -157,27 +157,28 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             _ -> pure $ Nothing
     -- Builds
     (BuildQueued bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+        let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
             _ -> pure $ Nothing
 
     (BuildStarted bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+        let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
             _ -> pure $ Nothing
 
+    -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
     (BuildFinished bid) -> do
         [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let ghStatus | (finished, status) == ((1,0) :: (Int, Int)) = Success
+        let ghStatus | (finished, status) == ((1, 0) :: (Int, Int)) = Success
                      | otherwise   = Failure
         case parseGitHubFlakeURI flake of
             Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Finished.") ("ci/hydra-build:" <> job)))
