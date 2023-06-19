@@ -253,7 +253,9 @@ handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
             mkJobset projName jobsetName jobset
-        e -> throwM e
+        e -> do
+            liftIO $ print $ "Caught mkJobset Exception: " ++ show e
+            throwM e
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
@@ -270,7 +272,9 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
                                                 , hpDisplayname = proj
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
-        e -> throwM e
+        e -> do
+            liftIO $ print $ "Caught mkJobset Exception: " ++ show e
+            throwM e
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
