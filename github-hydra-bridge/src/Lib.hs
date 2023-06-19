@@ -14,7 +14,7 @@ import           Data.Aeson
 import           Control.Concurrent.STM       (TChan, atomically, newTVarIO,
                                                readTChan, writeTChan)
 import           Control.Monad                (forever)
-import           Control.Monad.Catch          (catch, throwM)
+import           Control.Monad.Error.Class    (catchError, throwError)
 import           Control.Monad.IO.Class       (liftIO)
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Char8        as C8
@@ -245,7 +245,7 @@ singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestH
 handleCmd :: Command -> ClientM ()
 handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
-    mkJobset projName jobsetName jobset `catch` \case
+    mkJobset projName jobsetName jobset `catchError` \case
         e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
             let (org, proj) = splitRepo repoName
             mkProject projName (defHydraProject { hpName = projName
@@ -255,7 +255,7 @@ handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
             mkJobset projName jobsetName jobset
         e -> do
             liftIO $ print $ "Caught mkJobset Exception: " ++ show e
-            throwM e
+            throwError e
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
@@ -265,7 +265,7 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
     -- ensure we try to get this first, ...
     getJobset projName jobsetName
     -- if get fails, no point in making one.
-    mkJobset projName jobsetName jobset `catch` \case
+    mkJobset projName jobsetName jobset `catchError` \case
         e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
             let (org, proj) = splitRepo repoName
             mkProject projName (defHydraProject { hpName = projName
@@ -274,7 +274,7 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
                                                 })
         e -> do
             liftIO $ print $ "Caught mkJobset Exception: " ++ show e
-            throwM e
+            throwError e
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
