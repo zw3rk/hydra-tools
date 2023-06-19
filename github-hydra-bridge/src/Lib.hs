@@ -118,6 +118,11 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+    | ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]
+    = liftIO $ do
+        putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit to " ++ show ref ++ " causing HEAD SHA to become:"
+        print $ (fromJust . evPushHeadSha) ev
+
 
 pushHook _queue _ (_, ev) = liftIO $ do
     putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
