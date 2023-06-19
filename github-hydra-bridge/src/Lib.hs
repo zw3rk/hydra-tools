@@ -229,7 +229,7 @@ repoToProject :: Text -> Text
 repoToProject = Text.replace "/" "-" . Text.replace "." "-"
 
 splitRepo :: Text -> (Text, Text)
-splitRepo repo = let org:proj:_ = Text.splitOn "-" repo in (org, proj)
+splitRepo repo = let org:proj:_ = Text.splitOn "/" repo in (org, proj)
 
 -- Issue Comment Hook
 type IssueCommentHookAPI =
