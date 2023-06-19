@@ -14,6 +14,7 @@ import           Data.Aeson
 import           Control.Concurrent.STM       (TChan, atomically, newTVarIO,
                                                readTChan, writeTChan)
 import           Control.Monad                (forever)
+import           Control.Monad.Catch          (catch, throwM)
 import           Control.Monad.IO.Class       (liftIO)
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Char8        as C8
@@ -35,6 +36,7 @@ import           Hydra
 import           Network.HTTP.Client          (defaultManagerSettings,
                                                newManager)
 import           Network.HTTP.Client.TLS      (tlsManagerSettings)
+import           Network.HTTP.Types.Status    (Status (..))
 import           Servant
 import           Servant.API
 import           Servant.API.ContentTypes
@@ -48,8 +50,8 @@ import           Text.Read                    (readMaybe)
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
 
 data Command
-    = UpdateJobset Text Text HydraJobset         -- only update it, never create
-    | CreateOrUpdateJobset Text Text HydraJobset -- create or update.
+    = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
+    | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
     deriving (Show)
 
@@ -99,7 +101,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
         -- allow us to find them and delete them later.
         liftIO $ do
             putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            writeQ queue (UpdateJobset projName jobsetName jobset)
+            writeQ queue (UpdateJobset repoName projName jobsetName jobset)
 
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
@@ -115,7 +117,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
 
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
+            writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
 pushHook _queue _ (_, ev) = liftIO $ do
     putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
@@ -175,31 +177,33 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
     --  flake = "github:${info.head.repo.owner.login}/${info.head.repo.name}/${info.head.ref}";
     --
     --
+    let repoName = whRepoFullName (evPullReqRepo ev)
     let jobset = defHydraFlakeJobset
             { hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
             , hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev)
-            , hjFlake = "github:" <> whRepoFullName (evPullReqRepo ev)
+            , hjFlake = "github:" <> repoName
                                 <> "/"
                                 <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
             }
 
-        projName = repoToProject (whRepoFullName (evPullReqRepo ev))
+        projName = repoToProject repoName
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
     liftIO $ do
         putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        writeQ queue (CreateOrUpdateJobset projName jobsetName jobset)
+        writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
-    let projName = repoToProject (whRepoFullName (evPullReqRepo ev))
+    let repoName = whRepoFullName (evPullReqRepo ev)
+        projName = repoToProject repoName
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
     let jobset = defHydraFlakeJobset
             { hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
             , hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev)
-            , hjFlake = "github:" <> whRepoFullName (evPullReqRepo ev)
-                                <> "/"
-                                <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
+            , hjFlake = "github:" <> repoName
+                                  <> "/"
+                                  <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
             -- setting visiblity seems to have no effect...
             , hjVisible = False
             -- ... so we just disable it.
@@ -211,13 +215,16 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
     -- allow us to find them and delete them later.
     liftIO $ do
         putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        writeQ queue (UpdateJobset projName jobsetName jobset)
+        writeQ queue (UpdateJobset repoName projName jobsetName jobset)
 
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
 repoToProject :: Text -> Text
 repoToProject = Text.replace "/" "-" . Text.replace "." "-"
+
+splitRepo :: Text -> (Text, Text)
+splitRepo repo = let org:proj:_ = Text.splitOn "-" repo in (org, proj)
 
 -- Issue Comment Hook
 type IssueCommentHookAPI =
@@ -236,19 +243,34 @@ singleEndpoint :: TChan Command -> Server SingleHookEndpointAPI
 singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue)
 
 handleCmd :: Command -> ClientM ()
-handleCmd (CreateOrUpdateJobset projName jobsetName jobset) = do
+handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
-    mkJobset projName jobsetName jobset
+    mkJobset projName jobsetName jobset `catch` \case
+        e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
+            let (org, proj) = splitRepo repoName
+            mkProject projName (defHydraProject { hpName = projName
+                                                , hpDisplayname = proj
+                                                , hpHomepage = "https://github.com/" <> repoName
+                                                })
+            mkJobset projName jobsetName jobset
+        e -> throwM e
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
 
-handleCmd (UpdateJobset projName jobsetName jobset) = do
+handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     -- ensure we try to get this first, ...
     getJobset projName jobsetName
     -- if get fails, no point in making one.
-    mkJobset projName jobsetName jobset
+    mkJobset projName jobsetName jobset `catch` \case
+        e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
+            let (org, proj) = splitRepo repoName
+            mkProject projName (defHydraProject { hpName = projName
+                                                , hpDisplayname = proj
+                                                , hpHomepage = "https://github.com/" <> repoName
+                                                })
+        e -> throwM e
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)

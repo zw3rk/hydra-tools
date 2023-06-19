@@ -36,6 +36,33 @@ instance ToJSON HydraPush where
 instance FromJSON HydraPush where
     parseJSON = genericParseJSON $ aesonDrop 1 camelCase
 
+data HydraProject = HydraProject
+  { hpName             :: Text
+  , hpDisplayname      :: Text
+  , hpDescription      :: Text
+  , hpHomepage         :: Text
+  , hpOwner            :: Text
+  , hpEnabled          :: Bool
+  , hpVisible          :: Bool
+  } deriving (Show, Eq, Generic)
+
+defHydraProject = HydraProject
+        { hpEnabled = True
+        , hpVisible = True
+        , hpOwner = "bridge"
+        , hpName = ""
+        , hpDisplayname = ""
+        , hpDescription = ""
+        , hpHomepage = ""
+        }
+
+instance ToJSON HydraProject where
+  toJSON = genericToJSON $ aesonDrop 2 camelCase
+
+instance FromJSON HydraProject where
+  parseJSON = genericParseJSON $ aesonDrop 2 camelCase
+
+
 data HydraJobset = HydraJobset
   { hjName             :: Text
   , hjDescription      :: Text
@@ -96,7 +123,12 @@ instance FromJSON HydraJobsetResp where
   parseJSON = genericParseJSON $ aesonDrop 4 camelCase
 
 
-type HydraAPI = "jobset"
+type HydraAPI = "project"
+                :> Capture "project-id" Text
+                :> ReqBody '[JSON] HydraProject
+                -- allow 200 (update) and 201 (created) responses.
+                :> UVerb 'PUT '[JSON] '[WithStatus 200 Object, WithStatus 201 Object]
+              :<|> "jobset"
                 :> Capture "project-id" Text
                 :> Capture "jobset-id" Text
                 :> ReqBody '[JSON] HydraJobset
@@ -119,10 +151,13 @@ type HydraAPI = "jobset"
                 :> QueryParam "jobsets" Text
                 :> Put '[JSON] Value
 
+mkProject :: Text -> HydraProject -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
 mkJobset :: Text -> Text -> HydraJobset -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
 getJobset :: Text -> Text -> ClientM Value
 rmJobset :: Text -> Text -> ClientM Value
 login :: Maybe Text -> HydraLogin -> ClientM Value
 push :: Maybe Text -> ClientM Value
 
-mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push = client (Proxy @HydraAPI)
+-- This will provide us with the definitions for mkProject, mkJobset, ... push,
+-- by generating a @client@ for the specified @HydraAPI@.
+mkProject :<|> mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push = client (Proxy @HydraAPI)
