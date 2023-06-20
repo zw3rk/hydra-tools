@@ -32,6 +32,7 @@ import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
 import           Servant.API
 import           Servant.Client                          hiding (manager)
 
+import           System.Exit                             (die)
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
                                                           stdin, stdout)
@@ -110,13 +111,15 @@ parseGitHubFlakeURI _ = Nothing
 
 toHydraNotification :: Notification -> HydraNotification
 toHydraNotification Notification { notificationChannel = chan, notificationData = payload}
-    | chan == "eval_started"   = let [_, jid]      = words (BS.unpack payload) in EvalStarted (read jid)
-    | chan == "eval_added"     = let [_, jid, eid] = words (BS.unpack payload) in EvalAdded (read jid) (read eid)
-    | chan == "eval_cached"    = let [_, jid, eid] = words (BS.unpack payload) in EvalCached (read jid) (read eid)
-    | chan == "eval_failed"    = let [_, jid]      = words (BS.unpack payload) in EvalFailed (read jid)
-    | chan == "build_queued"   = let [bid]         = words (BS.unpack payload) in BuildQueued (read bid)
-    | chan == "build_started"  = let [bid]         = words (BS.unpack payload) in BuildStarted (read bid)
-    | chan == "build_finished" = let [bid]         = words (BS.unpack payload) in BuildFinished (read bid)
+    | chan == "eval_started",   [_, jid]      <- words (BS.unpack payload) = EvalStarted (read jid)
+    | chan == "eval_added",     [_, jid, eid] <- words (BS.unpack payload) = EvalAdded (read jid) (read eid)
+    | chan == "eval_cached",    [_, jid, eid] <- words (BS.unpack payload) = EvalCached (read jid) (read eid)
+    | chan == "eval_failed",    [_, jid]      <- words (BS.unpack payload) = EvalFailed (read jid)
+    | chan == "build_queued",   [bid]         <- words (BS.unpack payload) = BuildQueued (read bid)
+    | chan == "build_started",  [bid]         <- words (BS.unpack payload) = BuildStarted (read bid)
+    | chan == "build_finished", [bid]         <- words (BS.unpack payload) = BuildFinished (read bid)
+    | otherwise = error $ "Unhandled payload for chan: " ++ BS.unpack chan ++ ": " ++ BS.unpack payload
+
 
 
 whenJob :: Text -> IO (Maybe GitHubStatus) -> IO (Maybe GitHubStatus)
