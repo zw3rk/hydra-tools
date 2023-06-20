@@ -119,63 +119,62 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "build_finished" = let [bid]         = words (BS.unpack payload) in BuildFinished (read bid)
 
 
+whenJob :: Text -> IO (Maybe GitHubStatus) -> IO (Maybe GitHubStatus)
+whenJob job action | or [prefix `Text.isPrefixOf` job | prefix <- [ "required", "nonrequired" ]] = action
+                   | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure Nothing
+
+withGithubFlake :: Text -> (Text -> Text -> Text -> IO (Maybe GitHubStatus)) -> IO (Maybe GitHubStatus)
+withGithubFlake flake action | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
+                             | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure Nothing
+
 handleHydraNotification :: Connection -> Text -> HydraNotification -> IO (Maybe GitHubStatus)
 handleHydraNotification conn host e = flip catch (handler e) $ case e of
     -- Evaluations
     (EvalStarted jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
-        case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
-            _ -> pure $ Nothing
+        withGithubFlake flake $ \owner repo hash -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+
     (EvalAdded jid eid) -> do
         [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-        case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
+        withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
-            _ -> pure $ Nothing
+
     (EvalCached jid eid) -> do
         [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-        case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
+        withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
-            _ -> pure $ Nothing
+
     (EvalFailed jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
-        case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
-            _ -> pure $ Nothing
+        withGithubFlake flake $ \owner repo hash ->
+            pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+
     -- Builds
     (BuildQueued bid) -> do
         [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
-        if job `elem` [ "required", "nonrequired" ] then
-            case parseGitHubFlakeURI flake of
-                Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
-                _ -> pure $ Nothing
-        else pure $ Nothing
+        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+            pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
 
     (BuildStarted bid) -> do
         [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
-        if job `elem` [ "required", "nonrequired" ] then
-            case parseGitHubFlakeURI flake of
-                Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
-                _ -> pure $ Nothing
-        else pure $ Nothing
+        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+            pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
 
     -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
     (BuildFinished bid) -> do
@@ -183,11 +182,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1, 0) :: (Int, Int)) = Success
                      | otherwise   = Failure
-        if (or [prefix `Text.isPrefixOf` job | prefix <- [ "required", "nonrequired" ]]) then
-            case parseGitHubFlakeURI flake of
-                Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Finished.") ("ci/hydra-build:" <> job)))
-                _ -> pure $ Nothing
-        else pure $ Nothing
+        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+            pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Finished.") ("ci/hydra-build:" <> job)))
 
     -- _ -> print e >> pure Nothing
 
