@@ -9,7 +9,7 @@ module Main where
 
 import           Control.Concurrent
 import           Control.Concurrent.STM                  (TChan, atomically,
-                                                          newTChan, newTVarIO,
+                                                          newTChan,
                                                           readTChan, writeTChan)
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
@@ -27,11 +27,10 @@ import           System.Environment                      (lookupEnv)
 import           Data.Aeson                              hiding (Error, Success)
 import           Data.Aeson.Casing
 import           Data.Proxy
-import           Network.HTTP.Client                     (defaultManagerSettings,
-                                                          newManager)
+import           Network.HTTP.Client                     (newManager)
 import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
 import           Servant.API
-import           Servant.Client
+import           Servant.Client                          hiding (manager)
 
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
@@ -184,13 +183,13 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1, 0) :: (Int, Int)) = Success
                      | otherwise   = Failure
-        if job `elem` [ "required", "nonrequired" ] then
+        if (or [prefix `Text.isPrefixOf` job | prefix <- [ "required", "nonrequired" ]]) then
             case parseGitHubFlakeURI flake of
                 Just (owner, repo, hash) -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Finished.") ("ci/hydra-build:" <> job)))
                 _ -> pure $ Nothing
         else pure $ Nothing
 
-    _ -> print e >> pure Nothing
+    -- _ -> print e >> pure Nothing
 
   where handler :: HydraNotification -> SomeException -> IO (Maybe GitHubStatus)
         handler n ex = print (show n ++ " triggert exception " ++ displayException ex) >> pure Nothing
@@ -254,7 +253,7 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
     queue <- atomically $ newTChan
-    forkIO $ forever $ statusHandler token queue
+    _threadId <- forkIO $ forever $ statusHandler token queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)

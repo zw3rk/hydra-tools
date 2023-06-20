@@ -118,11 +118,19 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
-    | ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]
+    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
     = liftIO $ do
-        putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit to " ++ show ref ++ " causing HEAD SHA to become:"
-        print $ (fromJust . evPushHeadSha) ev
+        let projName = repoToProject repoName
+            jobsetName = Text.drop (Text.length "refs/heads/") ref
+            jobset = defHydraFlakeJobset
+                { hjName = jobsetName
+                , hjDescription = jobsetName <> " branch"
+                , hjFlake = "github:" <> repoName <> "/" <> headSha
+                }
 
+        liftIO $ do
+            putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+            writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
 pushHook _queue _ (_, ev) = liftIO $ do
     putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
@@ -247,20 +255,23 @@ type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|
 singleEndpoint :: TChan Command -> Server SingleHookEndpointAPI
 singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue)
 
+-- combinator for handing 404 (not found)
+on404 :: ClientM a -> ClientM a -> ClientM a
+on404 a b = a `catchError` handle
+    where handle (FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) = b
+          handle e = throwError e
+
 handleCmd :: Command -> ClientM ()
 handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
-    mkJobset projName jobsetName jobset `catchError` \case
-        e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
+    mkJobset projName jobsetName jobset `on404` do
             let (org, proj) = splitRepo repoName
             mkProject projName (defHydraProject { hpName = projName
                                                 , hpDisplayname = proj
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
             mkJobset projName jobsetName jobset
-        e -> do
-            liftIO $ print $ "Caught mkJobset Exception: " ++ show e
-            throwError e
+
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
     return ()
@@ -270,16 +281,14 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
     -- ensure we try to get this first, ...
     getJobset projName jobsetName
     -- if get fails, no point in making one.
-    mkJobset projName jobsetName jobset `catchError` \case
-        e@(FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) -> do
+    mkJobset projName jobsetName jobset `on404` do
             let (org, proj) = splitRepo repoName
             mkProject projName (defHydraProject { hpName = projName
                                                 , hpDisplayname = proj
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
-        e -> do
-            liftIO $ print $ "Caught mkJobset Exception: " ++ show e
-            throwError e
+            mkJobset projName jobsetName jobset
+
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
     push $ Just (projName <> ":" <> jobsetName)
