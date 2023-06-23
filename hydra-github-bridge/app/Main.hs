@@ -123,7 +123,7 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
 
 
 whenJob :: Text -> IO (Maybe GitHubStatus) -> IO (Maybe GitHubStatus)
-whenJob job action | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job | name <- [ "required", "nonrequired" ]] = action
+whenJob job action | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
                    | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure Nothing
 
 withGithubFlake :: Text -> (Text -> Text -> Text -> IO (Maybe GitHubStatus)) -> IO (Maybe GitHubStatus)
