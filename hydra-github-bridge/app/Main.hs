@@ -122,9 +122,10 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
 
 
 
-whenJob :: Text -> IO (Maybe GitHubStatus) -> IO (Maybe GitHubStatus)
-whenJob job action | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
-                   | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure Nothing
+whenStatusOrJob :: (Maybe StatusState) -> Text -> IO (Maybe GitHubStatus) -> IO (Maybe GitHubStatus)
+whenStatusOrJob status job action | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
+                                  | Just s <- status, s `elem` [Failure, Error] = action
+                                  | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure Nothing
 
 withGithubFlake :: Text -> (Text -> Text -> Text -> IO (Maybe GitHubStatus)) -> IO (Maybe GitHubStatus)
 withGithubFlake flake action | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
@@ -168,7 +169,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
-        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
 
     (BuildStarted bid) -> do
@@ -176,7 +177,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | finished == (1 :: Int) = Success
                      | otherwise   = Failure
-        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
 
     -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
@@ -185,7 +186,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1, 0) :: (Int, Int)) = Success
                      | otherwise   = Failure
-        whenJob job $ withGithubFlake flake $ \owner repo hash ->
+        whenStatusOrJob (Just ghStatus) job $ withGithubFlake flake $ \owner repo hash ->
             pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Finished.") ("ci/hydra-build:" <> job)))
 
     -- _ -> print e >> pure Nothing
