@@ -117,7 +117,8 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "eval_failed",    [_, jid]      <- words (BS.unpack payload) = EvalFailed (read jid)
     | chan == "build_queued",   [bid]         <- words (BS.unpack payload) = BuildQueued (read bid)
     | chan == "build_started",  [bid]         <- words (BS.unpack payload) = BuildStarted (read bid)
-    | chan == "build_finished", [bid]         <- words (BS.unpack payload) = BuildFinished (read bid)
+    -- build_finished sometimes contains the bid twice, may be a bug in Hydra
+    | chan == "build_finished", (bid:_)       <- words (BS.unpack payload) = BuildFinished (read bid)
     | otherwise = error $ "Unhandled payload for chan: " ++ BS.unpack chan ++ ": " ++ BS.unpack payload
 
 
