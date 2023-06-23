@@ -9,8 +9,8 @@ module Main where
 
 import           Control.Concurrent
 import           Control.Concurrent.STM                  (TChan, atomically,
-                                                          newTChan,
-                                                          readTChan, writeTChan)
+                                                          newTChan, readTChan,
+                                                          writeTChan)
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
 import           Control.Monad

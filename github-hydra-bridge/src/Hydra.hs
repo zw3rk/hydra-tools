@@ -37,13 +37,13 @@ instance FromJSON HydraPush where
     parseJSON = genericParseJSON $ aesonDrop 1 camelCase
 
 data HydraProject = HydraProject
-  { hpName             :: Text
-  , hpDisplayname      :: Text
-  , hpDescription      :: Text
-  , hpHomepage         :: Text
-  , hpOwner            :: Text
-  , hpEnabled          :: Bool
-  , hpVisible          :: Bool
+  { hpName        :: Text
+  , hpDisplayname :: Text
+  , hpDescription :: Text
+  , hpHomepage    :: Text
+  , hpOwner       :: Text
+  , hpEnabled     :: Bool
+  , hpVisible     :: Bool
   } deriving (Show, Eq, Generic)
 
 defHydraProject = HydraProject
