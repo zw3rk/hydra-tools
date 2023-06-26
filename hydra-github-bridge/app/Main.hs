@@ -117,7 +117,6 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "eval_failed",    [_, jid]      <- words (BS.unpack payload) = EvalFailed (read jid)
     | chan == "build_queued",   [bid]         <- words (BS.unpack payload) = BuildQueued (read bid)
     | chan == "build_started",  [bid]         <- words (BS.unpack payload) = BuildStarted (read bid)
-    -- build_finished sometimes contains the bid twice, may be a bug in Hydra
     | chan == "build_finished", (bid:_)       <- words (BS.unpack payload) = BuildFinished (read bid)
     | otherwise = error $ "Unhandled payload for chan: " ++ BS.unpack chan ++ ": " ++ BS.unpack payload
 
@@ -262,7 +261,7 @@ main = do
         _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN build_queued" -- (build id)
         _ <- execute_ conn "LISTEN build_started" -- (build id)
-        _ <- execute_ conn "LISTEN build_finished" -- (build id)
+        _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
         -- _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
         -- _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
         -- _ <- forkIO $ do
