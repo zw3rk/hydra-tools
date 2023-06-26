@@ -19,6 +19,7 @@ executable hydra-github-bridge
                     , postgresql-simple
                     , bytestring
                     , text
+                    , regex-tdfa
                     , stm
                     , http-client
                     , http-client-tls

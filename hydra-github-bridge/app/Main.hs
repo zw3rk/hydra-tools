@@ -23,9 +23,11 @@ import           Database.PostgreSQL.Simple
 import           Database.PostgreSQL.Simple.Notification
 import           GHC.Generics
 import           System.Environment                      (lookupEnv)
+import           Text.Regex.TDFA                         ((=~))
 
 import           Data.Aeson                              hiding (Error, Success)
 import           Data.Aeson.Casing
+import           Data.Maybe                              (mapMaybe)
 import           Data.Proxy
 import           Network.HTTP.Client                     (newManager)
 import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
@@ -187,9 +189,17 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
             withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (Just err,_) | Text.null err -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just $ "Evaluation has errors in jobs: " <> (Text.intercalate ", " $ evalFailedJobs err)) "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
+
+        evalFailedJobs :: Text -> [Text]
+        evalFailedJobs errormsg = mapMaybe
+            (\line -> case line =~ ("^in job ‘([^’]*)’:$" :: Text) :: (Text, Text, Text, [Text]) of
+                (_, _, _, (job:_)) -> Just job
+                _                  -> Nothing)
+            (Text.lines errormsg)
 
 -- GitHub Status PI
 -- /repos/{owner}/{repo}/statuses/{sha} with
