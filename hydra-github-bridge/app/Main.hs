@@ -139,23 +139,9 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
         withGithubFlake flake $ \owner repo hash -> pure $ Just (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
 
-    (EvalAdded jid eid) -> do
-        [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
-        [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
-        Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-        withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
-                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
+    (EvalAdded eid jid) -> handleEvalAddedOrCached eid jid "Added"
 
-    (EvalCached jid eid) -> do
-        [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
-        [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
-        Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-        withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
-                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
-                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
+    (EvalCached eid jid) -> handleEvalAddedOrCached eid jid "Cached"
 
     (EvalFailed jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
@@ -191,8 +177,19 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
 
     -- _ -> print e >> pure Nothing
 
-  where handler :: HydraNotification -> SomeException -> IO (Maybe GitHubStatus)
+    where
+        handler :: HydraNotification -> SomeException -> IO (Maybe GitHubStatus)
         handler n ex = print (show n ++ " triggert exception " ++ displayException ex) >> pure Nothing
+
+        handleEvalAddedOrCached :: EvalRecordId -> JobSetId -> Text -> IO (Maybe GitHubStatus)
+        handleEvalAddedOrCached eid jid eventName = do
+            [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
+            [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
+            Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
+            withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
+                (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
+                (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
+                _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
 
 -- GitHub Status PI
 -- /repos/{owner}/{repo}/statuses/{sha} with
