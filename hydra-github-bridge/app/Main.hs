@@ -141,9 +141,9 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
         withGithubFlake flake $ \owner repo hash -> pure $ [(GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))]
 
-    (EvalAdded eid jid) -> handleEvalDone eid jid "Added"
+    (EvalAdded jid eid) -> handleEvalDone jid eid "Added"
 
-    (EvalCached eid jid) -> handleEvalDone eid jid "Cached"
+    (EvalCached jid eid) -> handleEvalDone jid eid "Cached"
 
     (EvalFailed jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
@@ -183,8 +183,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         handler :: HydraNotification -> SomeException -> IO [GitHubStatus]
         handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHubStatus])
 
-        handleEvalDone :: EvalRecordId -> JobSetId -> Text -> IO [GitHubStatus]
-        handleEvalDone eid jid eventName = do
+        handleEvalDone :: JobSetId -> EvalRecordId -> Text -> IO [GitHubStatus]
+        handleEvalDone jid eid eventName = do
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
             [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
