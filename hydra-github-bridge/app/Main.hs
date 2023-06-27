@@ -181,7 +181,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
 
     where
         handler :: HydraNotification -> SomeException -> IO [GitHubStatus]
-        handler n ex = print (show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHubStatus])
+        handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHubStatus])
 
         handleEvalDone :: EvalRecordId -> JobSetId -> Text -> IO [GitHubStatus]
         handleEvalDone eid jid eventName = do
