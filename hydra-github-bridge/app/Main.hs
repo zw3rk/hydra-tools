@@ -1,9 +1,12 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# LANGUAGE TypeOperators     #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeOperators         #-}
 
 module Main where
 
@@ -34,7 +37,6 @@ import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
 import           Servant.API
 import           Servant.Client                          hiding (manager)
 
-import           System.Exit                             (die)
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
                                                           stdin, stdout)
@@ -153,18 +155,14 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
 
     -- Builds
     (BuildQueued bid) -> do
-        [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc)] <- query conn "select j.project, j.name, j.flake, b.job, b.description from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let ghStatus | finished == (1 :: Int) = Success
-                     | otherwise   = Failure
         whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ [(GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))]
 
     (BuildStarted bid) -> do
-        [(proj, name, flake, job, desc, finished)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc)] <- query conn "select j.project, j.name, j.flake, b.job, b.description from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let ghStatus | finished == (1 :: Int) = Success
-                     | otherwise   = Failure
         whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ [(GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))]
 
@@ -252,16 +250,16 @@ statusHandler token queue = do
     print action
     manager <- newManager tlsManagerSettings
     let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
-    putStrLn $ BSL.unpack $ encode (payload action)
+    putStrLn $ BSL.unpack $ encode action.payload
     res <- flip runClientM env $ do
         mkStatus (Just "hydra-github-bridge")
                  (Just "application/vnd.github+json")
                  (Just token)
                  (Just "2022-11-28")
-                 (owner action)
-                 (repo action)
-                 (sha action)
-                 (payload action)
+                 action.owner
+                 action.repo
+                 action.sha
+                 action.payload
     print res
     -- todo make servant client request
 
@@ -294,6 +292,5 @@ main = do
         -- _ <- forkIO $ do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
-            handleHydraNotification conn (Text.pack host) note >>= \case
-                statuses -> atomically $ forM_ statuses $ \status -> writeTChan queue status
-                []       -> pure ()
+            handleHydraNotification conn (Text.pack host) note >>= \statuses ->
+                atomically $ forM_ statuses $ \status -> writeTChan queue status
