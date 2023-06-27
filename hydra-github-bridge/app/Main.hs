@@ -189,18 +189,19 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
             withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | Text.null err -> [(GitHubStatus owner repo hash (
-                    GitHubStatusPayload Failure
-                        {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                        {- description: -} (Just "Evaluation has errors.")
-                        "ci/eval"))]
-                (Just err,_) | not (Text.null err) -> map
-                    (\job -> (GitHubStatus owner repo hash
-                        (GitHubStatusPayload Failure
+                (Just err,_) | not (Text.null err) ->
+                    [(GitHubStatus owner repo hash (
+                        GitHubStatusPayload Failure
                             {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                            {- description: -} (Just "Evaluation failed.")
-                            ("ci/eval:" <> job))))
-                    (parseFailedJobEvals err)
+                            {- description: -} (Just "Evaluation has errors.")
+                            "ci/eval"))]
+                    ++ map
+                        (\job -> (GitHubStatus owner repo hash
+                            (GitHubStatusPayload Failure
+                                {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
+                                {- description: -} (Just "Evaluation failed.")
+                                ("ci/eval:" <> job))))
+                        (parseFailedJobEvals err)
                 (_,Just err) | not (Text.null err) -> [(GitHubStatus owner repo hash
                     (GitHubStatusPayload Failure
                         {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
