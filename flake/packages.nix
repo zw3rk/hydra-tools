@@ -20,7 +20,7 @@
           (final: prev: {
             github-hydra-bridge = final.haskell-nix.project' {
               src = ../github-hydra-bridge;
-              compiler-nix-name = "ghc8107";
+              compiler-nix-name = "ghc927";
             };
             hydra-github-bridge = final.haskell-nix.project' {
               src = ../hydra-github-bridge;

@@ -7,3 +7,5 @@ source-repository-package
    type: git
    location: https://github.com/input-output-hk/servant-github-webhook
    tag: 9418ceed4b962368d90079143987e1fc67d27b31
+   subdir:
+     .
