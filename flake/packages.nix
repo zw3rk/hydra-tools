@@ -1,6 +1,8 @@
 {
   inputs,
   config,
+  lib,
+  withSystem,
   ...
 }: {
   perSystem = {
@@ -35,5 +37,17 @@
     };
   };
 
-  flake.hydraJobs = config.flake.packages;
+  flake.hydraJobs =
+    builtins.mapAttrs
+    (lib.flip withSystem (
+      {pkgs, ...}: v:
+        v
+        // {
+          required = pkgs.releaseTools.aggregate {
+            name = "required";
+            constituents = lib.collect lib.isDerivation v;
+          };
+        }
+    ))
+    config.flake.packages;
 }
