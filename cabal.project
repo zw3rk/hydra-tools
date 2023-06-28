@@ -1,3 +1,9 @@
-index-state: 2023-04-28T00:00:00Z
+-- Currenlty build with ghc-9.2
+index-state: 2023-06-28T05:23:25Z
 
 packages: github-hydra-bridge hydra-github-bridge
+
+source-repository-package
+   type: git
+   location: https://github.com/input-output-hk/servant-github-webhook
+   tag: 9418ceed4b962368d90079143987e1fc67d27b31
