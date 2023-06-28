@@ -156,20 +156,20 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
 
     -- Builds
     (BuildQueued bid) -> do
-        [(proj, name, flake, job, desc)] <- query conn "select j.project, j.name, j.flake, b.job, b.description from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
 
     (BuildStarted bid) -> do
-        [(proj, name, flake, job, desc)] <- query conn "select j.project, j.name, j.flake, b.job, b.description from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
             pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
 
     -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
     (BuildFinished bid) -> do
-        [(proj, name, flake, job, desc, finished, status)] <- query conn "select j.project, j.name, j.flake, b.job, b.description, b.finished, b.buildstatus from builds b JOIN jobsets j on (b.jobset_id = j.id) where b.id = ?" (Only bid)
+        [(proj, name, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let ghStatus | (finished, status) == ((1, 0) :: (Int, Int)) = Success
                      | otherwise   = Failure
@@ -181,6 +181,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
     where
         handler :: HydraNotification -> SomeException -> IO [GitHubStatus]
         handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHubStatus])
+
+        sqlFromBuild = " from builds b JOIN jobsets j on b.jobset_id = j.id JOIN jobsetevalmembers m on m.build = b.id JOIN jobsetevals e on e.id = m.eval where b.id = ? order by e.id desc fetch first row only"
 
         handleEvalDone :: JobSetId -> EvalRecordId -> Text -> IO [GitHubStatus]
         handleEvalDone jid eid eventName = do
