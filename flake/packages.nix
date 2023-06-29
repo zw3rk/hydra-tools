@@ -18,20 +18,17 @@
         overlays = [
           inputs.haskellNix.overlay
           (final: prev: {
-            github-hydra-bridge = final.haskell-nix.project' {
-              src = ../github-hydra-bridge;
-              compiler-nix-name = "ghc8107";
-            };
-            hydra-github-bridge = final.haskell-nix.project' {
-              src = ../hydra-github-bridge;
-              compiler-nix-name = "ghc927";
+            hydra-tools = final.haskell-nix.project' {
+              src = ../.;
+              compiler-nix-name = "ghc92";
+              inputMap."https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
             };
           })
         ];
       };
     in {
-      github-hydra-bridge = haskellPkgs.github-hydra-bridge.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
-      hydra-github-bridge = haskellPkgs.hydra-github-bridge.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
+      github-hydra-bridge = haskellPkgs.hydra-tools.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
+      hydra-github-bridge = haskellPkgs.hydra-tools.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
 
       hydra-crystal-notify = (pkgs.callPackage ../hydra-crystal-notify {}).hydra-crystal-notify;
     };

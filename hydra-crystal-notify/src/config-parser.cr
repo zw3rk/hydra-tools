@@ -29,7 +29,7 @@ def parseConfig(cfgFile)
   authVal = /\s*[\w-]+\s*=\s*[\w-]+\s[0-9a-zA-Z_]+\s*$/
 
   # Optional notify job conf keys and regex format
-  notifyOptVal = {"context" => /^[\w-:]+$/}
+  notifyOptVal = {"context" => /^[\w:-]+$/}
 
   # Expected notify job conf keys and regex format
   notifyVal = {"jobs"                    => /^[^:]+:[^:]+:[^:]+$/,
