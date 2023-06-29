@@ -9,6 +9,8 @@
       url = github:numtide/treefmt-nix;
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    servant-github-webhook.url = github:input-output-hk/servant-github-webhook;
+    servant-github-webhook.flake = false;
   };
 
   outputs = inputs:
