@@ -1,0 +1,41 @@
+cabal-version:       2.2
+name:                disk-store
+version:             0.1.0
+synopsis:            A simple method of storing and retrieving status line data
+description:         This project uses servant and aeson-schemas to handle incoming webhook requests from GitHub and run desired CI tasks.
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              IOHK Engineering Team
+maintainer:          operations@iohk.io
+copyright:           (c) 2023 IOG
+category:            CI
+build-type:          Simple
+extra-source-files:  CHANGELOG.md
+
+library
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror
+  hs-source-dirs:      src
+  exposed-modules:     DiskStore
+  build-depends:       base >=4.7 && <5
+                     , directory
+                     , filepath
+                     , pretty-show
+                     , time
+
+test-suite test
+  default-language:     Haskell2010
+  type:                 exitcode-stdio-1.0
+  main-is:              test.hs
+  hs-source-dirs:       test
+
+  ghc-options:          -Wall -Werror
+
+  other-modules:        Test.DiskStore
+
+  build-depends:        base
+                      , directory
+                      , hedgehog
+                      , hedgehog-corpus
+                      , disk-store
+                      , temporary
