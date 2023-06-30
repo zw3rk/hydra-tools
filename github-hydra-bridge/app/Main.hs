@@ -4,17 +4,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators     #-}
 
--- import Data.Aeson
--- import Data.Aeson.Schemas
-
-import qualified Data.ByteString          as BS
+import           Control.Monad            (void)
 import qualified Data.ByteString.Char8    as C8
-import           GHC.Generics
 import           Lib
-import           Network.Wai              (Application)
 import           Network.Wai.Handler.Warp (run)
--- import Servant
--- import Servant.API.ContentTypes
 import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM   (atomically, newTChan)
 import qualified Data.Text                as Text
@@ -37,5 +30,5 @@ main = do
   host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
   putStrLn $ "Server is starting on port " ++ show port
   queue <- atomically $ newTChan
-  forkIO $ hydraClient host user pass queue
-  run port (app queue (gitHubKey $ pure key))
+  void . forkIO $ hydraClient host user pass queue
+  run port (app queue (gitHubKey key))

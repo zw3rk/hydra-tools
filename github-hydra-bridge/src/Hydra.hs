@@ -10,7 +10,6 @@ import           Data.Aeson
 import           Data.Aeson.Casing
 import           Data.Proxy
 import           Data.Text         (Text)
-import qualified Data.Text         as Text
 import           GHC.Generics
 import           Servant.API
 import           Servant.Client
@@ -46,6 +45,7 @@ data HydraProject = HydraProject
   , hpVisible     :: Bool
   } deriving (Show, Eq, Generic)
 
+defHydraProject :: HydraProject
 defHydraProject = HydraProject
         { hpEnabled = True
         , hpVisible = True
@@ -88,6 +88,7 @@ data HydraJobset = HydraJobset
   -- inputs
   } deriving (Show, Eq, Generic)
 
+defHydraJobset :: HydraJobset
 defHydraJobset = HydraJobset
         { hjEnabled = 1
         , hjVisible = True
@@ -101,6 +102,8 @@ defHydraJobset = HydraJobset
         , hjDescription = ""
         , hjFlake = ""
         }
+
+defHydraFlakeJobset :: HydraJobset
 defHydraFlakeJobset = defHydraJobset { hjType = 1 }
 
 instance ToJSON HydraJobset where

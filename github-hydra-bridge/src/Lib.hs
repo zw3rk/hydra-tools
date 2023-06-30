@@ -8,21 +8,17 @@
 {-# LANGUAGE TypeOperators         #-}
 module Lib where
 
-import           Data.Aeson
--- import Data.Aeson.Schemas
-
 import           Control.Concurrent.STM       (TChan, atomically, newTVarIO,
                                                readTChan, writeTChan)
-import           Control.Monad                (forever)
-import           Control.Monad.Error.Class    (catchError, throwError)
+import           Control.Monad                (forever, void)
+import           Control.Monad.Error.Class    (catchError)
 import           Control.Monad.IO.Class       (liftIO)
-import qualified Data.ByteString              as BS
-import qualified Data.ByteString.Char8        as C8
+-- import           Data.ByteString              as BS
+import           Data.ByteString.Char8        (ByteString)
 import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
-import           GHC.Generics
 import           GitHub.Data.Webhooks.Events  (IssueCommentEvent (..),
                                                PullRequestEvent (..),
                                                PullRequestEventAction (..),
@@ -33,13 +29,10 @@ import           GitHub.Data.Webhooks.Payload (HookIssueComment (..),
                                                HookUser (..),
                                                PullRequestTarget (..))
 import           Hydra
-import           Network.HTTP.Client          (defaultManagerSettings,
-                                               newManager)
+import           Network.HTTP.Client          (newManager)
 import           Network.HTTP.Client.TLS      (tlsManagerSettings)
 import           Network.HTTP.Types.Status    (Status (..))
 import           Servant
-import           Servant.API
-import           Servant.API.ContentTypes
 import           Servant.Client
 import qualified Servant.GitHub.Webhook       as SGH
 import           Servant.GitHub.Webhook       (GitHubEvent, GitHubSignedReqBody,
@@ -55,8 +48,8 @@ data Command
     | DeleteJobset Text Text
     deriving (Show)
 
-gitHubKey :: IO BS.ByteString -> GitHubKey
-gitHubKey k = GitHubKey (SGH.gitHubKey k)
+gitHubKey :: ByteString -> GitHubKey
+gitHubKey k = GitHubKey (SGH.gitHubKey $ pure k)
 
 instance HasContextEntry '[GitHubKey] (SGH.GitHubKey result) where
     getContextEntry (GitHubKey x :. _) = x
@@ -79,7 +72,7 @@ parseMergeQueueRef ref = do
     return (branchName, prNumber)
 
 pushHook :: TChan Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
+pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
     , "0000000000000000000000000000000000000000" == headSha
@@ -238,7 +231,10 @@ escapeHydraName :: Text -> Text
 escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
 
 splitRepo :: Text -> (Text, Text)
-splitRepo repo = let org:proj:_ = Text.splitOn "/" repo in (org, proj)
+splitRepo repo =
+  case Text.splitOn "/" repo of
+    (org:proj:_) -> (org, proj)
+    _ -> error $ "Lib.splitrepo on " ++ Text.unpack repo
 
 -- Issue Comment Hook
 type IssueCommentHookAPI =
@@ -265,26 +261,26 @@ on404 a b = a `catchError` handle
 handleCmd :: Command -> ClientM ()
 handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
-    mkJobset projName jobsetName jobset `on404` do
-            let (org, proj) = splitRepo repoName
-            mkProject projName (defHydraProject { hpName = projName
+    void $ mkJobset projName jobsetName jobset `on404` do
+            let proj = snd $ splitRepo repoName
+            void $ mkProject projName (defHydraProject { hpName = projName
                                                 , hpDisplayname = proj
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
             mkJobset projName jobsetName jobset
 
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    push $ Just (projName <> ":" <> jobsetName)
+    void $ push $ Just (projName <> ":" <> jobsetName)
     return ()
 
 handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     -- ensure we try to get this first, ...
-    getJobset projName jobsetName
+    void $ getJobset projName jobsetName
     -- if get fails, no point in making one.
-    mkJobset projName jobsetName jobset `on404` do
-            let (org, proj) = splitRepo repoName
-            mkProject projName (defHydraProject { hpName = projName
+    void $ mkJobset projName jobsetName jobset `on404` do
+            let proj = snd $ splitRepo repoName
+            void $ mkProject projName (defHydraProject { hpName = projName
                                                 , hpDisplayname = proj
                                                 , hpHomepage = "https://github.com/" <> repoName
                                                 })
@@ -292,21 +288,24 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
 
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    push $ Just (projName <> ":" <> jobsetName)
+    void $ push $ Just (projName <> ":" <> jobsetName)
     return ()
 
 handleCmd (DeleteJobset projName jobsetName) = do
-    rmJobset projName jobsetName
+    void $ rmJobset projName jobsetName
     return ()
 
+readQ :: TChan a -> IO a
 readQ = atomically . readTChan
+
+writeQ ::  TChan a -> a -> IO ()
 writeQ ch v = atomically $ writeTChan ch v
 
 hydraClient :: Text -> Text -> Text -> TChan Command -> IO ()
 hydraClient host user pass queue = do
-    manager <- newManager tlsManagerSettings
+    mgr <- newManager tlsManagerSettings
     jar <- newTVarIO mempty
-    let env = (mkClientEnv manager (BaseUrl Https (Text.unpack host) 443 ""))
+    let env = (mkClientEnv mgr (BaseUrl Https (Text.unpack host) 443 ""))
                 { cookieJar = Just jar}
 
     -- login first
