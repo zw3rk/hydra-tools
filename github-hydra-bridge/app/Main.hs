@@ -1,26 +1,27 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeOperators     #-}
 
 -- import Data.Aeson
 -- import Data.Aeson.Schemas
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
-import GHC.Generics
-import Lib
-import Network.Wai (Application)
-import Network.Wai.Handler.Warp (run)
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as C8
+import           GHC.Generics
+import           Lib
+import           Network.Wai              (Application)
+import           Network.Wai.Handler.Warp (run)
 -- import Servant
 -- import Servant.API.ContentTypes
-import System.Environment (lookupEnv)
-import Control.Concurrent.STM (newTChan, atomically)
-import Control.Concurrent (forkIO)
-import qualified Data.Text as Text
+import           Control.Concurrent       (forkIO)
+import           Control.Concurrent.STM   (atomically, newTChan)
+import qualified Data.Text                as Text
+import           System.Environment       (lookupEnv)
 
-import System.IO (hSetBuffering, stdin, stdout, stderr, BufferMode(LineBuffering))
+import           System.IO                (BufferMode (LineBuffering),
+                                           hSetBuffering, stderr, stdin, stdout)
 
 main :: IO ()
 main = do
@@ -33,7 +34,8 @@ main = do
   key <- maybe mempty C8.pack <$> lookupEnv "KEY"
   user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
   pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
-  putStrLn $ "Server is starting on port " ++ show port ++ " using test secret " ++ show key
+  host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
+  putStrLn $ "Server is starting on port " ++ show port
   queue <- atomically $ newTChan
-  forkIO $ hydraClient user pass queue
+  forkIO $ hydraClient host user pass queue
   run port (app queue (gitHubKey $ pure key))

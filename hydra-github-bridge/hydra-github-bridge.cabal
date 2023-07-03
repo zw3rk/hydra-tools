@@ -15,16 +15,17 @@ executable hydra-github-bridge
     import:           warnings
     main-is:          Main.hs
     -- other-modules:
-    build-depends:    base ^>=4.14
+    build-depends:    base >=4.16 && < 5
                     , postgresql-simple
                     , bytestring
                     , text
+                    , regex-tdfa
                     , stm
                     , http-client
                     , http-client-tls
                     , servant
                     , servant-client
-                    , aeson < 2.0
+                    , aeson
                     , aeson-casing
 
     ghc-options: -threaded -rtsopts
