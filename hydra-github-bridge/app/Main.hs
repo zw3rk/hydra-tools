@@ -55,8 +55,6 @@ data HydraNotification
     | BuildQueued BuildId
     | BuildStarted BuildId
     | BuildFinished BuildId
-    -- | CachedBuildQueued EvalId BuildId
-    -- | CachedBuildFinished EvalId BuildId
     deriving (Show, Eq)
 
 data StatusState = Error | Failure | Pending | Success
@@ -290,8 +288,6 @@ main = do
         _ <- execute_ conn "LISTEN build_queued" -- (build id)
         _ <- execute_ conn "LISTEN build_started" -- (build id)
         _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
-        -- _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
-        -- _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
         -- _ <- forkIO $ do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
