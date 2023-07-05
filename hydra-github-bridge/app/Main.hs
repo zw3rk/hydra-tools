@@ -187,30 +187,68 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
             [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-            withGithubFlake flake $ \owner repo hash -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                (Just err,_) | not (Text.null err) ->
-                    singleton (GitHubStatus owner repo hash (
-                        GitHubStatusPayload Failure
-                            {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                            {- description: -} (Just "Evaluation has errors.")
-                            "ci/eval"))
-                    ++ map
-                        (\job -> (GitHubStatus owner repo hash
-                            (GitHubStatusPayload Failure
+            withGithubFlake flake $ \owner repo hash -> do
+                evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
+                    (Just err,_) | not (Text.null err) ->
+                        singleton (GitHubStatus owner repo hash (
+                            GitHubStatusPayload Failure
                                 {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                                {- description: -} (Just "Evaluation failed.")
-                                ("ci/eval:" <> job))))
-                        (parseFailedJobEvals err)
-                (_,Just err) | not (Text.null err) -> singleton (GitHubStatus owner repo hash
-                    (GitHubStatusPayload Failure
-                        {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                        {- description: -} (Just "Failed to fetch.")
-                        "ci/eval"))
-                _ -> singleton (GitHubStatus owner repo hash
-                    (GitHubStatusPayload Success
-                        {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid)
-                        {- description: -} Nothing
-                        "ci/eval"))
+                                {- description: -} (Just "Evaluation has errors.")
+                                "ci/eval"))
+                        ++ map
+                            (\job -> (GitHubStatus owner repo hash
+                                (GitHubStatusPayload Failure
+                                    {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
+                                    {- description: -} (Just "Evaluation failed.")
+                                    ("ci/eval:" <> job))))
+                            (parseFailedJobEvals err)
+                    (_,Just err) | not (Text.null err) -> singleton (GitHubStatus owner repo hash
+                        (GitHubStatusPayload Failure
+                            {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
+                            {- description: -} (Just "Failed to fetch.")
+                            "ci/eval"))
+                    _ -> singleton (GitHubStatus owner repo hash
+                        (GitHubStatusPayload Success
+                            {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid)
+                            {- description: -} Nothing
+                            "ci/eval"))
+                -- If this evaluation has builds (is not identical to a previous one), this selects no rows.
+                -- Otherwise this selects all builds of the latest previous evaluation that differed from its predecessor.
+                -- We then submit a status for each of these builds to the jobset's flake URL (the current one).
+                -- This is necessary because `(cached_)?build_finished` notifications are not sent by Hydra
+                -- when an evaluation is identical to its predecessor / has no builds.
+                rows <- query conn "\
+                    \WITH prev_jobseteval AS (         \
+                    \    SELECT *                      \
+                    \    FROM jobsetevals              \
+                    \    WHERE                         \
+                    \        id < ? AND                \
+                    \        jobset_id = ? AND         \
+                    \        nrbuilds IS NOT NULL      \
+                    \    ORDER BY id DESC              \
+                    \    FETCH FIRST ROW ONLY          \
+                    \)                                 \
+                    \SELECT b.id, b.job, b.buildstatus \
+                    \FROM builds b                     \
+                    \JOIN prev_jobseteval e ON TRUE    \
+                    \JOIN jobsetevalmembers m ON       \
+                    \    m.build = b.id AND            \
+                    \    m.eval = e.id                 \
+                    \WHERE                             \
+                    \    b.finished = 1                \
+                \ " [eid, jid] :: IO [(Int, Text, Int)]
+                buildStatuses <- sequence $ map
+                    (\(bid, job, status) -> do
+                        let ghStatus | status == (0 :: Int) = Success
+                                     | otherwise            = Failure
+                        whenStatusOrJob (Just ghStatus) job $
+                            pure $ singleton $ GitHubStatus owner repo hash $
+                                GitHubStatusPayload ghStatus
+                                    {- target url: -} ("https://" <> host <> "/build/" <> tshow bid)
+                                    {- description: -} (Just "Build Finished.")
+                                    ("ci/hydra-build:" <> job))
+                    rows
+                pure $ evalStatuses ++ concat buildStatuses
 
         -- Given an evaluation's error message, returns the jobs that could not be evaluated.
         parseFailedJobEvals :: Text -> [Text]
