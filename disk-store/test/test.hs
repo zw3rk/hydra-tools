@@ -1,8 +1,8 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 
-import Hedgehog.Main (defaultMain)
+import           Hedgehog.Main  (defaultMain)
 
-import Test.DiskStore qualified
+import qualified Test.DiskStore
 
 main :: IO ()
 main =

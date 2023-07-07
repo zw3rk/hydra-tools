@@ -1,7 +1,7 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE TupleSections       #-}
 
 -- This module is designed to be imported qualified.
 module DsQueue
@@ -15,21 +15,22 @@ module DsQueue
   , writeMany
   ) where
 
-import Control.Concurrent.STM (STM, atomically, retry)
-import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVar, readTVar, writeTVar)
+import           Control.Concurrent.STM      (STM, atomically, retry)
+import           Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVar,
+                                              readTVar, writeTVar)
 
-import DiskStore (DiskStoreConfig (..))
-import DiskStore qualified
+import           DiskStore                   (DiskStoreConfig (..))
+import qualified DiskStore
 
 -- Need the following to be able to provide functions that would clash with Prelude.
 -- This module is intended to be imported qualified.
-import Prelude hiding (length, read)
-import Prelude qualified
+import           Prelude                     hiding (length, read)
+import qualified Prelude
 
 data DsQueue a = DsQueue
   { dsqDiskStoreConfig :: Maybe DiskStoreConfig
-  , dsqRead :: {-# UNPACK #-} TVar [a]
-  , dsqWrite :: {-# UNPACK #-} TVar [a]
+  , dsqRead            :: {-# UNPACK #-} TVar [a]
+  , dsqWrite           :: {-# UNPACK #-} TVar [a]
   }
 
 currentState :: DsQueue a -> IO [a]
@@ -49,7 +50,7 @@ new mdsc =
         exs <- DiskStore.retrieveLatest dsc
         case exs of
           Left _err -> mkDsQueue []
-          Right xs -> mkDsQueue xs
+          Right xs  -> mkDsQueue xs
   where
     mkDsQueue :: [a] -> IO (DsQueue a)
     mkDsQueue xs = atomically $ DsQueue mdsc <$> newTVar xs <*> newTVar []
@@ -64,7 +65,7 @@ read dsq = do
                     writeTVar (dsqRead dsq) rs
                     (r,) <$> readState dsq
     case dsqDiskStoreConfig dsq of
-      Nothing -> pure ()
+      Nothing   -> pure ()
       Just scfg -> DiskStore.save scfg state
     pure x
   where
@@ -90,7 +91,7 @@ write dsq x = do
             modifyTVar' (dsqWrite dsq) (x :)
             readState dsq
   case dsqDiskStoreConfig dsq of
-    Nothing -> pure ()
+    Nothing   -> pure ()
     Just scfg -> DiskStore.save scfg state
 
 writeMany :: Show a => DsQueue a -> [a] -> IO ()
@@ -99,7 +100,7 @@ writeMany dsq xs = do
             modifyTVar' (dsqWrite dsq) (reverse xs ++)
             readState dsq
   case dsqDiskStoreConfig dsq of
-    Nothing -> pure ()
+    Nothing   -> pure ()
     Just scfg -> DiskStore.save scfg state
 
 -- -------------------------------------------------------------------------------------------------

@@ -1,32 +1,33 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TypeApplications    #-}
 
 module Test.DsQueue
   ( tests
   , manualTest
   ) where
 
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (race)
-import Control.Exception.Lifted (bracket)
-import Control.Monad (void)
-import Control.Monad.Catch (MonadCatch, catch)
+import           Control.Concurrent       (threadDelay)
+import           Control.Concurrent.Async (race)
+import           Control.Exception.Lifted (bracket)
+import           Control.Monad            (void)
+import           Control.Monad.Catch      (MonadCatch, catch)
 
-import DiskStore (DiskStoreConfig (..))
-import DsQueue qualified
+import           DiskStore                (DiskStoreConfig (..))
+import qualified DsQueue
 
-import Hedgehog (Gen, Property, PropertyT, discover, (===))
-import Hedgehog qualified
-import Hedgehog.Gen qualified as Gen
-import Hedgehog.Range qualified as Range
+import           Hedgehog                 (Gen, Property, PropertyT, discover,
+                                           (===))
+import qualified Hedgehog
+import qualified Hedgehog.Gen             as Gen
+import qualified Hedgehog.Range           as Range
 
-import System.Directory (removeDirectoryRecursive)
-import System.IO.Temp (createTempDirectory)
+import           System.Directory         (removeDirectoryRecursive)
+import           System.IO.Temp           (createTempDirectory)
 
 prop_length_correct :: Property
 prop_length_correct =

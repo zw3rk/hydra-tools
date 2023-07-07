@@ -1,25 +1,25 @@
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell     #-}
 
 module Test.DiskStore
   ( tests
   ) where
 
-import Control.Monad.IO.Class (liftIO)
+import           Control.Monad.IO.Class (liftIO)
 
-import Data.List qualified as List
+import qualified Data.List              as List
 
-import Hedgehog (Gen, Property, discover, (===))
-import Hedgehog qualified
-import Hedgehog.Corpus qualified as Corpus
-import Hedgehog.Gen qualified as Gen
-import Hedgehog.Range qualified as Range
+import           Hedgehog               (Gen, Property, discover, (===))
+import qualified Hedgehog
+import qualified Hedgehog.Corpus        as Corpus
+import qualified Hedgehog.Gen           as Gen
+import qualified Hedgehog.Range         as Range
 
-import DiskStore (DiskStoreConfig (..))
-import DiskStore qualified
+import           DiskStore              (DiskStoreConfig (..))
+import qualified DiskStore
 
-import System.Directory (listDirectory)
-import System.IO.Temp (withTempDirectory)
+import           System.Directory       (listDirectory)
+import           System.IO.Temp         (withTempDirectory)
 
 prop_roundtrip :: Property
 prop_roundtrip =
@@ -60,8 +60,8 @@ prop_keep_count =
 -- -----------------------------------------------------------------------------
 
 data TestData = TestData
-  { tdInt :: Int
-  , tdBool :: Bool
+  { tdInt    :: Int
+  , tdBool   :: Bool
   , tdString :: String
   } deriving (Eq, Read, Show)
 

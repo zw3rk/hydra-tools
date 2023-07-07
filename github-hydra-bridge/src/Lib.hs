@@ -235,7 +235,7 @@ splitRepo :: Text -> (Text, Text)
 splitRepo repo =
   case Text.splitOn "/" repo of
     (org:proj:_) -> (org, proj)
-    _ -> error $ "Lib.splitrepo on " ++ Text.unpack repo
+    _            -> error $ "Lib.splitrepo on " ++ Text.unpack repo
 
 -- Issue Comment Hook
 type IssueCommentHookAPI =

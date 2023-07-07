@@ -1,5 +1,5 @@
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE StrictData #-}
+{-# LANGUAGE StrictData          #-}
 
 module DiskStore
   ( DiskStoreConfig (..)
@@ -7,22 +7,23 @@ module DiskStore
   , save
   ) where
 
-import Data.List qualified as List
-import Data.Ord (Down (..))
-import Data.Time (UTCTime)
-import Data.Time qualified as Time
+import qualified Data.List        as List
+import           Data.Ord         (Down (..))
+import           Data.Time        (UTCTime)
+import qualified Data.Time        as Time
 
-import System.Directory (listDirectory, removeFile)
-import System.FilePath (isExtensionOf, takeFileName, (</>))
-import System.IO (IOMode (WriteMode), hFlush, hPutStrLn, withFile)
+import           System.Directory (listDirectory, removeFile)
+import           System.FilePath  (isExtensionOf, takeFileName, (</>))
+import           System.IO        (IOMode (WriteMode), hFlush, hPutStrLn,
+                                   withFile)
 
-import Text.Read (readMaybe)
-import Text.Show.Pretty (ppShow)
+import           Text.Read        (readMaybe)
+import           Text.Show.Pretty (ppShow)
 
 
 data DiskStoreConfig = DiskStoreConfig
   { scDirectory :: FilePath -- The directory to store the state in.
-  , scName :: String        -- The file name prefix.
+  , scName      :: String        -- The file name prefix.
   , scKeepCount :: Int      -- How many files to keep (the most recent are kept.
   }
 

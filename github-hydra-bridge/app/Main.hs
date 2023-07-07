@@ -4,14 +4,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators     #-}
 
+import           Control.Concurrent       (forkIO)
 import           Control.Monad            (void)
 import qualified Data.ByteString.Char8    as C8
-import           Lib
-import           Network.Wai.Handler.Warp (run)
-import           Control.Concurrent       (forkIO)
 import qualified Data.Text                as Text
 import           DiskStore                (DiskStoreConfig (..))
 import qualified DsQueue
+import           Lib
+import           Network.Wai.Handler.Warp (run)
 import           System.Environment       (lookupEnv)
 
 import           System.IO                (BufferMode (LineBuffering),
