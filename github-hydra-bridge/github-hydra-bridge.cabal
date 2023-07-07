@@ -22,6 +22,7 @@ library
                      , aeson >=2.0.1.0
                      , aeson-schemas
                      , aeson-casing
+                     , ds-queue
                      , exceptions
                      , servant
                      , servant-server
@@ -42,9 +43,10 @@ executable github-hydra-bridge
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       base
+                     , disk-store
+                     , ds-queue
                      , github-hydra-bridge
                      , wai
                      , warp
                      , bytestring
-                     , stm
                      , text

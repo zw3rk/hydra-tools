@@ -8,8 +8,7 @@
 {-# LANGUAGE TypeOperators         #-}
 module Lib where
 
-import           Control.Concurrent.STM       (TChan, atomically, newTVarIO,
-                                               readTChan, writeTChan)
+import           Control.Concurrent.STM       (newTVarIO)
 import           Control.Monad                (forever, void)
 import           Control.Monad.Error.Class    (catchError)
 import           Control.Monad.IO.Class       (liftIO)
@@ -19,6 +18,8 @@ import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
+import           DsQueue                      (DsQueue)
+import qualified DsQueue
 import           GitHub.Data.Webhooks.Events  (IssueCommentEvent (..),
                                                PullRequestEvent (..),
                                                PullRequestEventAction (..),
@@ -46,7 +47,7 @@ data Command
     = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
     | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
-    deriving (Show)
+    deriving (Read, Show)
 
 gitHubKey :: ByteString -> GitHubKey
 gitHubKey k = GitHubKey (SGH.gitHubKey $ pure k)
@@ -71,7 +72,7 @@ parseMergeQueueRef ref = do
 
     return (branchName, prNumber)
 
-pushHook :: TChan Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook :: DsQueue Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
 pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
@@ -94,7 +95,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
         -- allow us to find them and delete them later.
         liftIO $ do
             putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            writeQ queue (UpdateJobset repoName projName jobsetName jobset)
+            DsQueue.write queue (UpdateJobset repoName projName jobsetName jobset)
 
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
@@ -110,8 +111,8 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
 
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
-    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
+            DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
     = liftIO $ do
         let projName = escapeHydraName repoName
             refName = Text.drop (Text.length "refs/heads/") ref
@@ -124,7 +125,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
 
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+            DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
 pushHook _queue _ (_, ev) = liftIO $ do
     putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
@@ -136,7 +137,7 @@ type PullRequestHookAPI =
     :> GitHubSignedReqBody '[JSON] PullRequestEvent
     :> Post '[JSON] ()
 
-pullRequestHook :: TChan Command -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook :: DsQueue Command -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
     | action `elem` [ PullRequestOpenedAction
                     , PullRequestReopenedAction
@@ -198,7 +199,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
 
     liftIO $ do
         putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+        DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
     let repoName = whRepoFullName (evPullReqRepo ev)
@@ -222,7 +223,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
     -- allow us to find them and delete them later.
     liftIO $ do
         putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        writeQ queue (UpdateJobset repoName projName jobsetName jobset)
+        DsQueue.write queue (UpdateJobset repoName projName jobsetName jobset)
 
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
@@ -249,7 +250,7 @@ issueCommentHook _ (_, ev) = liftIO $ do
 
 type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI)
 
-singleEndpoint :: TChan Command -> Server SingleHookEndpointAPI
+singleEndpoint :: DsQueue Command -> Server SingleHookEndpointAPI
 singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue)
 
 -- combinator for handing 404 (not found)
@@ -295,13 +296,7 @@ handleCmd (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
     return ()
 
-readQ :: TChan a -> IO a
-readQ = atomically . readTChan
-
-writeQ ::  TChan a -> a -> IO ()
-writeQ ch v = atomically $ writeTChan ch v
-
-hydraClient :: Text -> Text -> Text -> TChan Command -> IO ()
+hydraClient :: Text -> Text -> Text -> DsQueue Command -> IO ()
 hydraClient host user pass queue = do
     mgr <- newManager tlsManagerSettings
     jar <- newTVarIO mempty
@@ -314,11 +309,11 @@ hydraClient host user pass queue = do
         Right _ -> pure ()
 
     -- loop forever, working down the hydra commands
-    forever $ readQ queue >>= flip runClientM env . handleCmd >>= \case
+    forever $ DsQueue.read queue >>= flip runClientM env . handleCmd >>= \case
         Left e  -> print e
         Right _ -> pure ()
 
-app :: TChan Command -> GitHubKey -> Application
+app :: DsQueue Command -> GitHubKey -> Application
 app queue key
   = serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)

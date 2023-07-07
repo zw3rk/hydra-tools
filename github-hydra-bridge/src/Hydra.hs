@@ -86,7 +86,7 @@ data HydraJobset = HydraJobset
   , hjType             :: Int
   , hjFlake            :: Text
   -- inputs
-  } deriving (Show, Eq, Generic)
+  } deriving (Eq, Generic, Read, Show)
 
 defHydraJobset :: HydraJobset
 defHydraJobset = HydraJobset
