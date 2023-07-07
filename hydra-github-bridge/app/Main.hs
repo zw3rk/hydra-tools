@@ -218,25 +218,31 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 -- This is necessary because `(cached_)?build_finished` notifications are not sent by Hydra
                 -- when an evaluation is identical to its predecessor / has no builds.
                 rows <- query conn "\
-                    \WITH prev_jobseteval AS (         \
-                    \    SELECT *                      \
-                    \    FROM jobsetevals              \
-                    \    WHERE                         \
-                    \        id < ? AND                \
-                    \        jobset_id = ? AND         \
-                    \        nrbuilds IS NOT NULL      \
-                    \    ORDER BY id DESC              \
-                    \    FETCH FIRST ROW ONLY          \
-                    \)                                 \
-                    \SELECT b.id, b.job, b.buildstatus \
-                    \FROM builds b                     \
-                    \JOIN prev_jobseteval e ON TRUE    \
-                    \JOIN jobsetevalmembers m ON       \
-                    \    m.build = b.id AND            \
-                    \    m.eval = e.id                 \
-                    \WHERE                             \
-                    \    b.finished = 1                \
-                \ " [eid, jid] :: IO [(Int, Text, Int)]
+                    \WITH prev_jobseteval AS (              \
+                    \    SELECT *                           \
+                    \    FROM jobsetevals                   \
+                    \    WHERE                              \
+                    \        id < ? AND                     \
+                    \        jobset_id = ? AND              \
+                    \        hasnewbuilds = 1               \
+                    \    ORDER BY id DESC                   \
+                    \    FETCH FIRST ROW ONLY               \
+                    \)                                      \
+                    \SELECT b.id, b.job, b.buildstatus      \
+                    \FROM builds b                          \
+                    \JOIN prev_jobseteval e ON NOT EXISTS ( \
+                    \    SELECT NULL                        \
+                    \    FROM jobsetevals                   \
+                    \    WHERE                              \
+                    \        id = ? AND                     \
+                    \        hasnewbuilds = 1               \
+                    \)                                      \
+                    \JOIN jobsetevalmembers m ON            \
+                    \    m.build = b.id AND                 \
+                    \    m.eval = e.id                      \
+                    \WHERE                                  \
+                    \    b.finished = 1                     \
+                \ " [eid, jid, eid] :: IO [(Int, Text, Int)]
                 buildStatuses <- sequence $ map
                     (\(bid, job, status) -> do
                         let ghStatus | status == (0 :: Int) = Success
