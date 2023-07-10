@@ -258,32 +258,33 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         handleEvalDone :: JobSetId -> EvalRecordId -> Text -> IO [GitHubStatus]
         handleEvalDone jid eid eventName = do
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
-            [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
+            [(flake', checkouttime, evaltime)] <- query conn "select flake, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int)]
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
             withGithubFlake flake $ \owner repo hash -> do
+                let durationDescription = "Fetching took " <> Text.pack (humanReadableDuration (fromIntegral checkouttime * oneSecond)) <> ", evaluation took " <> Text.pack (humanReadableDuration (fromIntegral evaltime * oneSecond)) <> "."
                 evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                     (Just err,_) | not (Text.null err) ->
                         singleton (GitHubStatus owner repo hash (
                             GitHubStatusPayload Failure
                                 {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                                {- description: -} (Just "Evaluation has errors.")
+                                {- description: -} (Just $ "Evaluation has errors. " <> durationDescription)
                                 "ci/eval"))
                         ++ map
                             (\job -> (GitHubStatus owner repo hash
                                 (GitHubStatusPayload Failure
                                     {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                                    {- description: -} (Just "Evaluation failed.")
+                                    {- description: -} (Just $ "Evaluation failed. " <> durationDescription)
                                     ("ci/eval:" <> job))))
                             (parseFailedJobEvals err)
                     (_,Just err) | not (Text.null err) -> singleton (GitHubStatus owner repo hash
                         (GitHubStatusPayload Failure
                             {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                            {- description: -} (Just "Failed to fetch.")
+                            {- description: -} (Just $ "Failed to fetch. " <> durationDescription)
                             "ci/eval"))
                     _ -> singleton (GitHubStatus owner repo hash
                         (GitHubStatusPayload Success
                             {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid)
-                            {- description: -} Nothing
+                            {- description: -} (Just durationDescription)
                             "ci/eval"))
                 -- If this evaluation has builds (is not identical to a previous one), this selects no rows.
                 -- Otherwise this selects all builds of the latest previous evaluation that differed from its predecessor.
