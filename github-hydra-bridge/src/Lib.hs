@@ -118,7 +118,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
-    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
+    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
     = liftIO $ do
         let projName = repoToProject repoName
             jobsetName = Text.drop (Text.length "refs/heads/") ref
