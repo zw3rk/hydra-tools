@@ -309,8 +309,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     \JOIN jobsetevalmembers m ON            \
                     \    m.build = b.id AND                 \
                     \    m.eval = e.id                      \
-                    \WHERE                                  \
-                    \    b.finished = 1                     \
+                    \WHERE b.finished = 1                   \
                 \ " [eid, jid, eid] :: IO [(Int, Text, Int)]
                 buildStatuses <- sequence $ map
                     (\(bid, job, status) -> do
