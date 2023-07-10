@@ -27,6 +27,7 @@ executable hydra-github-bridge
                     , servant-client
                     , aeson
                     , aeson-casing
+                    , human-readable-duration
 
     ghc-options: -threaded -rtsopts
     hs-source-dirs:   app

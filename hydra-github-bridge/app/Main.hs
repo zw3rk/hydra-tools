@@ -19,6 +19,8 @@ import           Control.Exception                       (SomeException, catch,
 import           Control.Monad
 import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
+import           Data.Duration                           (humanReadableDuration,
+                                                          oneSecond)
 import           Data.List                               (singleton)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
@@ -240,8 +242,10 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         let buildStatus = toEnum status
         let ghStatus | finished == (1 :: Int) = toStatusState buildStatus
                      | otherwise              = Failure
-        whenStatusOrJob (Just ghStatus) job $ withGithubFlake flake $ \owner repo hash ->
-            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just $ tshow buildStatus) ("ci/hydra-build:" <> job)))
+        whenStatusOrJob (Just ghStatus) job $ withGithubFlake flake $ \owner repo hash -> do
+            buildDuration <- showBuildDuration bid
+            let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
+            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just $ tshow buildStatus <> buildDurationDescription) ("ci/hydra-build:" <> job)))
 
     -- _ -> print e >> pure []
 
@@ -315,11 +319,13 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     (\(bid, job, status) -> do
                         let buildStatus = toEnum status
                         let ghStatus = toStatusState buildStatus
-                        whenStatusOrJob (Just ghStatus) job $
+                        whenStatusOrJob (Just ghStatus) job $ do
+                            buildDuration <- showBuildDuration bid
+                            let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
                             pure $ singleton $ GitHubStatus owner repo hash $
                                 GitHubStatusPayload ghStatus
                                     {- target url: -} ("https://" <> host <> "/build/" <> tshow bid)
-                                    {- description: -} (Just $ tshow buildStatus)
+                                    {- description: -} (Just $ tshow buildStatus <> buildDurationDescription)
                                     ("ci/hydra-build:" <> job))
                     rows
                 pure $ evalStatuses ++ concat buildStatuses
@@ -331,6 +337,61 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 (_, _, _, (job:_)) -> Just job
                 _                  -> Nothing)
             (Text.lines errormsg)
+
+        showBuildDuration :: BuildId -> IO (Maybe Text)
+        showBuildDuration bid = do
+            rows <- query conn "\
+                \WITH                                                          \
+                \    given_build AS (                                          \
+                \        SELECT *                                              \
+                \        FROM builds                                           \
+                \        WHERE id = ?                                          \
+                \    ),                                                        \
+                \    given_build_output AS (                                   \
+                \        SELECT o.*                                            \
+                \        FROM buildoutputs o                                   \
+                \        JOIN given_build g_b ON o.build = g_b.id              \
+                \        FETCH FIRST ROW ONLY                                  \
+                \    ),                                                        \
+                \    actual_build_step AS (                                    \
+                \        SELECT s.*                                            \
+                \        FROM buildsteps s                                     \
+                \        JOIN buildstepoutputs o ON                            \
+                \            o.build = s.build AND                             \
+                \            o.stepnr = s.stepnr                               \
+                \        JOIN given_build_output g_b_o ON o.path = g_b_o.path  \
+                \        WHERE s.busy = 0                                      \
+                \        ORDER BY s.status, s.stoptime DESC                    \
+                \        FETCH FIRST ROW ONLY                                  \
+                \    ),                                                        \
+                \    actual_build AS (                                         \
+                \        SELECT b.*                                            \
+                \        FROM builds b                                         \
+                \        JOIN actual_build_step a_b_s ON a_b_s.build = b.id    \
+                \    ),                                                        \
+                \    given_build_maybe AS (                                    \
+                \        SELECT *                                              \
+                \        FROM given_build                                      \
+                \        WHERE                                                 \
+                \            finished = 0 OR                                   \
+                \            iscachedbuild = 0                                 \
+                \    ),                                                        \
+                \    selected_build AS (                                       \
+                \        SELECT *                                              \
+                \        FROM given_build_maybe                                \
+                \                                                              \
+                \        UNION ALL                                             \
+                \                                                              \
+                \        SELECT *                                              \
+                \        FROM actual_build                                     \
+                \        WHERE NOT EXISTS (SELECT NULL FROM given_build_maybe) \
+                \    )                                                         \
+                \SELECT selected_build.stoptime - selected_build.starttime     \
+                \FROM selected_build                                           \
+            \ " (Only bid) :: IO [(Only Int)]
+            pure $ case rows of
+                [(Only duration)] -> Just $ Text.pack $ humanReadableDuration $ (fromIntegral duration) * oneSecond
+                _                 -> Nothing
 
 -- GitHub Status PI
 -- /repos/{owner}/{repo}/statuses/{sha} with
