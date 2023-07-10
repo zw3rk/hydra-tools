@@ -172,11 +172,12 @@ toStatusState b = case b of
 tshow :: Show a => a -> Text
 tshow = Text.pack . show
 
-humanReadableDuration :: Duration.Seconds -> String
+humanReadableDuration :: Duration.Seconds -> Text
 humanReadableDuration s =
     if s == 0
     then "0s"
-    else Duration.humanReadableDuration s
+    -- seems to always append whitespace
+    else Text.strip $ Text.pack $ Duration.humanReadableDuration s
 
 -- split github:<owner>/<repo>/<hash> into (owner, repo, hash)
 -- this is such a god aweful hack!
@@ -267,7 +268,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             [(flake', checkouttime, evaltime)] <- query conn "select flake, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int)]
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
             withGithubFlake flake $ \owner repo hash -> do
-                let durationDescription = "Fetching took " <> Text.pack (humanReadableDuration (fromIntegral checkouttime * oneSecond)) <> ", evaluation took " <> Text.pack (humanReadableDuration (fromIntegral evaltime * oneSecond)) <> "."
+                let durationDescription = "Fetching took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> ", evaluation took " <> humanReadableDuration (fromIntegral evaltime * oneSecond) <> "."
                 evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                     (Just err,_) | not (Text.null err) ->
                         singleton (GitHubStatus owner repo hash (
@@ -397,7 +398,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 \FROM selected_build                                           \
             \ " (Only bid) :: IO [(Only Int)]
             pure $ case rows of
-                [(Only duration)] -> Just $ Text.pack $ humanReadableDuration $ (fromIntegral duration) * oneSecond
+                [(Only duration)] -> Just $ humanReadableDuration $ (fromIntegral duration) * oneSecond
                 _                 -> Nothing
 
 -- GitHub Status PI
