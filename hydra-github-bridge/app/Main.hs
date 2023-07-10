@@ -19,8 +19,8 @@ import           Control.Exception                       (SomeException, catch,
 import           Control.Monad
 import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
-import           Data.Duration                           (humanReadableDuration,
-                                                          oneSecond)
+import           Data.Duration                           (oneSecond)
+import qualified Data.Duration                           as Duration
 import           Data.List                               (singleton)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
@@ -171,6 +171,12 @@ toStatusState b = case b of
 -- Text utils
 tshow :: Show a => a -> Text
 tshow = Text.pack . show
+
+humanReadableDuration :: Duration.Seconds -> String
+humanReadableDuration s =
+    if s == 0
+    then "0s"
+    else Duration.humanReadableDuration s
 
 -- split github:<owner>/<repo>/<hash> into (owner, repo, hash)
 -- this is such a god aweful hack!
