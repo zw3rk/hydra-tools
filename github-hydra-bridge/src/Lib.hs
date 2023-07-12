@@ -84,7 +84,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
     , "0000000000000000000000000000000000000000" == headSha
     = liftIO $ do
-        let projName = repoToProject repoName
+        let projName = escapeHydraName repoName
             jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
 
         let jobset = defHydraFlakeJobset
@@ -112,7 +112,7 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
                 , hjFlake = "github:" <> repoName <> "/" <> headSha
                 }
 
-            projName = repoToProject repoName
+            projName = escapeHydraName repoName
             jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
 
         liftIO $ do
@@ -120,11 +120,12 @@ pushHook queue _ (_, ev@PushEvent { evPushRef = ref, evPushHeadSha = Just headSh
             writeQ queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
     | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
     = liftIO $ do
-        let projName = repoToProject repoName
-            jobsetName = Text.drop (Text.length "refs/heads/") ref
+        let projName = escapeHydraName repoName
+            refName = Text.drop (Text.length "refs/heads/") ref
+            jobsetName = escapeHydraName refName
             jobset = defHydraFlakeJobset
                 { hjName = jobsetName
-                , hjDescription = jobsetName <> " branch"
+                , hjDescription = refName <> " branch"
                 , hjFlake = "github:" <> repoName <> "/" <> headSha
                 }
 
@@ -199,7 +200,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
                                 <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
             }
 
-        projName = repoToProject repoName
+        projName = escapeHydraName repoName
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
     liftIO $ do
@@ -208,7 +209,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
 
 pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
     let repoName = whRepoFullName (evPullReqRepo ev)
-        projName = repoToProject repoName
+        projName = escapeHydraName repoName
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
     let jobset = defHydraFlakeJobset
@@ -233,8 +234,8 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
-repoToProject :: Text -> Text
-repoToProject = Text.replace "/" "-" . Text.replace "." "-"
+escapeHydraName :: Text -> Text
+escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
 
 splitRepo :: Text -> (Text, Text)
 splitRepo repo = let org:proj:_ = Text.splitOn "/" repo in (org, proj)
