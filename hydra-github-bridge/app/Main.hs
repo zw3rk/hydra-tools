@@ -11,9 +11,6 @@
 module Main where
 
 import           Control.Concurrent
-import           Control.Concurrent.STM                  (TChan, atomically,
-                                                          newTChan, readTChan,
-                                                          writeTChan)
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
 import           Control.Monad
@@ -27,6 +24,9 @@ import qualified Data.Text                               as Text
 import qualified Data.Text.IO                            as Text
 import           Database.PostgreSQL.Simple
 import           Database.PostgreSQL.Simple.Notification
+import           DiskStore                               (DiskStoreConfig (..))
+import           DsQueue                                 (DsQueue)
+import qualified DsQueue
 import           GHC.Generics
 import           System.Environment                      (lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
@@ -114,7 +114,7 @@ instance Enum BuildStatus where
         (Other)                   -> 99
 
 data StatusState = Error | Failure | Pending | Success
-    deriving (Show, Eq, Generic)
+    deriving (Eq, Generic, Read, Show)
 
 instance ToJSON StatusState where
   toJSON Error   = "error"
@@ -131,7 +131,7 @@ data GitHubStatusPayload
     , target_url  :: Text
     , description :: Maybe Text
     , context     :: Text
-    } deriving (Show, Eq, Generic)
+    } deriving (Eq, Generic, Read, Show)
 
 instance ToJSON GitHubStatusPayload where
     toJSON = genericToJSON $ aesonDrop 0 camelCase
@@ -146,7 +146,7 @@ data GitHubStatus
     , sha     :: Text
     , payload :: GitHubStatusPayload
     }
-    deriving (Show, Eq, Generic)
+    deriving (Eq, Generic, Read, Show)
 
 instance ToJSON GitHubStatus where
   toJSON = genericToJSON $ aesonDrop 0 camelCase
@@ -426,9 +426,9 @@ mkStatus :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text -> Text
 
 mkStatus = client (Proxy @GitHubAPI)
 
-statusHandler :: Text -> TChan GitHubStatus -> IO ()
+statusHandler :: Text -> DsQueue GitHubStatus -> IO ()
 statusHandler token queue = do
-    action <- atomically (readTChan queue)
+    action <- DsQueue.read queue
     print action
     manager <- newManager tlsManagerSettings
     let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
@@ -458,8 +458,10 @@ main = do
     db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
+    mStateDir <- lookupEnv "HYDRA_STATE_DIR"
+    putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
-    queue <- atomically $ newTChan
+    queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir)
     _threadId <- forkIO $ forever $ statusHandler token queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
@@ -473,4 +475,4 @@ main = do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
             handleHydraNotification conn (Text.pack host) note >>= \statuses ->
-                atomically $ forM_ statuses $ \status -> writeTChan queue status
+                forM_ statuses $ \status -> DsQueue.write queue status

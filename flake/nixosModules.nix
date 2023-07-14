@@ -77,11 +77,15 @@
             LoadCredential =
               lib.optional (cfg.hydraPassFile != "") "hydra-pass:${cfg.hydraPassFile}"
               ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
+
+            StateDirectory = "hydra/github-hydra-bridge";
           };
 
           script = ''
             ${lib.optionalString (cfg.hydraPassFile != "") ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
             ${lib.optionalString (cfg.ghSecretFile != "") ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
+
+            export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
             exec ${lib.getExe cfg.package}
           '';
@@ -154,10 +158,14 @@
             RestartSec = "10s";
 
             LoadCredential = lib.optional (cfg.ghTokenFile != "") "github-token:${cfg.ghTokenFile}";
+
+            StateDirectory = "hydra/hydra-github-bridge";
           };
 
           script = ''
             ${lib.optionalString (cfg.ghTokenFile != "") ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+
+            export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
             exec ${lib.getExe cfg.package}
           '';

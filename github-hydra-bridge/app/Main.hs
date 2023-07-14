@@ -4,20 +4,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators     #-}
 
--- import Data.Aeson
--- import Data.Aeson.Schemas
-
-import qualified Data.ByteString          as BS
-import qualified Data.ByteString.Char8    as C8
-import           GHC.Generics
-import           Lib
-import           Network.Wai              (Application)
-import           Network.Wai.Handler.Warp (run)
--- import Servant
--- import Servant.API.ContentTypes
 import           Control.Concurrent       (forkIO)
-import           Control.Concurrent.STM   (atomically, newTChan)
+import           Control.Monad            (void)
+import qualified Data.ByteString.Char8    as C8
 import qualified Data.Text                as Text
+import           DiskStore                (DiskStoreConfig (..))
+import qualified DsQueue
+import           Lib
+import           Network.Wai.Handler.Warp (run)
 import           System.Environment       (lookupEnv)
 
 import           System.IO                (BufferMode (LineBuffering),
@@ -35,7 +29,9 @@ main = do
   user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
   pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
   host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
+  mStateDir <- lookupEnv "HYDRA_STATE_DIR"
   putStrLn $ "Server is starting on port " ++ show port
-  queue <- atomically $ newTChan
-  forkIO $ hydraClient host user pass queue
-  run port (app queue (gitHubKey $ pure key))
+  putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
+  queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "ghb-" 10) mStateDir)
+  void . forkIO $ hydraClient host user pass queue
+  run port (app queue (gitHubKey key))
