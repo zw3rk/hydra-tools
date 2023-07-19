@@ -446,10 +446,8 @@ statusHandler token queue = do
     -- todo make servant client request
 
 
--- Main
 main :: IO ()
 main = do
-
     hSetBuffering stdin LineBuffering
     hSetBuffering stdout LineBuffering
     hSetBuffering stderr LineBuffering
@@ -461,18 +459,17 @@ main = do
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
-    queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir)
+    queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
     _threadId <- forkIO $ forever $ statusHandler token queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
-        _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
-        _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)
-        _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
-        _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
-        _ <- execute_ conn "LISTEN build_queued" -- (build id)
-        _ <- execute_ conn "LISTEN build_started" -- (build id)
+        _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
+        _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
+        _ <- execute_ conn "LISTEN eval_cached"    -- (opaque id, jobset id, prev identical eval id)
+        _ <- execute_ conn "LISTEN eval_failed"    -- (opaque id, jobset id)
+        _ <- execute_ conn "LISTEN build_queued"   -- (build id)
+        _ <- execute_ conn "LISTEN build_started"  -- (build id)
         _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
-        -- _ <- forkIO $ do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
-            handleHydraNotification conn (Text.pack host) note >>= \statuses ->
-                forM_ statuses $ \status -> DsQueue.write queue status
+            statuses <- handleHydraNotification conn (Text.pack host) note
+            forM_ statuses $ \status -> DsQueue.write queue status
