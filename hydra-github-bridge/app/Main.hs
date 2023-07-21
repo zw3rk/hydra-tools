@@ -14,11 +14,10 @@ import           Control.Concurrent
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
 import           Control.Monad
-import qualified Data.ByteString.Char8                   as BS
-import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
 import qualified Data.Duration                           as Duration
 import           Data.List                               (singleton)
+import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
 import qualified Data.Text.IO                            as Text
@@ -170,14 +169,14 @@ toStatusState b = case b of
 
 -- Text utils
 tshow :: Show a => a -> Text
-tshow = Text.pack . show
+tshow = cs . show
 
 humanReadableDuration :: Duration.Seconds -> Text
 humanReadableDuration s =
     if s == 0
     then "0s"
     -- seems to always append whitespace
-    else Text.strip $ Text.pack $ Duration.humanReadableDuration s
+    else Text.strip $ cs $ Duration.humanReadableDuration s
 
 -- split github:<owner>/<repo>/<hash> into (owner, repo, hash)
 -- this is such a god aweful hack!
@@ -191,14 +190,14 @@ parseGitHubFlakeURI _ = Nothing
 
 toHydraNotification :: Notification -> HydraNotification
 toHydraNotification Notification { notificationChannel = chan, notificationData = payload}
-    | chan == "eval_started",   [_, jid]      <- words (BS.unpack payload) = EvalStarted (read jid)
-    | chan == "eval_added",     [_, jid, eid] <- words (BS.unpack payload) = EvalAdded (read jid) (read eid)
-    | chan == "eval_cached",    [_, jid, eid] <- words (BS.unpack payload) = EvalCached (read jid) (read eid)
-    | chan == "eval_failed",    [_, jid]      <- words (BS.unpack payload) = EvalFailed (read jid)
-    | chan == "build_queued",   [bid]         <- words (BS.unpack payload) = BuildQueued (read bid)
-    | chan == "build_started",  [bid]         <- words (BS.unpack payload) = BuildStarted (read bid)
-    | chan == "build_finished", (bid:_)       <- words (BS.unpack payload) = BuildFinished (read bid)
-    | otherwise = error $ "Unhandled payload for chan: " ++ BS.unpack chan ++ ": " ++ BS.unpack payload
+    | chan == "eval_started",   [_, jid]      <- words (cs payload) = EvalStarted (read jid)
+    | chan == "eval_added",     [_, jid, eid] <- words (cs payload) = EvalAdded (read jid) (read eid)
+    | chan == "eval_cached",    [_, jid, eid] <- words (cs payload) = EvalCached (read jid) (read eid)
+    | chan == "eval_failed",    [_, jid]      <- words (cs payload) = EvalFailed (read jid)
+    | chan == "build_queued",   [bid]         <- words (cs payload) = BuildQueued (read bid)
+    | chan == "build_started",  [bid]         <- words (cs payload) = BuildStarted (read bid)
+    | chan == "build_finished", (bid:_)       <- words (cs payload) = BuildFinished (read bid)
+    | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
 
 
@@ -432,7 +431,7 @@ statusHandler token queue = do
     print action
     manager <- newManager tlsManagerSettings
     let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
-    putStrLn $ BSL.unpack $ encode action.payload
+    putStrLn $ cs $ encode action.payload
     res <- flip runClientM env $ do
         mkStatus (Just "hydra-github-bridge")
                  (Just "application/vnd.github+json")
@@ -458,7 +457,7 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
-    token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
+    token <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
     _threadId <- forkIO $ forever $ statusHandler token queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
@@ -471,5 +470,5 @@ main = do
         _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
         forever $ do
             note <- toHydraNotification <$> getNotification conn
-            statuses <- handleHydraNotification conn (Text.pack host) note
+            statuses <- handleHydraNotification conn (cs host) note
             forM_ statuses $ \status -> DsQueue.write queue status

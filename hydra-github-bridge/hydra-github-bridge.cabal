@@ -23,7 +23,7 @@ executable hydra-github-bridge
                     , aeson-casing
                     , human-readable-duration
                     , postgresql-simple
-                    , bytestring
+                    , string-conversions
                     , disk-store
                     , ds-queue
                     , http-client
