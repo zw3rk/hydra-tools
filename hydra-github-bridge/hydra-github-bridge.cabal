@@ -8,16 +8,10 @@ maintainer:         moritz.angermann@gmail.com
 category:           Network
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
-common warnings
-    ghc-options: -Wall -Werror
 
-executable hydra-github-bridge
-    import:           warnings
+common common
+    ghc-options:      -Wall -Werror
     default-language: Haskell2010
-    ghc-options:      -threaded -rtsopts
-    hs-source-dirs:   app
-    main-is:          Main.hs
-    -- other-modules:
     build-depends:    base >=4.16 && < 5
                     , aeson
                     , aeson-casing
@@ -31,3 +25,18 @@ executable hydra-github-bridge
                     , regex-tdfa
                     , text
                     , time
+
+library
+    import: common
+    hs-source-dirs:   src
+    exposed-modules:    Lib
+                      , Lib.Hydra
+                      , Lib.GitHub
+                      , Lib.Data.Duration
+
+executable hydra-github-bridge
+    import:           common
+    ghc-options:      -threaded -rtsopts
+    hs-source-dirs:   app, src
+    other-modules:    Lib, Lib.GitHub, Lib.Hydra, Lib.Data.Duration
+    main-is:          Main.hs

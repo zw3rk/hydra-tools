@@ -10,6 +10,12 @@
 
 module Main where
 
+import           Lib                                     (toCheckRunConclusion)
+import           Lib.Data.Duration                       (humanReadableDuration)
+import           Lib.GitHub                              (parseGitHubFlakeURI)
+import qualified Lib.GitHub                              as GitHub
+import qualified Lib.Hydra                               as Hydra
+
 import           Control.Concurrent
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
@@ -18,266 +24,163 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
-import qualified Data.Duration                           as Duration
-import           Data.IORef                              (IORef, newIORef,
-                                                          readIORef, writeIORef)
+import           Data.Functor                            ((<&>))
+import           Data.IORef                              (newIORef)
 import           Data.List                               (singleton)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
 import qualified Data.Text.IO                            as Text
-import           Data.Time                               (UTCTime)
-import           Data.Time.Clock                         (NominalDiffTime,
-                                                          addUTCTime,
-                                                          getCurrentTime)
-import           Data.Time.Format.ISO8601                (iso8601ParseM)
+import           Data.Time.Clock                         (NominalDiffTime)
 import           Database.PostgreSQL.Simple
 import           Database.PostgreSQL.Simple.Notification
 import           DiskStore                               (DiskStoreConfig (..))
 import           DsQueue                                 (DsQueue)
 import qualified DsQueue
-import           GHC.Generics
-import           GitHub.REST                             as GitHub
-import qualified GitHub.REST.Auth                        as GitHub.Auth
+import           GitHub.REST                             (GHEndpoint (..),
+                                                          GitHubSettings (..),
+                                                          KeyValue ((:=)),
+                                                          StdMethod (POST),
+                                                          Token (..),
+                                                          queryGitHub,
+                                                          runGitHubT)
 import           System.Environment                      (getEnv, lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
 
-import           Data.Aeson                              hiding (Error, Success,
-                                                          (.:))
-import           Data.Aeson.Casing
+import           Data.Aeson                              hiding (Error, Success)
 import           Data.Maybe                              (mapMaybe)
 
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
                                                           stdin, stdout)
 
--- Data Types
-type JobSetId = Int
-type EvalRecordId = Int
-type BuildId = Int
-
-data HydraNotification
-    = EvalStarted JobSetId
-    | EvalAdded JobSetId EvalRecordId
-    | EvalCached JobSetId EvalRecordId
-    | EvalFailed JobSetId
-    | BuildQueued BuildId
-    | BuildStarted BuildId
-    | BuildFinished BuildId
-    deriving (Show, Eq)
-
-data BuildStatus
-    = Succeeded
-    | Failed
-    | DependencyFailed
-    | Aborted
-    | Cancelled
-    | FailedWithOutput
-    | TimedOut
-    | LogLimitExceeded
-    | OutputSizeLimitExceeded
-    | NonDeterministicBuild
-    | Other
-
-instance Show BuildStatus where
-    show s = case s of
-        (Succeeded)               -> "Build succeeded."
-        (Failed)                  -> "Build failed."
-        (DependencyFailed)        -> "Build dependency failed."
-        (Aborted)                 -> "Build aborted."
-        (Cancelled)               -> "Build cancelled."
-        (FailedWithOutput)        -> "Build failed with output."
-        (TimedOut)                -> "Build timed out."
-        (LogLimitExceeded)        -> "Build log limit exceeded."
-        (OutputSizeLimitExceeded) -> "Build output size limit exceeded."
-        (NonDeterministicBuild)   -> "Build is non-deterministic."
-        (Other)                   -> "Build failed due to unknown reason."
-
-instance Enum BuildStatus where
-    toEnum i = case i of
-        ( 0) -> Succeeded
-        ( 1) -> Failed
-        ( 2) -> DependencyFailed
-        ( 3) -> Aborted
-        ( 9) -> Aborted
-        ( 4) -> Cancelled
-        ( 6) -> FailedWithOutput
-        ( 7) -> TimedOut
-        (10) -> LogLimitExceeded
-        (11) -> OutputSizeLimitExceeded
-        (12) -> NonDeterministicBuild
-        ( _) -> Other
-    fromEnum i = case i of
-        (Succeeded)               ->  0
-        (Failed)                  ->  1
-        (DependencyFailed)        ->  2
-        (Aborted)                 ->  3
-        (Cancelled)               ->  4
-        (FailedWithOutput)        ->  6
-        (TimedOut)                ->  7
-        (LogLimitExceeded)        -> 10
-        (OutputSizeLimitExceeded) -> 11
-        (NonDeterministicBuild)   -> 12
-        (Other)                   -> 99
-
-data StatusState = Error | Failure | Pending | Success
-    deriving (Eq, Generic, Read, Show)
-
-instance ToJSON StatusState where
-  toJSON Error   = "error"
-  toJSON Failure = "failure"
-  toJSON Pending = "pending"
-  toJSON Success = "success"
-
-instance FromJSON StatusState where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
-
-data GitHubStatusPayload
-    = GitHubStatusPayload
-    { state       :: StatusState
-    , target_url  :: Text
-    , description :: Maybe Text
-    , context     :: Text
-    } deriving (Eq, Generic, Read, Show)
-
-instance ToJSON GitHubStatusPayload where
-    toJSON = genericToJSON $ aesonDrop 0 camelCase
-
-instance FromJSON GitHubStatusPayload where
-    parseJSON = genericParseJSON $ aesonDrop 0 camelCase
-
-toKeyValue :: GitHubStatusPayload -> [GitHub.KeyValue]
-toKeyValue payload =
-    [ "state" := payload.state
-    , "target_url" := payload.target_url
-    , "description" := payload.description
-    , "context" := payload.context
-    ]
-
-data GitHubStatus
-    = GitHubStatus
-    { owner   :: Text
-    , repo    :: Text
-    , sha     :: Text
-    , payload :: GitHubStatusPayload
-    }
-    deriving (Eq, Generic, Read, Show)
-
-instance ToJSON GitHubStatus where
-  toJSON = genericToJSON $ aesonDrop 0 camelCase
-
-instance FromJSON GitHubStatus where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
-
-toStatusState :: BuildStatus -> StatusState
-toStatusState b = case b of
-    (Succeeded)               -> Success
-    (Failed)                  -> Failure
-    (DependencyFailed)        -> Failure
-    (Aborted)                 -> Error
-    (Cancelled)               -> Error
-    (FailedWithOutput)        -> Failure
-    (TimedOut)                -> Failure
-    (LogLimitExceeded)        -> Error
-    (OutputSizeLimitExceeded) -> Error
-    (NonDeterministicBuild)   -> Failure
-    (Other)                   -> Failure
-
--- Text utils
 tshow :: Show a => a -> Text
 tshow = cs . show
 
-humanReadableDuration :: Duration.Seconds -> Text
-humanReadableDuration s =
-    if s == 0
-    then "0s"
-    -- seems to always append whitespace
-    else Text.strip $ cs $ Duration.humanReadableDuration s
-
--- split github:<owner>/<repo>/<hash> into (owner, repo, hash)
--- this is such a god aweful hack!
-parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
-parseGitHubFlakeURI uri | "github:" `Text.isPrefixOf` uri =
-    case Text.splitOn "/" (Text.drop 7 uri) of
-        -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
-        (owner:repo:hash:[]) | Text.length hash == 40 -> Just (owner, repo, hash)
-        _                    -> Nothing
-parseGitHubFlakeURI _ = Nothing
-
-toHydraNotification :: Notification -> HydraNotification
-toHydraNotification Notification { notificationChannel = chan, notificationData = payload}
-    | chan == "eval_started",   [_, jid]      <- words (cs payload) = EvalStarted (read jid)
-    | chan == "eval_added",     [_, jid, eid] <- words (cs payload) = EvalAdded (read jid) (read eid)
-    | chan == "eval_cached",    [_, jid, eid] <- words (cs payload) = EvalCached (read jid) (read eid)
-    | chan == "eval_failed",    [_, jid]      <- words (cs payload) = EvalFailed (read jid)
-    | chan == "build_queued",   [bid]         <- words (cs payload) = BuildQueued (read bid)
-    | chan == "build_started",  [bid]         <- words (cs payload) = BuildStarted (read bid)
-    | chan == "build_finished", (bid:_)       <- words (cs payload) = BuildFinished (read bid)
+toHydraNotification :: Notification -> Hydra.Notification
+toHydraNotification Notification { notificationChannel = chan, notificationData = payload }
+    | chan == "eval_started",   [_, jid]      <- words (cs payload) = Hydra.EvalStarted (read jid)
+    | chan == "eval_added",     [_, jid, eid] <- words (cs payload) = Hydra.EvalAdded (read jid) (read eid)
+    | chan == "eval_cached",    [_, jid, eid] <- words (cs payload) = Hydra.EvalCached (read jid) (read eid)
+    | chan == "eval_failed",    [_, jid]      <- words (cs payload) = Hydra.EvalFailed (read jid)
+    | chan == "build_queued",   [bid]         <- words (cs payload) = Hydra.BuildQueued (read bid)
+    | chan == "build_started",  [bid]         <- words (cs payload) = Hydra.BuildStarted (read bid)
+    | chan == "build_finished", (bid:_)       <- words (cs payload) = Hydra.BuildFinished (read bid)
     | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
+whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
+whenStatusOrJob status job action
+    | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
+    | Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
+    | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure []
 
+withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
+withGithubFlake flake action
+    | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
+    | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure []
 
-whenStatusOrJob :: (Maybe StatusState) -> Text -> IO [GitHubStatus] -> IO [GitHubStatus]
-whenStatusOrJob status job action | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
-                                  | Just s <- status, s `elem` [Failure, Error] = action
-                                  | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure []
-
-withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHubStatus]) -> IO [GitHubStatus]
-withGithubFlake flake action | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
-                             | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure []
-
-handleHydraNotification :: Connection -> Text -> HydraNotification -> IO [GitHubStatus]
+handleHydraNotification :: Connection -> Text -> Hydra.Notification -> IO [GitHub.CheckRun]
 handleHydraNotification conn host e = flip catch (handler e) $ case e of
     -- Evaluations
-    (EvalStarted jid) -> do
+    (Hydra.EvalStarted jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
-        withGithubFlake flake $ \owner repo hash -> pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+        withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+            { name        = "ci/eval"
+            , headSha     = hash
+            , detailsUrl  = Just $ "https://" <> host <> "/jobset/" <> proj <> "/" <> name
+            , externalId  = Just $ tshow jid
+            , status      = GitHub.InProgress
+            , conclusion  = Nothing
+            , startedAt   = Nothing -- TODO
+            , completedAt = Nothing
+            , output      = Nothing
+            }
 
-    (EvalAdded jid eid) -> handleEvalDone jid eid "Added"
+    (Hydra.EvalAdded jid eid) -> handleEvalDone jid eid "Added"
 
-    (EvalCached jid eid) -> handleEvalDone jid eid "Cached"
+    (Hydra.EvalCached jid eid) -> handleEvalDone jid eid "Cached"
 
-    (EvalFailed jid) -> do
+    (Hydra.EvalFailed jid) -> do
         [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
-        withGithubFlake flake $ \owner repo hash ->
-            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://" <> host <> "/jobset/" <> proj <> "/" <> name) {- description: -} Nothing "ci/eval"))
+        withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+            { name        = "ci/eval"
+            , headSha     = hash
+            , detailsUrl  = Just $ "https://" <> host <> "/jobset/" <> proj <> "/" <> name
+            , externalId  = Just $ tshow jid
+            , status      = GitHub.Completed
+            , conclusion  = Just GitHub.Failure
+            , startedAt   = Nothing -- TODO
+            , completedAt = Nothing -- TODO
+            , output      = Nothing -- TODO
+            }
 
     -- Builds
-    (BuildQueued bid) -> do
+    (Hydra.BuildQueued bid) -> do
         [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
-            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Queued.") ("ci/hydra-build:" <> job)))
+        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+            { name        = "ci/hydra-build:" <> job
+            , headSha     = hash
+            , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
+            , externalId  = Just $ tshow bid
+            , status      = GitHub.Queued
+            , conclusion  = Nothing
+            , startedAt   = Nothing -- TODO
+            , completedAt = Nothing
+            , output      = Nothing
+            }
 
-    (BuildStarted bid) -> do
+    (Hydra.BuildStarted bid) -> do
         [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash ->
-            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload Pending {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just "Build Started.") ("ci/hydra-build:" <> job)))
+        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+            { name        = "ci/hydra-build:" <> job
+            , headSha     = hash
+            , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
+            , externalId  = Just $ tshow bid
+            , status      = GitHub.InProgress
+            , conclusion  = Nothing
+            , startedAt   = Nothing -- TODO
+            , completedAt = Nothing
+            , output      = Nothing
+            }
 
     -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
-    (BuildFinished bid) -> do
+    (Hydra.BuildFinished bid) -> do
         [(proj, name, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         let buildStatus = toEnum status
-        let ghStatus | finished == (1 :: Int) = toStatusState buildStatus
-                     | otherwise              = Failure
-        whenStatusOrJob (Just ghStatus) job $ withGithubFlake flake $ \owner repo hash -> do
+        let ghCheckRunConclusion
+                | finished == (1 :: Int) = toCheckRunConclusion buildStatus
+                | otherwise              = GitHub.Failure
+        whenStatusOrJob (Just ghCheckRunConclusion) job $ withGithubFlake flake $ \owner repo hash -> do
             buildDuration <- showBuildDuration bid
             let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
-            pure $ singleton (GitHubStatus owner repo hash (GitHubStatusPayload ghStatus {- target url: -} ("https://" <> host <> "/build/" <> tshow bid) {- description: -} (Just $ tshow buildStatus <> buildDurationDescription) ("ci/hydra-build:" <> job)))
-
-    -- _ -> print e >> pure []
+            pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                { name        = "ci/hydra-build:" <> job
+                , headSha     = hash
+                , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
+                , externalId  = Just $ tshow bid
+                , status      = GitHub.Completed
+                , conclusion  = Just ghCheckRunConclusion
+                , startedAt   = Nothing -- TODO
+                , completedAt = Nothing -- TODO
+                , output      = Just $ GitHub.CheckRunOutput
+                    { title   = tshow buildStatus
+                    , summary = buildDurationDescription
+                    , text    = Nothing
+                    }
+                }
 
     where
-        handler :: HydraNotification -> SomeException -> IO [GitHubStatus]
-        handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHubStatus])
+        handler :: Hydra.Notification -> SomeException -> IO [GitHub.CheckRun]
+        handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHub.CheckRun])
 
         sqlFromBuild = " from builds b JOIN jobsets j on b.jobset_id = j.id JOIN jobsetevalmembers m on m.build = b.id JOIN jobsetevals e on e.id = m.eval where b.id = ? order by e.id desc fetch first row only"
 
-        handleEvalDone :: JobSetId -> EvalRecordId -> Text -> IO [GitHubStatus]
+        handleEvalDone :: Hydra.JobSetId -> Hydra.EvalId -> Text -> IO [GitHub.CheckRun]
         handleEvalDone jid eid eventName = do
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
             [(flake', checkouttime, evaltime)] <- query conn "select flake, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int)]
@@ -285,29 +188,67 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             withGithubFlake flake $ \owner repo hash -> do
                 let durationDescription = "Fetching took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> ", evaluation took " <> humanReadableDuration (fromIntegral evaltime * oneSecond) <> "."
                 evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
-                    (Just err,_) | not (Text.null err) ->
-                        singleton (GitHubStatus owner repo hash (
-                            GitHubStatusPayload Failure
-                                {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                                {- description: -} (Just $ "Evaluation has errors. " <> durationDescription)
-                                "ci/eval"))
-                        ++ map
-                            (\job -> (GitHubStatus owner repo hash
-                                (GitHubStatusPayload Failure
-                                    {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                                    {- description: -} (Just $ "Evaluation failed. " <> durationDescription)
-                                    ("ci/eval:" <> job))))
-                            (parseFailedJobEvals err)
-                    (_,Just err) | not (Text.null err) -> singleton (GitHubStatus owner repo hash
-                        (GitHubStatusPayload Failure
-                            {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors")
-                            {- description: -} (Just $ "Failed to fetch. " <> durationDescription)
-                            "ci/eval"))
-                    _ -> singleton (GitHubStatus owner repo hash
-                        (GitHubStatusPayload Success
-                            {- target url: -} ("https://" <> host <> "/eval/" <> tshow eid)
-                            {- description: -} (Just durationDescription)
-                            "ci/eval"))
+                    (Just err, _) | not (Text.null err) ->
+                        (singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                            { name        = "ci/eval"
+                            , headSha     = hash
+                            , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors"
+                            , externalId  = Just $ tshow eid
+                            , status      = GitHub.Completed
+                            , conclusion  = Just GitHub.Failure
+                            , startedAt   = Nothing -- TODO
+                            , completedAt = Nothing -- TODO
+                            , output      = Just $ GitHub.CheckRunOutput
+                                { title   = "Evaluation has errors"
+                                , summary = durationDescription
+                                , text    = Nothing
+                                }
+                            })
+                        ++ ((parseFailedJobEvals err) <&> \job -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                            { name        = "ci/eval:" <> job
+                            , headSha     = hash
+                            , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors"
+                            , externalId  = Just $ tshow eid
+                            , status      = GitHub.Completed
+                            , conclusion  = Just GitHub.Failure
+                            , startedAt   = Nothing -- TODO
+                            , completedAt = Nothing -- TODO
+                            , output      = Just $ GitHub.CheckRunOutput
+                                { title   = "Evaluation failed"
+                                , summary = durationDescription
+                                , text    = Nothing
+                                }
+                            })
+                    (_, Just err) | not (Text.null err) -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                        { name        = "ci/eval"
+                        , headSha     = hash
+                        , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors"
+                        , externalId  = Just $ tshow eid
+                        , status      = GitHub.Completed
+                        , conclusion  = Just GitHub.Failure
+                        , startedAt   = Nothing -- TODO
+                        , completedAt = Nothing -- TODO
+                        , output      = Just $ GitHub.CheckRunOutput
+                            { title   = "Failed to fetch"
+                            , summary = durationDescription
+                            , text    = Nothing
+                            }
+                        }
+                    _ -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                        { name        = "ci/eval"
+                        , headSha     = hash
+                        , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid
+                        , externalId  = Just $ tshow eid
+                        , status      = GitHub.Completed
+                        , conclusion  = Just GitHub.Success
+                        , startedAt   = Nothing -- TODO
+                        , completedAt = Nothing -- TODO
+                        , output      = Just $ GitHub.CheckRunOutput
+                            { title   = "Evaluation succeeded"
+                            , summary = durationDescription
+                            , text    = Nothing
+                            }
+                        }
                 -- If this evaluation has builds (is not identical to a previous one), this selects no rows.
                 -- Otherwise this selects all builds of the latest previous evaluation that differed from its predecessor.
                 -- We then submit a status for each of these builds to the jobset's flake URL (the current one).
@@ -338,19 +279,27 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     \    m.eval = e.id                      \
                     \WHERE b.finished = 1                   \
                 \ " [eid, jid, eid] :: IO [(Int, Text, Int)]
-                buildStatuses <- sequence $ map
-                    (\(bid, job, status) -> do
-                        let buildStatus = toEnum status
-                        let ghStatus = toStatusState buildStatus
-                        whenStatusOrJob (Just ghStatus) job $ do
-                            buildDuration <- showBuildDuration bid
-                            let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
-                            pure $ singleton $ GitHubStatus owner repo hash $
-                                GitHubStatusPayload ghStatus
-                                    {- target url: -} ("https://" <> host <> "/build/" <> tshow bid)
-                                    {- description: -} (Just $ tshow buildStatus <> buildDurationDescription)
-                                    ("ci/hydra-build:" <> job))
-                    rows
+                buildStatuses <- sequence $ rows <&> \(bid, job, status) -> do
+                    let buildStatus = toEnum status
+                    let ghCheckRunConclusion = toCheckRunConclusion buildStatus
+                    whenStatusOrJob (Just ghCheckRunConclusion) job $ do
+                        buildDuration <- showBuildDuration bid
+                        let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
+                        pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                            { name        = "ci/hydra-build:" <> job
+                            , headSha     = hash
+                            , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
+                            , externalId  = Just $ tshow eid
+                            , status      = GitHub.Completed
+                            , conclusion  = Just ghCheckRunConclusion
+                            , startedAt   = Nothing -- TODO
+                            , completedAt = Nothing -- TODO
+                            , output      = Just $ GitHub.CheckRunOutput
+                                { title   = tshow buildStatus
+                                , summary = buildDurationDescription
+                                , text    = Nothing
+                                }
+                            }
                 pure $ evalStatuses ++ concat buildStatuses
 
         -- Given an evaluation's error message, returns the jobs that could not be evaluated.
@@ -361,7 +310,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 _                  -> Nothing)
             (Text.lines errormsg)
 
-        showBuildDuration :: BuildId -> IO (Maybe Text)
+        showBuildDuration :: Hydra.BuildId -> IO (Maybe Text)
         showBuildDuration bid = do
             rows <- query conn "\
                 \WITH                                                          \
@@ -416,96 +365,30 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 [(Only duration)] -> Just $ humanReadableDuration $ (fromIntegral duration) * oneSecond
                 _                 -> Nothing
 
-ghApiVersion :: BS.ByteString
-ghApiVersion = "2022-11-28"
-
-statusHandler :: BS.ByteString -> IO TokenLease -> DsQueue GitHubStatus -> IO ()
+statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
 statusHandler ghUserAgent getGitHubToken queue = do
-    action <- DsQueue.read queue
-    print action
-    BSL.putStrLn $ encode action.payload
+    checkRun <- DsQueue.read queue
+    print checkRun
+    BSL.putStrLn $ encode checkRun
 
     ghToken <- getGitHubToken
 
     let githubSettings = GitHubSettings
             { token = Just ghToken.token
             , userAgent = ghUserAgent
-            , apiVersion = ghApiVersion
+            , apiVersion = GitHub.apiVersion
             }
     res <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
         { method = POST
-        , endpoint = "/repos/:owner/:repo/statuses/:sha"
+        , endpoint = "/repos/:owner/:repo/check-runs"
         , endpointVals =
-            [ "owner" := action.owner
-            , "repo" := action.repo
-            , "sha" := action.sha
+            [ "owner" := checkRun.owner
+            , "repo" := checkRun.repo
             ]
-        , ghData = toKeyValue action.payload
+        , ghData = GitHub.toKeyValue checkRun.payload
         }
         :: IO Value
     BSL.putStrLn $ encode res
-
-data TokenLease = TokenLease
-    { token  :: Token
-    , expiry :: Maybe UTCTime
-    }
-
-fetchGitHubToken :: BS.ByteString -> IO TokenLease
-fetchGitHubToken ghUserAgent = do
-    ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
-    let ghToken
-            | BS.null ghTokenBS                = Nothing
-            | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
-            | otherwise                        = Just $ BearerToken ghTokenBS
-
-    (\n -> maybe n (\t -> return $ TokenLease t Nothing) ghToken) $ do
-        ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        signer <- GitHub.Auth.loadSigner ghAppKeyFile
-
-        ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
-        jwt <- GitHub.Auth.getJWTToken signer ghAppId
-
-        ghAppInstallId <- getEnv "GITHUB_APP_INSTALL_ID" >>= return . read :: IO Int
-
-        let githubSettings = GitHubSettings
-                { token = Just jwt
-                , userAgent = ghUserAgent
-                , apiVersion = ghApiVersion
-                }
-        response <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
-            { method = POST
-            , endpoint = "/app/installations/:appInstallId/access_tokens"
-            , endpointVals = [ "appInstallId" := ghAppInstallId ]
-            , ghData =
-                [ "permissions" :=
-                    [ "checks" := ("write" :: String)
-                    , "statuses" := ("write" :: String)
-                    ]
-                ]
-            }
-
-        expiry <- iso8601ParseM (response .: "expires_at" :: String)
-
-        putStrLn $ "Fetched new GitHub App installation token valid until " <> show expiry
-
-        return $ TokenLease
-            { token = BearerToken $ cs (response .: "token" :: String)
-            , expiry = Just expiry
-            }
-
-refreshGitHubToken :: IORef TokenLease -> IO TokenLease -> IO TokenLease
-refreshGitHubToken lease fetch = do
-    lease' <- readIORef lease
-    (\j -> maybe (return lease') j lease'.expiry) $ \expiry -> do
-        now <- getCurrentTime
-        let buffer = 5 :: NominalDiffTime
-        if addUTCTime buffer now < expiry
-        then return lease'
-        else do
-            putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
-            newLease <- fetch
-            writeIORef lease newLease
-            return newLease
 
 main :: IO ()
 main = do
@@ -519,14 +402,33 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
-    ghToken <- fetchGitHubToken ghUserAgent >>= newIORef
-    let getGitHubToken = refreshGitHubToken ghToken (fetchGitHubToken ghUserAgent)
+    let fetchGitHubToken = do
+            ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
+            let ghToken
+                    | BS.null ghTokenBS                = Nothing
+                    | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
+                    | otherwise                        = Just $ BearerToken ghTokenBS
+
+            (\n -> maybe n (\t -> return $ GitHub.TokenLease t Nothing) ghToken) $ do
+                ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+                ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+                ghAppInstallId <- getEnv "GITHUB_APP_INSTALL_ID" >>= return . read
+
+                lease <- GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghAppInstallId ghUserAgent
+                putStrLn $ "Fetched new GitHub App installation token valid until " <> show lease.expiry
+                return lease
+    ghToken <- fetchGitHubToken >>= newIORef
+    let getValidGitHubToken =
+            let buffer = 5 :: NominalDiffTime in
+            GitHub.getValidToken buffer ghToken $ do
+                putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
+                fetchGitHubToken
 
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
 
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
-    _threadId <- forkIO $ forever $ statusHandler ghUserAgent getGitHubToken queue
+    _threadId <- forkIO $ forever $ statusHandler ghUserAgent getValidGitHubToken queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
@@ -538,4 +440,4 @@ main = do
         forever $ do
             note <- toHydraNotification <$> getNotification conn
             statuses <- handleHydraNotification conn (cs host) note
-            forM_ statuses $ \status -> DsQueue.write queue status
+            forM_ statuses $ DsQueue.write queue
