@@ -118,6 +118,15 @@
           description = "The hydra to github webhook bridge";
         };
 
+        ghUserAgent = mkOption {
+          type = types.str;
+          default = null;
+          description = ''
+            The user agent to use for authorization with the GitHub API.
+            This must match the app name if you authenticate using a GitHub App token.
+          '';
+        };
+
         ghTokenFile = mkOption {
           type = types.path;
           default = "";
@@ -170,10 +179,14 @@
             exec ${lib.getExe cfg.package}
           '';
 
-          environment = {
-            HYDRA_HOST = cfg.hydraHost;
-            HYDRA_DB = cfg.hydraDb;
-          };
+          environment =
+            {
+              HYDRA_HOST = cfg.hydraHost;
+              HYDRA_DB = cfg.hydraDb;
+            }
+            // lib.optionalAttrs (cfg.ghUserAgent != "") {
+              GITHUB_USER_AGENT = cfg.ghUserAgent;
+            };
         };
       };
     });

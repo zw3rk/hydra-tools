@@ -14,6 +14,9 @@ import           Control.Concurrent
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
 import           Control.Monad
+import           Control.Monad.IO.Class
+import qualified Data.ByteString.Char8                   as BS
+import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
 import qualified Data.Duration                           as Duration
 import           Data.List                               (singleton)
@@ -27,17 +30,13 @@ import           DiskStore                               (DiskStoreConfig (..))
 import           DsQueue                                 (DsQueue)
 import qualified DsQueue
 import           GHC.Generics
+import           GitHub.REST                             as GitHub
 import           System.Environment                      (lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
 
 import           Data.Aeson                              hiding (Error, Success)
 import           Data.Aeson.Casing
 import           Data.Maybe                              (mapMaybe)
-import           Data.Proxy
-import           Network.HTTP.Client                     (newManager)
-import           Network.HTTP.Client.TLS                 (tlsManagerSettings)
-import           Servant.API
-import           Servant.Client                          hiding (manager)
 
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
@@ -137,6 +136,14 @@ instance ToJSON GitHubStatusPayload where
 
 instance FromJSON GitHubStatusPayload where
     parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+
+toKeyValue :: GitHubStatusPayload -> [GitHub.KeyValue]
+toKeyValue payload =
+    [ "state" := payload.state
+    , "target_url" := payload.target_url
+    , "description" := payload.description
+    , "context" := payload.context
+    ]
 
 data GitHubStatus
     = GitHubStatus
@@ -400,50 +407,29 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 [(Only duration)] -> Just $ humanReadableDuration $ (fromIntegral duration) * oneSecond
                 _                 -> Nothing
 
--- GitHub Status PI
--- /repos/{owner}/{repo}/statuses/{sha} with
--- {"state":"success"
---  ,"target_url":"https://example.com/build/status"
---  ,"description":"The build succeeded!"
---  ,"context":"continuous-integration/jenkins"
--- }
-type GitHubAPI = "repos"
-                 :> Header "User-Agent" Text
-                 :> Header "Accept" Text -- "application/vnd.github+json"
-                 :> Header "Authorization" Text -- token <pat> / Bearer ...
-                 :> Header "X-GitHub-Api-Version" Text -- "2022-11-28"
-                 :> Capture "owner" Text
-                 :> Capture "repo" Text
-                 :> "statuses"
-                 :> Capture "sha" Text
-                 :> ReqBody '[JSON] GitHubStatusPayload
-                 :> PostCreated '[JSON] Value
-
--- Auth (Bearer <YOUR-TOKEN>)
--- owner, repo, sha, Status
-mkStatus :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text -> Text -> Text -> GitHubStatusPayload -> ClientM Value
-
-mkStatus = client (Proxy @GitHubAPI)
-
-statusHandler :: Text -> DsQueue GitHubStatus -> IO ()
-statusHandler token queue = do
+statusHandler :: BS.ByteString -> Maybe Token -> DsQueue GitHubStatus -> IO ()
+statusHandler ghUserAgent ghToken queue = do
     action <- DsQueue.read queue
     print action
-    manager <- newManager tlsManagerSettings
-    let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
-    putStrLn $ cs $ encode action.payload
-    res <- flip runClientM env $ do
-        mkStatus (Just "hydra-github-bridge")
-                 (Just "application/vnd.github+json")
-                 (Just token)
-                 (Just "2022-11-28")
-                 action.owner
-                 action.repo
-                 action.sha
-                 action.payload
-    print res
-    -- todo make servant client request
+    BSL.putStrLn $ encode action.payload
 
+    let githubSettings = GitHubSettings
+            { token = ghToken
+            , userAgent = ghUserAgent
+            , apiVersion = "2022-11-28"
+            }
+    res <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
+        { method = POST
+        , endpoint = "/repos/:owner/:repo/statuses/:sha"
+        , endpointVals =
+            [ "owner" := action.owner
+            , "repo" := action.repo
+            , "sha" := action.sha
+            ]
+        , ghData = toKeyValue action.payload
+        }
+        :: IO Value
+    BSL.putStrLn $ encode res
 
 main :: IO ()
 main = do
@@ -455,11 +441,19 @@ main = do
     db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
+
+    ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
+    ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
+    let ghToken
+            | BS.null ghTokenBS                = Nothing
+            | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
+            | otherwise                        = Just $ BearerToken ghTokenBS
+
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
-    token <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
+
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
-    _threadId <- forkIO $ forever $ statusHandler token queue
+    _threadId <- forkIO $ forever $ statusHandler ghUserAgent ghToken queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
