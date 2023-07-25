@@ -29,5 +29,4 @@ executable hydra-github-bridge
                     , ds-queue
                     , github-rest
                     , regex-tdfa
-                    , stm
                     , text
