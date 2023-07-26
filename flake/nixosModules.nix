@@ -118,6 +118,22 @@
           description = "The hydra to github webhook bridge";
         };
 
+        ghAppId = mkOption {
+          type = types.int;
+          default = 0;
+          description = ''
+            The GitHub App ID to sign authentication JWTs with.
+          '';
+        };
+
+        ghAppInstallId = mkOption {
+          type = types.int;
+          default = 0;
+          description = ''
+            The GitHub App installation ID to authenticate with.
+          '';
+        };
+
         ghUserAgent = mkOption {
           type = types.str;
           default = null;
@@ -127,9 +143,17 @@
           '';
         };
 
-        ghTokenFile = mkOption {
+        ghAppKeyFile = mkOption {
           type = types.path;
           default = "";
+          description = ''
+            Path to a file containing the GitHub App private key for authorization with GitHub.
+          '';
+        };
+
+        ghTokenFile = mkOption {
+          type = with types; nullOr path;
+          default = null;
           description = ''
             Path to a file containing the GitHub token for authorization with GitHub.
           '';
@@ -166,13 +190,16 @@
             Restart = "always";
             RestartSec = "10s";
 
-            LoadCredential = lib.optional (cfg.ghTokenFile != "") "github-token:${cfg.ghTokenFile}";
+            LoadCredential =
+              lib.optional (cfg.ghTokenFile != null) "github-token:${cfg.ghTokenFile}"
+              ++ lib.optional (cfg.ghAppKeyFile != "") "github-app-key-file:${cfg.ghAppKeyFile}";
 
             StateDirectory = "hydra/hydra-github-bridge";
           };
 
           script = ''
-            ${lib.optionalString (cfg.ghTokenFile != "") ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+            ${lib.optionalString (cfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+            ${lib.optionalString (cfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
             export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
@@ -186,6 +213,12 @@
             }
             // lib.optionalAttrs (cfg.ghUserAgent != "") {
               GITHUB_USER_AGENT = cfg.ghUserAgent;
+            }
+            // lib.optionalAttrs (cfg.ghAppId != 0) {
+              GITHUB_APP_ID = toString cfg.ghAppId;
+            }
+            // lib.optionalAttrs (cfg.ghAppInstallId != 0) {
+              GITHUB_APP_INSTALL_ID = toString cfg.ghAppInstallId;
             };
         };
       };

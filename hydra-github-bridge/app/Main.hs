@@ -31,10 +31,12 @@ import           DsQueue                                 (DsQueue)
 import qualified DsQueue
 import           GHC.Generics
 import           GitHub.REST                             as GitHub
-import           System.Environment                      (lookupEnv)
+import qualified GitHub.REST.Auth                        as GitHub.Auth
+import           System.Environment                      (getEnv, lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
 
-import           Data.Aeson                              hiding (Error, Success)
+import           Data.Aeson                              hiding (Error, Success,
+                                                          (.:))
 import           Data.Aeson.Casing
 import           Data.Maybe                              (mapMaybe)
 
@@ -431,6 +433,43 @@ statusHandler ghUserAgent ghToken queue = do
         :: IO Value
     BSL.putStrLn $ encode res
 
+getGitHubToken :: BS.ByteString -> IO Token
+getGitHubToken ghUserAgent = do
+    ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
+    let ghToken
+            | BS.null ghTokenBS                = Nothing
+            | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
+            | otherwise                        = Just $ BearerToken ghTokenBS
+
+    (\n -> maybe n return ghToken) $ do
+        ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+        signer <- GitHub.Auth.loadSigner ghAppKeyFile
+
+        ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+        jwt <- GitHub.Auth.getJWTToken signer ghAppId
+
+        ghAppInstallId <- getEnv "GITHUB_APP_INSTALL_ID" >>= return . read :: IO Int
+
+        let githubSettings = GitHubSettings
+                { token = Just jwt
+                , userAgent = ghUserAgent
+                , apiVersion = "2022-11-28"
+                }
+        response <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
+            { method = POST
+            , endpoint = "/app/installations/:appInstallId/access_tokens"
+            , endpointVals = [ "appInstallId" := ghAppInstallId ]
+            , ghData =
+                [ "permissions" :=
+                    [ "checks" := ("write" :: String)
+                    , "statuses" := ("write" :: String)
+                    ]
+                ]
+            }
+        return $ BearerToken $ cs (response .: "token" :: String)
+        -- TODO refresh token before expiry (given as ISO datetime at `expires_at` in the response)
+        -- or use `GET /repos/{owner}/{repo}/installation` to get app installation ID before each POST for the specific repo?
+
 main :: IO ()
 main = do
     hSetBuffering stdin LineBuffering
@@ -443,17 +482,13 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
-    ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
-    let ghToken
-            | BS.null ghTokenBS                = Nothing
-            | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
-            | otherwise                        = Just $ BearerToken ghTokenBS
+    ghToken <- getGitHubToken ghUserAgent
 
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
 
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
-    _threadId <- forkIO $ forever $ statusHandler ghUserAgent ghToken queue
+    _threadId <- forkIO $ forever $ statusHandler ghUserAgent (Just ghToken) queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
