@@ -30,3 +30,4 @@ executable hydra-github-bridge
                     , github-rest
                     , regex-tdfa
                     , text
+                    , time

@@ -19,11 +19,18 @@ import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
 import qualified Data.Duration                           as Duration
+import           Data.IORef                              (IORef, newIORef,
+                                                          readIORef, writeIORef)
 import           Data.List                               (singleton)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
 import qualified Data.Text.IO                            as Text
+import           Data.Time                               (UTCTime)
+import           Data.Time.Clock                         (NominalDiffTime,
+                                                          addUTCTime,
+                                                          getCurrentTime)
+import           Data.Time.Format.ISO8601                (iso8601ParseM)
 import           Database.PostgreSQL.Simple
 import           Database.PostgreSQL.Simple.Notification
 import           DiskStore                               (DiskStoreConfig (..))
@@ -409,16 +416,21 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 [(Only duration)] -> Just $ humanReadableDuration $ (fromIntegral duration) * oneSecond
                 _                 -> Nothing
 
-statusHandler :: BS.ByteString -> Maybe Token -> DsQueue GitHubStatus -> IO ()
-statusHandler ghUserAgent ghToken queue = do
+ghApiVersion :: BS.ByteString
+ghApiVersion = "2022-11-28"
+
+statusHandler :: BS.ByteString -> IO TokenLease -> DsQueue GitHubStatus -> IO ()
+statusHandler ghUserAgent getGitHubToken queue = do
     action <- DsQueue.read queue
     print action
     BSL.putStrLn $ encode action.payload
 
+    ghToken <- getGitHubToken
+
     let githubSettings = GitHubSettings
-            { token = ghToken
+            { token = Just ghToken.token
             , userAgent = ghUserAgent
-            , apiVersion = "2022-11-28"
+            , apiVersion = ghApiVersion
             }
     res <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
         { method = POST
@@ -433,15 +445,20 @@ statusHandler ghUserAgent ghToken queue = do
         :: IO Value
     BSL.putStrLn $ encode res
 
-getGitHubToken :: BS.ByteString -> IO Token
-getGitHubToken ghUserAgent = do
+data TokenLease = TokenLease
+    { token  :: Token
+    , expiry :: Maybe UTCTime
+    }
+
+fetchGitHubToken :: BS.ByteString -> IO TokenLease
+fetchGitHubToken ghUserAgent = do
     ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
     let ghToken
             | BS.null ghTokenBS                = Nothing
             | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
             | otherwise                        = Just $ BearerToken ghTokenBS
 
-    (\n -> maybe n return ghToken) $ do
+    (\n -> maybe n (\t -> return $ TokenLease t Nothing) ghToken) $ do
         ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
         signer <- GitHub.Auth.loadSigner ghAppKeyFile
 
@@ -453,7 +470,7 @@ getGitHubToken ghUserAgent = do
         let githubSettings = GitHubSettings
                 { token = Just jwt
                 , userAgent = ghUserAgent
-                , apiVersion = "2022-11-28"
+                , apiVersion = ghApiVersion
                 }
         response <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
             { method = POST
@@ -466,9 +483,29 @@ getGitHubToken ghUserAgent = do
                     ]
                 ]
             }
-        return $ BearerToken $ cs (response .: "token" :: String)
-        -- TODO refresh token before expiry (given as ISO datetime at `expires_at` in the response)
-        -- or use `GET /repos/{owner}/{repo}/installation` to get app installation ID before each POST for the specific repo?
+
+        expiry <- iso8601ParseM (response .: "expires_at" :: String)
+
+        putStrLn $ "Fetched new GitHub App installation token valid until " <> show expiry
+
+        return $ TokenLease
+            { token = BearerToken $ cs (response .: "token" :: String)
+            , expiry = Just expiry
+            }
+
+refreshGitHubToken :: IORef TokenLease -> IO TokenLease -> IO TokenLease
+refreshGitHubToken lease fetch = do
+    lease' <- readIORef lease
+    (\j -> maybe (return lease') j lease'.expiry) $ \expiry -> do
+        now <- getCurrentTime
+        let buffer = 5 :: NominalDiffTime
+        if addUTCTime buffer now < expiry
+        then return lease'
+        else do
+            putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
+            newLease <- fetch
+            writeIORef lease newLease
+            return newLease
 
 main :: IO ()
 main = do
@@ -482,13 +519,14 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
-    ghToken <- getGitHubToken ghUserAgent
+    ghToken <- fetchGitHubToken ghUserAgent >>= newIORef
+    let getGitHubToken = refreshGitHubToken ghToken (fetchGitHubToken ghUserAgent)
 
     mStateDir <- lookupEnv "HYDRA_STATE_DIR"
     putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
 
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
-    _threadId <- forkIO $ forever $ statusHandler ghUserAgent (Just ghToken) queue
+    _threadId <- forkIO $ forever $ statusHandler ghUserAgent getGitHubToken queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
