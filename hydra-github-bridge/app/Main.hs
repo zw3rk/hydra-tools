@@ -162,7 +162,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow bid
             , status      = GitHub.InProgress
             , conclusion  = Nothing
-            , startedAt   = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (starttime :: Int)
+            -- apparently hydra may send the notification before actually starting the build... got 9 seconds difference when testing!
+            , startedAt   = (starttime :: Maybe Int) >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral
             , completedAt = Nothing
             , output      = Nothing
             }
