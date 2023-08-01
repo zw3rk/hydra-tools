@@ -52,7 +52,7 @@ import           System.Environment                      (getEnv, lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
 
 import           Data.Aeson                              hiding (Error, Success)
-import           Data.Maybe                              (mapMaybe)
+import           Data.Maybe                              (isNothing)
 
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
@@ -120,20 +120,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , completedAt = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (errortime :: Int)
             , output      = Just $ GitHub.CheckRunOutput
                 { title   = "Evaluation failed"
-                , summary =
-                    -- XXX would be better to make code blocks using indentation instead of triple backticks so that they cannot be escaped
-                    (if Text.null fetcherrormsg
-                    then ""
-                    else "Fetch error:\n\n```" <> fetcherrormsg <> "```")
-                    <>
-                    (if not (Text.null fetcherrormsg) && not (Text.null errormsg)
-                    then "\n\n"
-                    else "")
-                    <>
-                    (if Text.null errormsg
-                    then ""
-                    else "Evaluation error:\n\n```\n" <> errormsg <> "\n```")
-                , text = Nothing
+                , summary = ""
+                , text = Just $ maybe
+                    (mkEvalErrorSummary errormsg)
+                    mkFetchErrorSummary
+                    fetcherrormsg
                 }
             }
 
@@ -211,7 +202,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     startedAt = posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral timestamp
                     fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt
                     evalCompletedAt = addUTCTime (fromIntegral evaltime) fetchCompletedAt
-                    durationSummary = "Fetching took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> ", evaluation took " <> humanReadableDuration (fromIntegral evaltime * oneSecond) <> "."
+                    summary = mkEvalDurationSummary checkouttime (if isNothing fetcherrmsg then Just evaltime else Nothing)
                 evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                     (Just err, _) | not (Text.null err) ->
                         (singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -225,11 +216,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             , completedAt = Just evalCompletedAt
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation has errors"
-                                , summary = durationSummary
-                                , text    = Nothing
+                                , summary = summary
+                                , text    = Just $ mkEvalErrorSummary err
                                 }
                             })
-                        ++ ((parseFailedJobEvals err) <&> \job -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                        ++ ((parseFailedJobEvals err) <&> \(job, msg) -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
                             { name        = "ci/eval:" <> job
                             , headSha     = hash
                             , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors"
@@ -240,8 +231,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             , completedAt = Just evalCompletedAt
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation failed"
-                                , summary = durationSummary
-                                , text    = Nothing
+                                , summary = summary
+                                , text    = Just $ mkEvalErrorSummary msg
                                 }
                             })
                     (_, Just err) | not (Text.null err) -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -255,8 +246,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                         , completedAt = Just fetchCompletedAt
                         , output      = Just $ GitHub.CheckRunOutput
                             { title   = "Failed to fetch"
-                            , summary = durationSummary
-                            , text    = Nothing
+                            , summary = summary
+                            , text    = Just $ mkFetchErrorSummary err
                             }
                         }
                     _ -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -270,7 +261,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                         , completedAt = Just evalCompletedAt
                         , output      = Just $ GitHub.CheckRunOutput
                             { title   = "Evaluation succeeded"
-                            , summary = durationSummary
+                            , summary = summary
                             , text    = Nothing
                             }
                         }
@@ -326,13 +317,23 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             }
                 pure $ evalStatuses ++ concat buildStatuses
 
-        -- Given an evaluation's error message, returns the jobs that could not be evaluated.
-        parseFailedJobEvals :: Text -> [Text]
-        parseFailedJobEvals errormsg = mapMaybe
-            (\line -> case line =~ ("^in job ‘([^’]*)’:$" :: Text) :: (Text, Text, Text, [Text]) of
-                (_, _, _, (job:_)) -> Just job
-                _                  -> Nothing)
-            (Text.lines errormsg)
+        -- Given an evaluation's error message, returns the jobs that could not be evaluated and their excerpt from the error message.
+        parseFailedJobEvals :: Text -> [(Text, Text)]
+        parseFailedJobEvals errormsg =
+            (internal errormsg) <&> \(_, job, msg) -> (job, msg)
+            where
+                internal :: Text -> [(Text, Text, Text)]
+                internal rest =
+                    case rest =~ ("^in job ‘([^’]*)’:$" :: Text) :: (Text, Text, Text, [Text]) of
+                        (before, _, after, (job:_)) ->
+                            let
+                                next = internal after
+                                msg = case next of
+                                    ((m, _, _):_) -> m
+                                    []            -> after
+                            in
+                            singleton (before, job, msg) ++ next
+                        _ -> []
 
         getBuildTimes :: Hydra.BuildId -> IO (Maybe (UTCTime, UTCTime))
         getBuildTimes bid = do
@@ -391,6 +392,21 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     , posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral stoptime
                     )
                 _ -> Nothing
+
+        mkEvalDurationSummary :: Int -> Maybe Int -> Text
+        mkEvalDurationSummary checkouttime evaltime =
+            "Checkout took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> "."
+            <> maybe mempty (\j -> "\nEvaluation took " <> humanReadableDuration (fromIntegral j * oneSecond) <> ".") evaltime
+
+        mkFetchErrorSummary :: Text -> Text
+        mkFetchErrorSummary fetcherrmsg = "Fetch error:\n\n" <> indent fetcherrmsg
+
+        mkEvalErrorSummary :: Text -> Text
+        mkEvalErrorSummary errmsg = "Evaluation error:\n\n" <> indent errmsg
+
+        -- making code blocks using indentation instead of triple backticks so that they cannot be escaped
+        indent :: Text -> Text
+        indent text = mconcat $ Text.lines text <&> (("    " <>) . (<> "\n"))
 
 statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
 statusHandler ghUserAgent getGitHubToken queue = do
