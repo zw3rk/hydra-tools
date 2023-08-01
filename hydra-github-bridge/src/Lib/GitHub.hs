@@ -22,7 +22,7 @@ import qualified Data.Text                as Text
 import           Data.Time                (UTCTime)
 import           Data.Time.Clock          (NominalDiffTime, addUTCTime,
                                            getCurrentTime)
-import           Data.Time.Format.ISO8601 (iso8601ParseM)
+import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics
 import           GitHub.REST              (GHEndpoint (..), GitHubSettings (..),
                                            KeyValue ((:=)), StdMethod (POST),
@@ -128,8 +128,8 @@ instance RESTKeyValue CheckRunPayload where
         ++ maybeKV "details_url"  payload.detailsUrl  id
         ++ maybeKV "external_id"  payload.externalId  id
         ++ maybeKV "conclusion"   payload.conclusion  id
-        ++ maybeKV "started_at"   payload.startedAt   id
-        ++ maybeKV "completed_at" payload.completedAt id
+        ++ maybeKV "started_at"   payload.startedAt   iso8601Show
+        ++ maybeKV "completed_at" payload.completedAt iso8601Show
         ++ maybeKV "output"       payload.output      toKeyValue
 
 data CheckRun = CheckRun

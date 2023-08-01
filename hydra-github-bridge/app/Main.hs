@@ -31,7 +31,11 @@ import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
 import qualified Data.Text.IO                            as Text
-import           Data.Time.Clock                         (NominalDiffTime)
+import           Data.Time                               (UTCTime)
+import           Data.Time.Clock                         (NominalDiffTime,
+                                                          addUTCTime,
+                                                          secondsToNominalDiffTime)
+import           Data.Time.Clock.POSIX                   (posixSecondsToUTCTime)
 import           Database.PostgreSQL.Simple
 import           Database.PostgreSQL.Simple.Notification
 import           DiskStore                               (DiskStoreConfig (..))
@@ -83,7 +87,7 @@ handleHydraNotification :: Connection -> Text -> Hydra.Notification -> IO [GitHu
 handleHydraNotification conn host e = flip catch (handler e) $ case e of
     -- Evaluations
     (Hydra.EvalStarted jid) -> do
-        [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
+        [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
         withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/eval"
@@ -92,7 +96,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow jid
             , status      = GitHub.InProgress
             , conclusion  = Nothing
-            , startedAt   = Nothing -- TODO
+            , startedAt   = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (triggertime :: Int)
             , completedAt = Nothing
             , output      = Nothing
             }
@@ -102,7 +106,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
     (Hydra.EvalCached jid eid) -> handleEvalDone jid eid "Cached"
 
     (Hydra.EvalFailed jid) -> do
-        [(proj, name, flake)] <- query conn "select project, name, flake from jobsets where id = ?" (Only jid)
+        [(proj, name, flake, fetcherrormsg, errormsg, errortime)] <- query conn "select project, name, flake, fetcherrormsg, errormsg, errortime from jobsets where id = ?" (Only jid)
         Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
         withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/eval"
@@ -111,9 +115,25 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow jid
             , status      = GitHub.Completed
             , conclusion  = Just GitHub.Failure
-            , startedAt   = Nothing -- TODO
-            , completedAt = Nothing -- TODO
-            , output      = Nothing -- TODO
+            , startedAt   = Nothing -- Hydra does not record this information but GitHub still has it
+            , completedAt = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (errortime :: Int)
+            , output      = Just $ GitHub.CheckRunOutput
+                { title   = "Evaluation failed"
+                , summary =
+                    -- XXX would be better to make code blocks using indentation instead of triple backticks so that they cannot be escaped
+                    (if Text.null fetcherrormsg
+                    then ""
+                    else "Fetch error:\n\n```" <> fetcherrormsg <> "```")
+                    <>
+                    (if not (Text.null fetcherrormsg) && not (Text.null errormsg)
+                    then "\n\n"
+                    else "")
+                    <>
+                    (if Text.null errormsg
+                    then ""
+                    else "Evaluation error:\n\n```\n" <> errormsg <> "\n```")
+                , text = Nothing
+                }
             }
 
     -- Builds
@@ -127,13 +147,13 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow bid
             , status      = GitHub.Queued
             , conclusion  = Nothing
-            , startedAt   = Nothing -- TODO
+            , startedAt   = Nothing
             , completedAt = Nothing
             , output      = Nothing
             }
 
     (Hydra.BuildStarted bid) -> do
-        [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
+        [(proj, name, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
         whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/hydra-build:" <> job
@@ -142,7 +162,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow bid
             , status      = GitHub.InProgress
             , conclusion  = Nothing
-            , startedAt   = Nothing -- TODO
+            , startedAt   = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (starttime :: Int)
             , completedAt = Nothing
             , output      = Nothing
             }
@@ -156,8 +176,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 | finished == (1 :: Int) = toCheckRunConclusion buildStatus
                 | otherwise              = GitHub.Failure
         whenStatusOrJob (Just ghCheckRunConclusion) job $ withGithubFlake flake $ \owner repo hash -> do
-            buildDuration <- showBuildDuration bid
-            let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
+            buildTimes <- getBuildTimes bid
             pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
                 { name        = "ci/hydra-build:" <> job
                 , headSha     = hash
@@ -165,11 +184,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 , externalId  = Just $ tshow bid
                 , status      = GitHub.Completed
                 , conclusion  = Just ghCheckRunConclusion
-                , startedAt   = Nothing -- TODO
-                , completedAt = Nothing -- TODO
+                , startedAt   = buildTimes >>= Just . fst
+                , completedAt = buildTimes >>= Just . snd
                 , output      = Just $ GitHub.CheckRunOutput
                     { title   = tshow buildStatus
-                    , summary = buildDurationDescription
+                    , summary = "" -- TODO
                     , text    = Nothing
                     }
                 }
@@ -183,10 +202,14 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
         handleEvalDone :: Hydra.JobSetId -> Hydra.EvalId -> Text -> IO [GitHub.CheckRun]
         handleEvalDone jid eid eventName = do
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
-            [(flake', checkouttime, evaltime)] <- query conn "select flake, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int)]
+            [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
             withGithubFlake flake $ \owner repo hash -> do
-                let durationDescription = "Fetching took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> ", evaluation took " <> humanReadableDuration (fromIntegral evaltime * oneSecond) <> "."
+                let
+                    startedAt = posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral timestamp
+                    fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt
+                    evalCompletedAt = addUTCTime (fromIntegral evaltime) fetchCompletedAt
+                    durationSummary = "Fetching took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> ", evaluation took " <> humanReadableDuration (fromIntegral evaltime * oneSecond) <> "."
                 evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                     (Just err, _) | not (Text.null err) ->
                         (singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -196,11 +219,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             , externalId  = Just $ tshow eid
                             , status      = GitHub.Completed
                             , conclusion  = Just GitHub.Failure
-                            , startedAt   = Nothing -- TODO
-                            , completedAt = Nothing -- TODO
+                            , startedAt   = Just startedAt
+                            , completedAt = Just evalCompletedAt
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation has errors"
-                                , summary = durationDescription
+                                , summary = durationSummary
                                 , text    = Nothing
                                 }
                             })
@@ -211,11 +234,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             , externalId  = Just $ tshow eid
                             , status      = GitHub.Completed
                             , conclusion  = Just GitHub.Failure
-                            , startedAt   = Nothing -- TODO
-                            , completedAt = Nothing -- TODO
+                            , startedAt   = Just startedAt
+                            , completedAt = Just evalCompletedAt
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation failed"
-                                , summary = durationDescription
+                                , summary = durationSummary
                                 , text    = Nothing
                                 }
                             })
@@ -226,11 +249,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                         , externalId  = Just $ tshow eid
                         , status      = GitHub.Completed
                         , conclusion  = Just GitHub.Failure
-                        , startedAt   = Nothing -- TODO
-                        , completedAt = Nothing -- TODO
+                        , startedAt   = Just startedAt
+                        , completedAt = Just fetchCompletedAt
                         , output      = Just $ GitHub.CheckRunOutput
                             { title   = "Failed to fetch"
-                            , summary = durationDescription
+                            , summary = durationSummary
                             , text    = Nothing
                             }
                         }
@@ -241,11 +264,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                         , externalId  = Just $ tshow eid
                         , status      = GitHub.Completed
                         , conclusion  = Just GitHub.Success
-                        , startedAt   = Nothing -- TODO
-                        , completedAt = Nothing -- TODO
+                        , startedAt   = Just startedAt
+                        , completedAt = Just evalCompletedAt
                         , output      = Just $ GitHub.CheckRunOutput
                             { title   = "Evaluation succeeded"
-                            , summary = durationDescription
+                            , summary = durationSummary
                             , text    = Nothing
                             }
                         }
@@ -283,8 +306,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     let buildStatus = toEnum status
                     let ghCheckRunConclusion = toCheckRunConclusion buildStatus
                     whenStatusOrJob (Just ghCheckRunConclusion) job $ do
-                        buildDuration <- showBuildDuration bid
-                        let buildDurationDescription = maybe "" (\d -> " Took " <> d <> ".") buildDuration
+                        buildTimes <- getBuildTimes bid
                         pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
                             { name        = "ci/hydra-build:" <> job
                             , headSha     = hash
@@ -292,11 +314,11 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                             , externalId  = Just $ tshow eid
                             , status      = GitHub.Completed
                             , conclusion  = Just ghCheckRunConclusion
-                            , startedAt   = Nothing -- TODO
-                            , completedAt = Nothing -- TODO
+                            , startedAt   = buildTimes >>= Just . fst
+                            , completedAt = buildTimes >>= Just . snd
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = tshow buildStatus
-                                , summary = buildDurationDescription
+                                , summary = "" -- TODO
                                 , text    = Nothing
                                 }
                             }
@@ -310,8 +332,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 _                  -> Nothing)
             (Text.lines errormsg)
 
-        showBuildDuration :: Hydra.BuildId -> IO (Maybe Text)
-        showBuildDuration bid = do
+        getBuildTimes :: Hydra.BuildId -> IO (Maybe (UTCTime, UTCTime))
+        getBuildTimes bid = do
             rows <- query conn "\
                 \WITH                                                          \
                 \    given_build AS (                                          \
@@ -358,12 +380,15 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                 \        FROM actual_build                                     \
                 \        WHERE NOT EXISTS (SELECT NULL FROM given_build_maybe) \
                 \    )                                                         \
-                \SELECT selected_build.stoptime - selected_build.starttime     \
+                \SELECT selected_build.starttime, selected_build.stoptime      \
                 \FROM selected_build                                           \
-            \ " (Only bid) :: IO [(Only Int)]
+            \ " (Only bid) :: IO [(Int, Int)]
             pure $ case rows of
-                [(Only duration)] -> Just $ humanReadableDuration $ (fromIntegral duration) * oneSecond
-                _                 -> Nothing
+                [(starttime, stoptime)] -> Just
+                    ( posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral starttime
+                    , posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral stoptime
+                    )
+                _ -> Nothing
 
 statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
 statusHandler ghUserAgent getGitHubToken queue = do
