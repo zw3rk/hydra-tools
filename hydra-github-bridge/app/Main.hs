@@ -164,27 +164,7 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
     (Hydra.BuildFinished bid) -> do
         [(proj, name, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        let buildStatus = toEnum status
-        let ghCheckRunConclusion
-                | finished == (1 :: Int) = toCheckRunConclusion buildStatus
-                | otherwise              = GitHub.Failure
-        whenStatusOrJob (Just ghCheckRunConclusion) job $ withGithubFlake flake $ \owner repo hash -> do
-            buildTimes <- getBuildTimes bid
-            pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
-                { name        = "ci/hydra-build:" <> job
-                , headSha     = hash
-                , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
-                , externalId  = Just $ tshow bid
-                , status      = GitHub.Completed
-                , conclusion  = Just ghCheckRunConclusion
-                , startedAt   = buildTimes >>= Just . fst
-                , completedAt = buildTimes >>= Just . snd
-                , output      = Just $ GitHub.CheckRunOutput
-                    { title   = tshow buildStatus
-                    , summary = "" -- TODO
-                    , text    = Nothing
-                    }
-                }
+        withGithubFlake flake $ handleBuildDone bid job status (finished == (1 :: Int))
 
     where
         handler :: Hydra.Notification -> SomeException -> IO [GitHub.CheckRun]
@@ -295,27 +275,32 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     \    m.eval = e.id                      \
                     \WHERE b.finished = 1                   \
                 \ " [eid, jid, eid] :: IO [(Int, Text, Int)]
-                buildStatuses <- sequence $ rows <&> \(bid, job, status) -> do
-                    let buildStatus = toEnum status
-                    let ghCheckRunConclusion = toCheckRunConclusion buildStatus
-                    whenStatusOrJob (Just ghCheckRunConclusion) job $ do
-                        buildTimes <- getBuildTimes bid
-                        pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
-                            { name        = "ci/hydra-build:" <> job
-                            , headSha     = hash
-                            , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
-                            , externalId  = Just $ tshow eid
-                            , status      = GitHub.Completed
-                            , conclusion  = Just ghCheckRunConclusion
-                            , startedAt   = buildTimes >>= Just . fst
-                            , completedAt = buildTimes >>= Just . snd
-                            , output      = Just $ GitHub.CheckRunOutput
-                                { title   = tshow buildStatus
-                                , summary = "" -- TODO
-                                , text    = Nothing
-                                }
-                            }
+                buildStatuses <- sequence $ rows <&> \(bid, job, status) -> handleBuildDone bid job status True owner repo hash
                 pure $ evalStatuses ++ concat buildStatuses
+
+        handleBuildDone :: Hydra.BuildId -> Text -> Int -> Bool -> Text -> Text -> Text -> IO [GitHub.CheckRun]
+        handleBuildDone bid job status finished owner repo hash = do
+            let buildStatus = toEnum status
+            let ghCheckRunConclusion
+                    | finished  = toCheckRunConclusion buildStatus
+                    | otherwise = GitHub.Failure
+            whenStatusOrJob (Just ghCheckRunConclusion) job $ do
+                buildTimes <- getBuildTimes bid
+                pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                    { name        = "ci/hydra-build:" <> job
+                    , headSha     = hash
+                    , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
+                    , externalId  = Just $ tshow bid
+                    , status      = GitHub.Completed
+                    , conclusion  = Just ghCheckRunConclusion
+                    , startedAt   = buildTimes >>= Just . fst
+                    , completedAt = buildTimes >>= Just . snd
+                    , output      = Just $ GitHub.CheckRunOutput
+                        { title   = tshow buildStatus
+                        , summary = "" -- TODO
+                        , text    = Nothing
+                        }
+                    }
 
         -- Given an evaluation's error message, returns the jobs that could not be evaluated and their excerpt from the error message.
         parseFailedJobEvals :: Text -> [(Text, Text)]
