@@ -96,7 +96,8 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
             , externalId  = Just $ tshow jid
             , status      = GitHub.InProgress
             , conclusion  = Nothing
-            , startedAt   = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (triggertime :: Int)
+            -- `triggertime` is `Nothing` if the evaluation is cached.
+            , startedAt   = (triggertime :: Maybe Int) >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral
             , completedAt = Nothing
             , output      = Nothing
             }
