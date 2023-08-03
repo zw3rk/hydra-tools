@@ -32,6 +32,6 @@ main = do
   mStateDir <- lookupEnv "HYDRA_STATE_DIR"
   putStrLn $ "Server is starting on port " ++ show port
   putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
-  queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "ghb-" 10) mStateDir)
+  queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "github-hydra-bridge/queue" 10) mStateDir)
   void . forkIO $ hydraClient host user pass queue
   run port (app queue (gitHubKey key))

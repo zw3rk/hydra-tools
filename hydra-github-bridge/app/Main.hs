@@ -16,6 +16,7 @@ import           Lib.GitHub                              (parseGitHubFlakeURI)
 import qualified Lib.GitHub                              as GitHub
 import qualified Lib.Hydra                               as Hydra
 
+import qualified Codec.Compression.BZip                  as BZip
 import           Control.Concurrent
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
@@ -54,9 +55,14 @@ import           Text.Regex.TDFA                         ((=~))
 import           Data.Aeson                              hiding (Error, Success)
 import           Data.Maybe                              (isNothing)
 
+import           System.FilePath                         (takeFileName, (<.>),
+                                                          (</>))
 import           System.IO                               (BufferMode (LineBuffering),
                                                           hSetBuffering, stderr,
                                                           stdin, stdout)
+import           System.IO.Error                         (catchIOError,
+                                                          ioeGetErrorType,
+                                                          isDoesNotExistErrorType)
 
 tshow :: Show a => a -> Text
 tshow = cs . show
@@ -83,8 +89,8 @@ withGithubFlake flake action
     | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
     | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure []
 
-handleHydraNotification :: Connection -> Text -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host e = flip catch (handler e) $ case e of
+handleHydraNotification :: Connection -> Text -> FilePath -> Hydra.Notification -> IO [GitHub.CheckRun]
+handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e of
     -- Evaluations
     (Hydra.EvalStarted jid) -> do
         [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -286,6 +292,20 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     | otherwise = GitHub.Failure
             whenStatusOrJob (Just ghCheckRunConclusion) job $ do
                 buildTimes <- getBuildTimes bid
+                steps <- query conn ("SELECT stepnr, drvpath FROM buildsteps WHERE build = ? AND status != 0") (Only bid) :: IO [(Int, String)]
+                stepLogs <- sequence $ steps <&> \(stepnr, drvpath) -> do
+                    let
+                        drvName = takeFileName drvpath
+                        bucketed = take 2 drvName </> drop 2 drvName
+                        path = stateDir </> "build-logs" </> bucketed
+                    logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
+                        if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
+                        then ioError ioe
+                        else catchIOError (BSL.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
+                            if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
+                            then ioError ioe2
+                            else return Nothing
+                    return (stepnr, drvpath, logs)
                 pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
                     { name        = "ci/hydra-build:" <> job
                     , headSha     = hash
@@ -297,8 +317,12 @@ handleHydraNotification conn host e = flip catch (handler e) $ case e of
                     , completedAt = buildTimes >>= Just . snd
                     , output      = Just $ GitHub.CheckRunOutput
                         { title   = tshow buildStatus
-                        , summary = "" -- TODO
-                        , text    = Nothing
+                        , summary = tshow (length steps) <> " steps"
+                        , text    = Just $ ("# Failed Steps\n\n" <>) $
+                            Text.intercalate "\n\n" $ stepLogs <&> \(stepnr, drvpath, logs) ->
+                                "## Step " <> tshow stepnr <> "\n\n"
+                                <> "### Derivation\n\n" <> indent (cs drvpath) <> "\n\n"
+                                <> "### Log\n\n" <> maybe ("*Not available.*") (indent . cs) logs
                         }
                     }
 
@@ -428,6 +452,7 @@ main = do
     db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
+    stateDir <- getEnv "HYDRA_STATE_DIR"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
     let fetchGitHubToken = do
@@ -452,10 +477,7 @@ main = do
                 putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
                 fetchGitHubToken
 
-    mStateDir <- lookupEnv "HYDRA_STATE_DIR"
-    putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
-
-    queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hgb-" 10) mStateDir
+    queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hydra-github-bridge/queue" 10) (Just stateDir)
     _threadId <- forkIO $ forever $ statusHandler ghUserAgent getValidGitHubToken queue
     withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
@@ -467,5 +489,5 @@ main = do
         _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
         forever $ do
             note <- toHydraNotification <$> getNotification conn
-            statuses <- handleHydraNotification conn (cs host) note
+            statuses <- handleHydraNotification conn (cs host) stateDir note
             forM_ statuses $ DsQueue.write queue

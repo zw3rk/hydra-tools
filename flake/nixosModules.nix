@@ -78,7 +78,7 @@
               lib.optional (cfg.hydraPassFile != "") "hydra-pass:${cfg.hydraPassFile}"
               ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
 
-            StateDirectory = "hydra/github-hydra-bridge";
+            StateDirectory = "hydra";
           };
 
           script = ''
@@ -194,7 +194,7 @@
               lib.optional (cfg.ghTokenFile != null) "github-token:${cfg.ghTokenFile}"
               ++ lib.optional (cfg.ghAppKeyFile != "") "github-app-key-file:${cfg.ghAppKeyFile}";
 
-            StateDirectory = "hydra/hydra-github-bridge";
+            StateDirectory = "hydra";
           };
 
           script = ''
