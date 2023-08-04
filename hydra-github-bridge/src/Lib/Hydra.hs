@@ -21,7 +21,7 @@ data Notification
     | EvalFailed JobSetId
     | BuildQueued BuildId
     | BuildStarted BuildId
-    | BuildFinished BuildId
+    | BuildFinished BuildId [BuildId]
     deriving (Show, Eq)
 
 data BuildStatus
@@ -36,6 +36,7 @@ data BuildStatus
     | OutputSizeLimitExceeded
     | NonDeterministicBuild
     | Other
+    deriving Eq
 
 instance Show BuildStatus where
     show s = case s of

@@ -75,7 +75,7 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "eval_failed",    [_, jid]      <- words (cs payload) = Hydra.EvalFailed (read jid)
     | chan == "build_queued",   [bid]         <- words (cs payload) = Hydra.BuildQueued (read bid)
     | chan == "build_started",  [bid]         <- words (cs payload) = Hydra.BuildStarted (read bid)
-    | chan == "build_finished", (bid:_)       <- words (cs payload) = Hydra.BuildFinished (read bid)
+    | chan == "build_finished", (bid:depBids) <- words (cs payload) = Hydra.BuildFinished (read bid) (map read depBids)
     | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
 whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
@@ -167,10 +167,15 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
             }
 
     -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
-    (Hydra.BuildFinished bid) -> do
+    (Hydra.BuildFinished bid depBids) -> do
         [(proj, name, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        withGithubFlake flake $ handleBuildDone bid job status (finished == (1 :: Int))
+        withGithubFlake flake $ \owner repo hash -> do
+            checkRun <- handleBuildDone bid job status (finished == (1 :: Int)) owner repo hash
+            depCheckRuns <- sequence $ (if toEnum status /= Hydra.Succeeded then depBids else []) <&> \depBid -> do
+                [(depJob, depStatus, depFinished)] <- query conn "SELECT job, buildstatus, finished FROM builds WHERE id = ?" (Only depBid)
+                handleBuildDone depBid depJob depStatus (depFinished == (1 :: Int)) owner repo hash
+            return $ checkRun ++ concat depCheckRuns
 
     where
         handler :: Hydra.Notification -> SomeException -> IO [GitHub.CheckRun]
