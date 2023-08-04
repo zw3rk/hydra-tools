@@ -40,17 +40,17 @@ data BuildStatus
 
 instance Show BuildStatus where
     show s = case s of
-        (Succeeded)               -> "Build succeeded."
-        (Failed)                  -> "Build failed."
-        (DependencyFailed)        -> "Build dependency failed."
-        (Aborted)                 -> "Build aborted."
-        (Cancelled)               -> "Build cancelled."
-        (FailedWithOutput)        -> "Build failed with output."
-        (TimedOut)                -> "Build timed out."
-        (LogLimitExceeded)        -> "Build log limit exceeded."
-        (OutputSizeLimitExceeded) -> "Build output size limit exceeded."
-        (NonDeterministicBuild)   -> "Build is non-deterministic."
-        (Other)                   -> "Build failed due to unknown reason."
+        (Succeeded)               -> "Build succeeded"
+        (Failed)                  -> "Build failed"
+        (DependencyFailed)        -> "Build dependency failed"
+        (Aborted)                 -> "Build aborted"
+        (Cancelled)               -> "Build cancelled"
+        (FailedWithOutput)        -> "Build failed with output"
+        (TimedOut)                -> "Build timed out"
+        (LogLimitExceeded)        -> "Build log limit exceeded"
+        (OutputSizeLimitExceeded) -> "Build output size limit exceeded"
+        (NonDeterministicBuild)   -> "Build is non-deterministic"
+        (Other)                   -> "Build failed due to unknown reason"
 
 instance Enum BuildStatus where
     toEnum i = case i of
