@@ -451,7 +451,7 @@ statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRu
 statusHandler ghUserAgent getGitHubToken queue = do
     checkRun <- DsQueue.read queue
     print checkRun
-    BSL.putStrLn $ encode checkRun
+    BSL.putStrLn $ "-> " <> encode checkRun
 
     ghToken <- getGitHubToken
 
@@ -470,7 +470,7 @@ statusHandler ghUserAgent getGitHubToken queue = do
         , ghData = GitHub.toKeyValue checkRun.payload
         }
         :: IO Value
-    BSL.putStrLn $ encode res
+    BSL.putStrLn $ "<- " <> encode res
 
 main :: IO ()
 main = do
