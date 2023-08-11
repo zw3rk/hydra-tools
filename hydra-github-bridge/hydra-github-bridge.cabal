@@ -35,10 +35,12 @@ library
                       , Lib.Hydra
                       , Lib.GitHub
                       , Lib.Data.Duration
+                      , Lib.Data.List
+                      , Lib.Data.Text
 
 executable hydra-github-bridge
     import:           common
     ghc-options:      -threaded -rtsopts
     hs-source-dirs:   app, src
-    other-modules:    Lib, Lib.GitHub, Lib.Hydra, Lib.Data.Duration
+    other-modules:    Lib, Lib.GitHub, Lib.Hydra, Lib.Data.Duration, Lib.Data.List, Lib.Data.Text
     main-is:          Main.hs

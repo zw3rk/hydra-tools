@@ -12,6 +12,9 @@ module Main where
 
 import           Lib                                     (toCheckRunConclusion)
 import           Lib.Data.Duration                       (humanReadableDuration)
+import           Lib.Data.List                           (takeEnd)
+import           Lib.Data.Text                           (indent, indentLine,
+                                                          renderLimited)
 import           Lib.GitHub                              (parseGitHubFlakeURI)
 import qualified Lib.GitHub                              as GitHub
 import qualified Lib.Hydra                               as Hydra
@@ -127,8 +130,8 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
             , output      = Just $ GitHub.CheckRunOutput
                 { title   = "Evaluation failed"
                 , summary = ""
-                , text = Just $ maybe
-                    (mkEvalErrorSummary errormsg)
+                , text = maybe
+                    (errormsg >>= mkEvalErrorSummary)
                     mkFetchErrorSummary
                     fetcherrormsg
                 }
@@ -208,7 +211,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation has errors"
                                 , summary = summary
-                                , text    = Just $ mkEvalErrorSummary err
+                                , text    = mkEvalErrorSummary err
                                 }
                             })
                         ++ ((parseFailedJobEvals err) <&> \(job, msg) -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -223,7 +226,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                             , output      = Just $ GitHub.CheckRunOutput
                                 { title   = "Evaluation failed"
                                 , summary = summary
-                                , text    = Just $ mkEvalErrorSummary msg
+                                , text    = mkEvalErrorSummary msg
                                 }
                             })
                     (_, Just err) | not (Text.null err) -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -238,7 +241,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                         , output      = Just $ GitHub.CheckRunOutput
                             { title   = "Failed to fetch"
                             , summary = summary
-                            , text    = Just $ mkFetchErrorSummary err
+                            , text    = mkFetchErrorSummary err
                             }
                         }
                     _ -> singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
@@ -323,11 +326,19 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                     , output      = Just $ GitHub.CheckRunOutput
                         { title   = tshow buildStatus
                         , summary = tshow (length steps) <> " steps"
-                        , text    = Just $ ("# Failed Steps\n\n" <>) $
-                            Text.intercalate "\n\n" $ stepLogs <&> \(stepnr, drvpath, logs) ->
-                                "## Step " <> tshow stepnr <> "\n\n"
-                                <> "### Derivation\n\n" <> indent (cs drvpath) <> "\n\n"
-                                <> "### Log\n\n" <> maybe ("*Not available.*") (indent . cs) logs
+                        , text    = if null stepLogs then Nothing else
+                            let
+                                maxLines = foldr max 0 $ stepLogs <&> \(_, _, logs) -> maybe 0 length logs
+                            in
+                                renderLimited 65535 $ \numLines ->
+                                    let
+                                        rendered = ("# Failed Steps\n\n" <>) $ Text.intercalate "\n" $ stepLogs <&> \(stepnr, drvpath, logs) ->
+                                            "## Step " <> tshow stepnr <> "\n\n"
+                                            -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                                            <> "### Derivation\n\n" <> indent (cs drvpath) <> "\n"
+                                            <> "### Log\n\n" <> maybe "*Not available.*\n" (Text.unlines . (map indentLine) . (map cs) . (takeEnd numLines) . lines) logs
+                                        done = numLines == maxLines
+                                    in (rendered, done)
                         }
                     }
 
@@ -412,15 +423,29 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
             "Checkout took " <> humanReadableDuration (fromIntegral checkouttime * oneSecond) <> "."
             <> maybe mempty (\j -> "\nEvaluation took " <> humanReadableDuration (fromIntegral j * oneSecond) <> ".") evaltime
 
-        mkFetchErrorSummary :: Text -> Text
-        mkFetchErrorSummary fetcherrmsg = "Fetch error:\n\n" <> indent fetcherrmsg
+        mkFetchErrorSummary :: Text -> Maybe Text
+        mkFetchErrorSummary fetcherrmsg =
+            let
+                fetcherrmsgLines = Text.lines fetcherrmsg
+            in
+                renderLimited 65535 $ \numLines ->
+                    let
+                        -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                        rendered = ("Fetch error:\n\n" <>) $ Text.unlines . (map indentLine) . (takeEnd numLines) $ fetcherrmsgLines
+                        done = numLines == length fetcherrmsgLines
+                    in (rendered, done)
 
-        mkEvalErrorSummary :: Text -> Text
-        mkEvalErrorSummary errmsg = "Evaluation error:\n\n" <> indent errmsg
-
-        -- making code blocks using indentation instead of triple backticks so that they cannot be escaped
-        indent :: Text -> Text
-        indent text = mconcat $ Text.lines text <&> (("    " <>) . (<> "\n"))
+        mkEvalErrorSummary :: Text -> Maybe Text
+        mkEvalErrorSummary errmsg =
+            let
+                errmsgLines = Text.lines errmsg
+            in
+                renderLimited 65535 $ \numLines ->
+                    let
+                        -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                        rendered = ("Evaluation error:\n\n" <>) $ Text.unlines . (map indentLine) . (takeEnd numLines) $ errmsgLines
+                        done = numLines == length errmsgLines
+                    in (rendered, done)
 
 statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
 statusHandler ghUserAgent getGitHubToken queue = do
