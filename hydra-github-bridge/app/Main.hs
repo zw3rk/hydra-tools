@@ -20,7 +20,7 @@ import qualified Lib.GitHub                              as GitHub
 import qualified Lib.Hydra                               as Hydra
 
 import qualified Codec.Compression.BZip                  as BZip
-import           Control.Concurrent
+import           Control.Concurrent.Async                as Async
 import           Control.Exception                       (SomeException, catch,
                                                           displayException)
 import           Control.Monad
@@ -508,16 +508,19 @@ main = do
                 fetchGitHubToken
 
     queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hydra-github-bridge/queue" 10) (Just stateDir)
-    _threadId <- forkIO $ forever $ statusHandler ghUserAgent getValidGitHubToken queue
-    withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
-        _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
-        _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
-        _ <- execute_ conn "LISTEN eval_cached"    -- (opaque id, jobset id, prev identical eval id)
-        _ <- execute_ conn "LISTEN eval_failed"    -- (opaque id, jobset id)
-        _ <- execute_ conn "LISTEN build_queued"   -- (build id)
-        _ <- execute_ conn "LISTEN build_started"  -- (build id)
-        _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
-        forever $ do
-            note <- toHydraNotification <$> getNotification conn
-            statuses <- handleHydraNotification conn (cs host) stateDir note
-            forM_ statuses $ DsQueue.write queue
+    eres <- Async.race
+        (forever $ statusHandler ghUserAgent getValidGitHubToken queue)
+        (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
+            _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
+            _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
+            _ <- execute_ conn "LISTEN eval_cached"    -- (opaque id, jobset id, prev identical eval id)
+            _ <- execute_ conn "LISTEN eval_failed"    -- (opaque id, jobset id)
+            _ <- execute_ conn "LISTEN build_queued"   -- (build id)
+            _ <- execute_ conn "LISTEN build_started"  -- (build id)
+            _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
+            forever $ do
+                note <- toHydraNotification <$> getNotification conn
+                statuses <- handleHydraNotification conn (cs host) stateDir note
+                forM_ statuses $ DsQueue.write queue
+            )
+    either (const . putStrLn $ "statusHandler exited") (const . putStrLn $ "withConnect exited") eres

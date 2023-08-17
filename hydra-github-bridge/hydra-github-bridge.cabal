@@ -15,6 +15,7 @@ common common
     build-depends:    base >=4.16 && < 5
                     , aeson
                     , aeson-casing
+                    , async
                     , human-readable-duration
                     , postgresql-simple
                     , bytestring
