@@ -112,7 +112,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
-    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
+    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref)
     = liftIO $ do
         let projName = escapeHydraName repoName
             refName = Text.drop (Text.length "refs/heads/") ref
