@@ -22,7 +22,7 @@ import qualified Lib.Hydra                               as Hydra
 import qualified Codec.Compression.BZip                  as BZip
 import           Control.Concurrent.Async                as Async
 import           Control.Exception                       (SomeException, catch,
-                                                          displayException)
+                                                          displayException, try)
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
@@ -460,7 +460,7 @@ statusHandler ghUserAgent getGitHubToken queue = do
             , userAgent = ghUserAgent
             , apiVersion = GitHub.apiVersion
             }
-    res <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
+    eres <- try . liftIO . runGitHubT githubSettings $ queryGitHub GHEndpoint
         { method = POST
         , endpoint = "/repos/:owner/:repo/check-runs"
         , endpointVals =
@@ -469,8 +469,10 @@ statusHandler ghUserAgent getGitHubToken queue = do
             ]
         , ghData = GitHub.toKeyValue checkRun.payload
         }
-        :: IO Value
-    BSL.putStrLn $ "<- " <> encode res
+        :: IO (Either SomeException Value)
+    case eres of
+      Right res -> BSL.putStrLn $ "<- " <> encode res
+      Left  e   -> putStrLn $ "statusHandler:" ++ show e
 
 main :: IO ()
 main = do
