@@ -10,11 +10,11 @@
 
 module Main where
 
-import           Lib                                     (toCheckRunConclusion)
+import           Lib                                     (binarySearch,
+                                                          toCheckRunConclusion)
 import           Lib.Data.Duration                       (humanReadableDuration)
 import           Lib.Data.List                           (takeEnd)
-import           Lib.Data.Text                           (indent, indentLine,
-                                                          renderLimited)
+import           Lib.Data.Text                           (indentLine)
 import           Lib.GitHub                              (parseGitHubFlakeURI)
 import qualified Lib.GitHub                              as GitHub
 import qualified Lib.Hydra                               as Hydra
@@ -28,9 +28,11 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
+import           Data.Foldable                           (foldr')
 import           Data.Functor                            ((<&>))
 import           Data.IORef                              (newIORef)
-import           Data.List                               (singleton)
+import           Data.List                               (intercalate,
+                                                          singleton)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
@@ -328,17 +330,29 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                         , summary = tshow (length steps) <> " steps"
                         , text    = if null stepLogs then Nothing else
                             let
-                                maxLines = foldr max 0 $ stepLogs <&> \(_, _, logs) -> maybe 0 length logs
+                                limit = 65535
+                                maxLines = foldr' max 0 $ stepLogs <&> \(_, _, logs) -> maybe 0 length logs
+                                indentPrefix = cs $ indentLine "" :: String
+                                stepLogsLines = stepLogs <&> \(stepnr, drvpath, logs) -> (stepnr, drvpath, logs >>= Just . lines)
                             in
-                                renderLimited 65535 $ \numLines ->
+                                binarySearch 0 limit $ \numLines ->
                                     let
-                                        rendered = ("# Failed Steps\n\n" <>) $ Text.intercalate "\n" $ stepLogs <&> \(stepnr, drvpath, logs) ->
-                                            "## Step " <> tshow stepnr <> "\n\n"
+                                        parts = singleton "# Failed Steps\n\n" ++ intercalate (singleton "\n") (stepLogsLines <&> \(stepnr, drvpath, logLines) ->
+                                            [ "## Step ", show stepnr, "\n\n"
                                             -- making code blocks by indenting instead of triple backticks so they cannot be escaped
-                                            <> "### Derivation\n\n" <> indent (cs drvpath) <> "\n"
-                                            <> "### Log\n\n" <> maybe "*Not available.*\n" (Text.unlines . (map indentLine) . (map cs) . (takeEnd numLines) . lines) logs
-                                        done = numLines == maxLines
-                                    in (rendered, done)
+                                            , "### Derivation\n\n", indentPrefix, drvpath, "\n\n"
+                                            , "### Log\n\n"
+                                            ]
+                                            ++ maybe
+                                                (singleton "*Not available.*\n")
+                                                ((concatMap (\l -> [indentPrefix, l, "\n"])) . (takeEnd numLines))
+                                                logLines
+                                            )
+                                        totalLength = foldr' ((+) . length) 0 parts
+                                    in
+                                        ( totalLength < limit && numLines < maxLines
+                                        , if totalLength > limit then Nothing else Just . cs $ mconcat parts
+                                        )
                         }
                     }
 
@@ -426,26 +440,40 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
         mkFetchErrorSummary :: Text -> Maybe Text
         mkFetchErrorSummary fetcherrmsg =
             let
+                limit = 65535
                 fetcherrmsgLines = Text.lines fetcherrmsg
+                maxLines = length fetcherrmsgLines
+                indentPrefix = indentLine ""
             in
-                renderLimited 65535 $ \numLines ->
+                binarySearch 0 limit $ \numLines ->
                     let
-                        -- making code blocks by indenting instead of triple backticks so they cannot be escaped
-                        rendered = ("Fetch error:\n\n" <>) $ Text.unlines . (map indentLine) . (takeEnd numLines) $ fetcherrmsgLines
-                        done = numLines == length fetcherrmsgLines
-                    in (rendered, done)
+                        parts = singleton "Fetch error:\n\n"
+                            -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                            ++ (concatMap (\l -> [indentPrefix, l, "\n"]) $ takeEnd numLines fetcherrmsgLines)
+                        totalLength = foldr' ((+) . Text.length) 0 parts
+                    in
+                        ( totalLength < limit && numLines < maxLines
+                        , if totalLength > limit then Nothing else Just . cs $ Text.concat parts
+                        )
 
         mkEvalErrorSummary :: Text -> Maybe Text
         mkEvalErrorSummary errmsg =
             let
+                limit = 65535
                 errmsgLines = Text.lines errmsg
+                maxLines = length errmsgLines
+                indentPrefix = indentLine ""
             in
-                renderLimited 65535 $ \numLines ->
+                binarySearch 0 limit $ \numLines ->
                     let
-                        -- making code blocks by indenting instead of triple backticks so they cannot be escaped
-                        rendered = ("Evaluation error:\n\n" <>) $ Text.unlines . (map indentLine) . (takeEnd numLines) $ errmsgLines
-                        done = numLines == length errmsgLines
-                    in (rendered, done)
+                        parts = singleton "Evaluation error:\n\n"
+                            -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                            ++ (concatMap (\l -> [indentPrefix, l, "\n"]) $ takeEnd numLines errmsgLines)
+                        totalLength = foldr' ((+) . Text.length) 0 parts
+                    in
+                        ( totalLength < limit && numLines < maxLines
+                        , if totalLength > limit then Nothing else Just . cs $ Text.concat parts
+                        )
 
 statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
 statusHandler ghUserAgent getGitHubToken queue = do
