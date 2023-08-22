@@ -343,6 +343,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                                             , "### Derivation\n\n", indentPrefix, drvpath, "\n\n"
                                             , "### Log\n\n"
                                             ]
+                                            ++ (if numLines < maxLines then ["Last ", show numLines, " lines:\n\n"] else [])
                                             ++ maybe
                                                 (singleton "*Not available.*\n")
                                                 ((concatMap (\l -> [indentPrefix, l, "\n"])) . (takeEnd numLines))
@@ -448,6 +449,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                 binarySearch 0 limit $ \numLines ->
                     let
                         parts = singleton "Fetch error:\n\n"
+                            ++ (if numLines < maxLines then ["Last ", tshow numLines, " lines:\n\n"] else [])
                             -- making code blocks by indenting instead of triple backticks so they cannot be escaped
                             ++ (concatMap (\l -> [indentPrefix, l, "\n"]) $ takeEnd numLines fetcherrmsgLines)
                         totalLength = foldr' ((+) . Text.length) 0 parts
@@ -467,6 +469,7 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
                 binarySearch 0 limit $ \numLines ->
                     let
                         parts = singleton "Evaluation error:\n\n"
+                            ++ (if numLines < maxLines then ["Last ", tshow numLines, " lines:\n\n"] else [])
                             -- making code blocks by indenting instead of triple backticks so they cannot be escaped
                             ++ (concatMap (\l -> [indentPrefix, l, "\n"]) $ takeEnd numLines errmsgLines)
                         totalLength = foldr' ((+) . Text.length) 0 parts
