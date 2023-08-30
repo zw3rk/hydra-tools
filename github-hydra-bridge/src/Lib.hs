@@ -9,9 +9,11 @@
 module Lib where
 
 import           Control.Concurrent.STM       (newTVarIO)
-import           Control.Monad                (forever, void)
+import           Control.Monad                (forM_, forever, void)
 import           Control.Monad.Error.Class    (catchError)
 import           Control.Monad.IO.Class       (liftIO)
+import           Data.Aeson                   (fromJSON)
+import qualified Data.Aeson                   as Aeson
 import           Data.ByteString.Char8        (ByteString)
 import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
@@ -19,11 +21,16 @@ import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
 import           DsQueue                      (DsQueue)
 import qualified DsQueue
-import           GitHub.Data.Webhooks.Events  (IssueCommentEvent (..),
+import           GitHub.Data.Webhooks.Events  (CheckSuiteEvent (..),
+                                               CheckSuiteEventAction (..),
+                                               IssueCommentEvent (..),
                                                PullRequestEvent (..),
                                                PullRequestEventAction (..),
                                                PushEvent (..))
-import           GitHub.Data.Webhooks.Payload (HookIssueComment (..),
+import           GitHub.Data.Webhooks.Payload (HookCheckSuite (..),
+                                               HookChecksPullRequest (..),
+                                               HookChecksPullRequestTarget (..),
+                                               HookIssueComment (..),
                                                HookPullRequest (..),
                                                HookRepository (..),
                                                HookUser (..),
@@ -247,10 +254,37 @@ issueCommentHook _ (_, ev) = liftIO $ do
   putStrLn "An issue comment was posted:"
   print $ (whIssueCommentBody . evIssueCommentPayload) ev
 
-type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI)
+-- Check Suite Hook
+type CheckSuiteHookAPI =
+  GitHubEvent '[ 'WebhookCheckSuiteEvent ]
+    :> GitHubSignedReqBody '[JSON] CheckSuiteEvent
+    :> Post '[JSON] ()
 
-singleEndpoint :: DsQueue Command -> Server SingleHookEndpointAPI
-singleEndpoint queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue)
+checkSuiteHook :: ClientEnv -> DsQueue Command -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook env queue _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSuiteEventActionRerequested }) = liftIO $ do
+    let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
+        repoName = whRepoFullName $ evCheckSuiteRepository ev
+        projName = escapeHydraName repoName
+
+    forM_ prs $ \pr -> do
+        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+
+        jobset <- (flip runClientM env $ getJobset projName jobsetName)
+            >>= either (die . show) return
+            >>= \response -> case fromJSON response of
+                Aeson.Error   e -> die $ show e
+                Aeson.Success v -> return v
+
+        putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        DsQueue.write queue $ UpdateJobset repoName projName jobsetName $ jobset
+            { hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr) }
+
+checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev)
+
+type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI)
+
+singleEndpoint :: ClientEnv -> DsQueue Command -> Server SingleHookEndpointAPI
+singleEndpoint env queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue) :<|> (checkSuiteHook env queue)
 
 -- combinator for handing 404 (not found)
 on404 :: ClientM a -> ClientM a -> ClientM a
@@ -295,8 +329,8 @@ handleCmd (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
     return ()
 
-hydraClient :: Text -> Text -> Text -> DsQueue Command -> IO ()
-hydraClient host user pass queue = do
+hydraClientEnv :: Text -> Text -> Text -> IO ClientEnv
+hydraClientEnv host user pass = do
     mgr <- newManager tlsManagerSettings
     jar <- newTVarIO mempty
     let env = (mkClientEnv mgr (BaseUrl Https (Text.unpack host) 443 ""))
@@ -307,14 +341,18 @@ hydraClient host user pass queue = do
         Left e  -> die (show e)
         Right _ -> pure ()
 
+    return env
+
+hydraClient :: ClientEnv -> DsQueue Command -> IO ()
+hydraClient env queue =
     -- loop forever, working down the hydra commands
     forever $ DsQueue.read queue >>= flip runClientM env . handleCmd >>= \case
         Left e  -> print e
         Right _ -> pure ()
 
-app :: DsQueue Command -> GitHubKey -> Application
-app queue key
+app :: ClientEnv -> DsQueue Command -> GitHubKey -> Application
+app env queue key
   = serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint queue)
+    (singleEndpoint env queue)
