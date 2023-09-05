@@ -12,7 +12,6 @@ import           Control.Concurrent.STM       (newTVarIO)
 import           Control.Monad                (forever, void)
 import           Control.Monad.Error.Class    (catchError)
 import           Control.Monad.IO.Class       (liftIO)
--- import           Data.ByteString              as BS
 import           Data.ByteString.Char8        (ByteString)
 import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
