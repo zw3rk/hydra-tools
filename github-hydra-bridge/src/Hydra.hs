@@ -153,6 +153,12 @@ type HydraAPI = "project"
                 :> "push"
                 :> QueryParam "jobsets" Text
                 :> Put '[JSON] Value
+              -- Not actually part of the API but this is what the restart button does.
+              :<|> "build"
+                :> Capture "build-id" Int
+                :> "restart"
+                -- Responds with a redirect, just ignore that.
+                :> Get '[] NoContent
 
 mkProject :: Text -> HydraProject -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
 mkJobset :: Text -> Text -> HydraJobset -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
@@ -160,7 +166,8 @@ getJobset :: Text -> Text -> ClientM Value
 rmJobset :: Text -> Text -> ClientM Value
 login :: Maybe Text -> HydraLogin -> ClientM Value
 push :: Maybe Text -> ClientM Value
+restartBuild :: Int -> ClientM NoContent
 
 -- This will provide us with the definitions for mkProject, mkJobset, ... push,
 -- by generating a @client@ for the specified @HydraAPI@.
-mkProject :<|> mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push = client (Proxy @HydraAPI)
+mkProject :<|> mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push :<|> restartBuild = client (Proxy @HydraAPI)

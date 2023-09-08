@@ -21,13 +21,16 @@ import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
 import           DsQueue                      (DsQueue)
 import qualified DsQueue
-import           GitHub.Data.Webhooks.Events  (CheckSuiteEvent (..),
+import           GitHub.Data.Webhooks.Events  (CheckRunEvent (..),
+                                               CheckRunEventAction (..),
+                                               CheckSuiteEvent (..),
                                                CheckSuiteEventAction (..),
                                                IssueCommentEvent (..),
                                                PullRequestEvent (..),
                                                PullRequestEventAction (..),
                                                PushEvent (..))
-import           GitHub.Data.Webhooks.Payload (HookCheckSuite (..),
+import           GitHub.Data.Webhooks.Payload (HookCheckRun (..),
+                                               HookCheckSuite (..),
                                                HookChecksPullRequest (..),
                                                HookChecksPullRequestTarget (..),
                                                HookIssueComment (..),
@@ -53,6 +56,8 @@ data Command
     = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
     | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
+    | EvaluateJobset Text Text
+    | RestartBuild Int
     deriving (Read, Show)
 
 gitHubKey :: ByteString -> GitHubKey
@@ -281,10 +286,37 @@ checkSuiteHook env queue _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSui
 
 checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev)
 
-type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI)
+-- Check Run Hook
+type CheckRunHookAPI =
+  GitHubEvent '[ 'WebhookCheckRunEvent ]
+    :> GitHubSignedReqBody '[JSON] CheckRunEvent
+    :> Post '[JSON] ()
+
+checkRunHook :: DsQueue Command -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
+checkRunHook queue _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventActionRerequested }) = liftIO $ do
+    let checkRun = evCheckRunCheckRun ev
+        checkRunName = whCheckRunName checkRun
+        repoName = whRepoFullName $ evCheckRunRepository ev
+        projName = escapeHydraName repoName
+        prs = whCheckRunPullRequests checkRun
+
+    if "ci/eval" `Text.isPrefixOf` checkRunName
+    then forM_ prs $ \pr -> do
+        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+
+        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        DsQueue.write queue $ EvaluateJobset projName jobsetName
+    else do
+        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
+        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+        DsQueue.write queue $ RestartBuild externalId
+
+checkRunHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkRunEvent with action: " ++ show (evCheckRunAction ev)
+
+type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI :<|> CheckRunHookAPI)
 
 singleEndpoint :: ClientEnv -> DsQueue Command -> Server SingleHookEndpointAPI
-singleEndpoint env queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue) :<|> (checkSuiteHook env queue)
+singleEndpoint env queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue) :<|> (checkSuiteHook env queue) :<|> (checkRunHook queue)
 
 -- combinator for handing 404 (not found)
 on404 :: ClientM a -> ClientM a -> ClientM a
@@ -327,6 +359,16 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
 
 handleCmd (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
+    return ()
+
+handleCmd (EvaluateJobset projName jobsetName) = do
+    liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
+    void $ push $ Just (projName <> ":" <> jobsetName)
+    return ()
+
+handleCmd (RestartBuild bid) = do
+    liftIO (putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart...")
+    void $ restartBuild $ bid
     return ()
 
 hydraClientEnv :: Text -> Text -> Text -> IO ClientEnv
