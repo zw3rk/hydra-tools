@@ -516,6 +516,7 @@ main = do
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     stateDir <- getEnv "HYDRA_STATE_DIR"
+    queueDir <- maybe (stateDir ++ "/hydra-github-bridge") id <$> lookupEnv "QUEUE_DIR"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
     let fetchGitHubToken = do
@@ -540,7 +541,7 @@ main = do
                 putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
                 fetchGitHubToken
 
-    queue <- DsQueue.new $ fmap (\sd -> DiskStoreConfig sd "hydra-github-bridge/queue" 10) (Just stateDir)
+    queue <- DsQueue.new . Just $ DiskStoreConfig queueDir "queue" 10
     eres <- Async.race
         (forever $ statusHandler ghUserAgent getValidGitHubToken queue)
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
