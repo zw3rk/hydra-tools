@@ -5,6 +5,7 @@
 {-# LANGUAGE NoFieldSelectors      #-}
 {-# LANGUAGE OverloadedRecordDot   #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeOperators         #-}
 
@@ -21,8 +22,10 @@ import qualified Lib.Hydra                               as Hydra
 
 import qualified Codec.Compression.BZip                  as BZip
 import           Control.Concurrent.Async                as Async
-import           Control.Exception                       (SomeException, catch,
-                                                          displayException, try)
+import           Control.Exception                       (SomeException,
+                                                          catchJust,
+                                                          displayException,
+                                                          fromException, try)
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
@@ -95,7 +98,7 @@ withGithubFlake flake action
     | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure []
 
 handleHydraNotification :: Connection -> Text -> FilePath -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e of
+handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
     -- Evaluations
     (Hydra.EvalStarted jid) -> do
         [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -183,6 +186,10 @@ handleHydraNotification conn host stateDir e = flip catch (handler e) $ case e o
             return $ checkRun ++ concat depCheckRuns
 
     where
+        catchJustPredicate ee
+            | Just (_ :: Async.AsyncCancelled) <- fromException ee = Nothing
+            | otherwise = Just ee
+
         handler :: Hydra.Notification -> SomeException -> IO [GitHub.CheckRun]
         handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHub.CheckRun])
 
