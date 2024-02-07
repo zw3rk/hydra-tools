@@ -7,6 +7,8 @@ module DiskStore
   , save
   ) where
 
+import           Control.Exception (catch, throwIO)
+
 import qualified Data.List        as List
 import           Data.Ord         (Down (..))
 import           Data.Time        (UTCTime)
@@ -16,6 +18,7 @@ import           System.Directory (listDirectory, removeFile)
 import           System.FilePath  (isExtensionOf, takeFileName, (</>))
 import           System.IO        (IOMode (WriteMode), hFlush, hPutStrLn,
                                    withFile)
+import           System.IO.Error  (isDoesNotExistError)
 
 import           Text.Read        (readMaybe)
 import           Text.Show.Pretty (ppShow)
@@ -49,8 +52,15 @@ save scfg a = do
 
 deleteOldStates :: DiskStoreConfig -> IO ()
 deleteOldStates scfg = do
-  xs <- getStoreFiles scfg
-  mapM_ removeFile $ take (length xs - scKeepCount scfg) xs
+    xs <- getStoreFiles scfg
+    mapM_ removeFileIfExists $ take (length xs - scKeepCount scfg) xs
+  where
+    removeFileIfExists :: FilePath -> IO ()
+    removeFileIfExists fpath =
+      removeFile fpath `catch` \ e ->
+        if isDoesNotExistError e
+          then pure ()
+          else throwIO e
 
 genFilePath :: DiskStoreConfig -> IO FilePath
 genFilePath scfg =
