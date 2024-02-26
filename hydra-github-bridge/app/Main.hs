@@ -88,10 +88,11 @@ toHydraNotification Notification { notificationChannel = chan, notificationData 
     | chan == "cached_build_finished", [_, bid]       <- words (cs payload) = Hydra.BuildFinished (read bid) []
     | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
-whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
-whenStatusOrJob status job action
+whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
+whenStatusOrJob status prevStepStatus job action
     | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
     | Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
+    | (Just GitHub.Success, Just pss) <- (status, prevStepStatus), pss /= Hydra.Succeeded = action
     | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure []
 
 withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
@@ -148,7 +149,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
     (Hydra.BuildQueued bid) -> do
         [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+        whenStatusOrJob Nothing Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/hydra-build:" <> job
             , headSha     = hash
             , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
@@ -163,7 +164,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
     (Hydra.BuildStarted bid) -> do
         [(proj, name, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+        whenStatusOrJob Nothing Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/hydra-build:" <> job
             , headSha     = hash
             , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
@@ -309,10 +310,14 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
             let ghCheckRunConclusion
                     | finished  = toCheckRunConclusion buildStatus
                     | otherwise = GitHub.Failure
-            whenStatusOrJob (Just ghCheckRunConclusion) job $ do
+            steps <- query conn ("SELECT stepnr, drvpath, status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC") (Only bid) :: IO [(Int, String, Int)]
+            let prevStepStatus
+                    | length steps >= 2 = Just . (\(_, _, stepStatus) -> toEnum stepStatus) $ steps !! 1
+                    | otherwise = Nothing
+            whenStatusOrJob (Just ghCheckRunConclusion) prevStepStatus job $ do
                 buildTimes <- getBuildTimes bid
-                steps <- query conn ("SELECT stepnr, drvpath FROM buildsteps WHERE build = ? AND status != 0") (Only bid) :: IO [(Int, String)]
-                stepLogs <- sequence $ steps <&> \(stepnr, drvpath) -> do
+                let failedSteps = filter (\(_, _, stepStatus) -> stepStatus /= 0) steps
+                failedStepLogs <- sequence $ failedSteps <&> \(stepnr, drvpath, _) -> do
                     let
                         drvName = takeFileName drvpath
                         bucketed = take 2 drvName </> drop 2 drvName
@@ -336,13 +341,13 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                     , completedAt = buildTimes >>= Just . snd
                     , output      = Just $ GitHub.CheckRunOutput
                         { title   = tshow buildStatus
-                        , summary = tshow (length steps) <> " steps"
-                        , text    = if null stepLogs then Nothing else
+                        , summary = tshow (length failedSteps) <> " steps"
+                        , text    = if null failedStepLogs then Nothing else
                             let
                                 limit = 65535
-                                maxLines = foldr' max 0 $ stepLogs <&> \(_, _, logs) -> maybe 0 length logs
+                                maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
                                 indentPrefix = cs $ indentLine "" :: String
-                                stepLogsLines = stepLogs <&> \(stepnr, drvpath, logs) -> (stepnr, drvpath, logs >>= Just . lines)
+                                stepLogsLines = failedStepLogs <&> \(stepnr, drvpath, logs) -> (stepnr, drvpath, logs >>= Just . lines)
                             in
                                 binarySearch 0 limit $ \numLines ->
                                     let
