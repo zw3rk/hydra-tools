@@ -22,10 +22,6 @@
       ];
     })
     .hydra-tools;
-
-  packages = lib.flip withSystem ({pkgs, ...}: {
-    hydra-crystal-notify = (pkgs.callPackage ../hydra-crystal-notify {}).hydra-crystal-notify;
-  });
 in {
   perSystem = {
     system,
@@ -34,14 +30,12 @@ in {
   }: {
     packages = let
       haskellPkgSet' = haskellPkgSet system;
-    in
-      packages system
-      // {
-        github-hydra-bridge = haskellPkgSet'.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
-        hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
-        disk-store = haskellPkgSet'.getComponent "disk-store:lib:disk-store";
-        ds-queue = haskellPkgSet'.getComponent "ds-queue:lib:ds-queue";
-      };
+    in {
+      github-hydra-bridge = haskellPkgSet'.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
+      hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
+      disk-store = haskellPkgSet'.getComponent "disk-store:lib:disk-store";
+      ds-queue = haskellPkgSet'.getComponent "ds-queue:lib:ds-queue";
+    };
   };
 
   flake.hydraJobs = lib.genAttrs config.systems (lib.flip withSystem (
@@ -50,9 +44,7 @@ in {
       pkgs,
       ...
     }: let
-      jobs =
-        packages system
-        // (haskellPkgSet system).flake'.hydraJobs;
+      jobs = (haskellPkgSet system).flake'.hydraJobs;
     in
       jobs
       // {
