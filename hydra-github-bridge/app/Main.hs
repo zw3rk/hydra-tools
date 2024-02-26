@@ -77,13 +77,15 @@ tshow = cs . show
 
 toHydraNotification :: Notification -> Hydra.Notification
 toHydraNotification Notification { notificationChannel = chan, notificationData = payload }
-    | chan == "eval_started",   [_, jid]      <- words (cs payload) = Hydra.EvalStarted (read jid)
-    | chan == "eval_added",     [_, jid, eid] <- words (cs payload) = Hydra.EvalAdded (read jid) (read eid)
-    | chan == "eval_cached",    [_, jid, eid] <- words (cs payload) = Hydra.EvalCached (read jid) (read eid)
-    | chan == "eval_failed",    [_, jid]      <- words (cs payload) = Hydra.EvalFailed (read jid)
-    | chan == "build_queued",   [bid]         <- words (cs payload) = Hydra.BuildQueued (read bid)
-    | chan == "build_started",  [bid]         <- words (cs payload) = Hydra.BuildStarted (read bid)
-    | chan == "build_finished", (bid:depBids) <- words (cs payload) = Hydra.BuildFinished (read bid) (map read depBids)
+    | chan == "eval_started",          [_, jid]       <- words (cs payload) = Hydra.EvalStarted (read jid)
+    | chan == "eval_added",            [_, jid, eid]  <- words (cs payload) = Hydra.EvalAdded (read jid) (read eid)
+    | chan == "eval_cached",           [_, jid, eid]  <- words (cs payload) = Hydra.EvalCached (read jid) (read eid)
+    | chan == "eval_failed",           [_, jid]       <- words (cs payload) = Hydra.EvalFailed (read jid)
+    | chan == "build_queued",          [bid]          <- words (cs payload) = Hydra.BuildQueued (read bid)
+    | chan == "cached_build_queued",   [_, bid]       <- words (cs payload) = Hydra.BuildQueued (read bid)
+    | chan == "build_started",         [bid]          <- words (cs payload) = Hydra.BuildStarted (read bid)
+    | chan == "build_finished",        (bid:depBids)  <- words (cs payload) = Hydra.BuildFinished (read bid) (map read depBids)
+    | chan == "cached_build_finished", [_, bid]       <- words (cs payload) = Hydra.BuildFinished (read bid) []
     | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
 whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
@@ -552,13 +554,15 @@ main = do
     eres <- Async.race
         (forever $ statusHandler ghUserAgent getValidGitHubToken queue)
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
-            _ <- execute_ conn "LISTEN eval_started"   -- (opaque id, jobset id)
-            _ <- execute_ conn "LISTEN eval_added"     -- (opaque id, jobset id, eval record id)
-            _ <- execute_ conn "LISTEN eval_cached"    -- (opaque id, jobset id, prev identical eval id)
-            _ <- execute_ conn "LISTEN eval_failed"    -- (opaque id, jobset id)
-            _ <- execute_ conn "LISTEN build_queued"   -- (build id)
-            _ <- execute_ conn "LISTEN build_started"  -- (build id)
-            _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
+            _ <- execute_ conn "LISTEN eval_started"          -- (opaque id, jobset id)
+            _ <- execute_ conn "LISTEN eval_added"            -- (opaque id, jobset id, eval record id)
+            _ <- execute_ conn "LISTEN eval_cached"           -- (opaque id, jobset id, prev identical eval id)
+            _ <- execute_ conn "LISTEN eval_failed"           -- (opaque id, jobset id)
+            _ <- execute_ conn "LISTEN build_queued"          -- (build id)
+            _ <- execute_ conn "LISTEN cached_build_queued"   -- (eval id, build id)
+            _ <- execute_ conn "LISTEN build_started"         -- (build id)
+            _ <- execute_ conn "LISTEN build_finished"        -- (build id, dependent build ids...)
+            _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
             forever $ do
                 note <- toHydraNotification <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
