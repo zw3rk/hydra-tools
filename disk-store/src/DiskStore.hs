@@ -9,19 +9,19 @@ module DiskStore
 
 import           Control.Exception (catch, throwIO)
 
-import qualified Data.List        as List
-import           Data.Ord         (Down (..))
-import           Data.Time        (UTCTime)
-import qualified Data.Time        as Time
+import qualified Data.List         as List
+import           Data.Ord          (Down (..))
+import           Data.Time         (UTCTime)
+import qualified Data.Time         as Time
 
-import           System.Directory (listDirectory, removeFile)
-import           System.FilePath  (isExtensionOf, takeFileName, (</>))
-import           System.IO        (IOMode (WriteMode), hFlush, hPutStrLn,
-                                   withFile)
-import           System.IO.Error  (isDoesNotExistError)
+import           System.Directory  (listDirectory, removeFile)
+import           System.FilePath   (isExtensionOf, takeFileName, (</>))
+import           System.IO         (IOMode (WriteMode), hFlush, hPutStrLn,
+                                    withFile)
+import           System.IO.Error   (isDoesNotExistError)
 
-import           Text.Read        (readMaybe)
-import           Text.Show.Pretty (ppShow)
+import           Text.Read         (readMaybe)
+import           Text.Show.Pretty  (ppShow)
 
 
 data DiskStoreConfig = DiskStoreConfig
