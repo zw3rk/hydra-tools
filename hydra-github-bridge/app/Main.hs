@@ -92,7 +92,7 @@ whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus ->
 whenStatusOrJob status prevStepStatus job action
     | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
     | Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
-    | (Just GitHub.Success, Just pss) <- (status, prevStepStatus), pss /= Hydra.Succeeded = action
+    | Just pss <- prevStepStatus, pss /= Hydra.Succeeded && maybe True (== GitHub.Success) status = action
     | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure []
 
 withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
@@ -149,7 +149,11 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
     (Hydra.BuildQueued bid) -> do
         [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+        steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
+        let prevStepStatus
+                | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
+                | otherwise = Nothing
+        whenStatusOrJob Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/hydra-build:" <> job
             , headSha     = hash
             , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
@@ -164,7 +168,11 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
     (Hydra.BuildStarted bid) -> do
         [(proj, name, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
         Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-        whenStatusOrJob Nothing Nothing job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+        steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
+        let prevStepStatus
+                | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
+                | otherwise = Nothing
+        whenStatusOrJob Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash -> pure $ singleton $ GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
             { name        = "ci/hydra-build:" <> job
             , headSha     = hash
             , detailsUrl  = Just $ "https://" <> host <> "/build/" <> tshow bid
