@@ -310,13 +310,13 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
             let ghCheckRunConclusion
                     | finished  = toCheckRunConclusion buildStatus
                     | otherwise = GitHub.Failure
-            steps <- query conn ("SELECT stepnr, drvpath, status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC") (Only bid) :: IO [(Int, String, Int)]
+            steps <- query conn ("SELECT stepnr, drvpath, status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC") (Only bid) :: IO [(Int, String, Maybe Int)]
             let prevStepStatus
-                    | length steps >= 2 = Just . (\(_, _, stepStatus) -> toEnum stepStatus) $ steps !! 1
+                    | length steps >= 2 = (\(_, _, statusInt) -> statusInt <&> toEnum) $ steps !! 1
                     | otherwise = Nothing
             whenStatusOrJob (Just ghCheckRunConclusion) prevStepStatus job $ do
                 buildTimes <- getBuildTimes bid
-                let failedSteps = filter (\(_, _, stepStatus) -> stepStatus /= 0) steps
+                let failedSteps = filter (\(_, _, statusInt) -> maybe False (/= Hydra.Succeeded) $ statusInt <&> toEnum) steps
                 failedStepLogs <- sequence $ failedSteps <&> \(stepnr, drvpath, _) -> do
                     let
                         drvName = takeFileName drvpath
