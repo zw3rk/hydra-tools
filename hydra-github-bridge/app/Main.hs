@@ -341,7 +341,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                     , completedAt = buildTimes >>= Just . snd
                     , output      = Just $ GitHub.CheckRunOutput
                         { title   = tshow buildStatus
-                        , summary = tshow (length failedSteps) <> " steps"
+                        , summary = tshow (length failedSteps) <> " failed steps"
                         , text    = if null failedStepLogs then Nothing else
                             let
                                 limit = 65535
