@@ -235,7 +235,11 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                                 , text    = mkEvalErrorSummary err
                                 }
                             })
-                        ++ ((parseFailedJobEvals err) <&> \(job, msg) -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
+                        -- Creates a failed check run for each job that failed to evaluate.
+                        -- This is temporarily disabled (by simply passing an empty string)
+                        -- because there is no way to get rid of these later when the eval
+                        -- succeeds on a retry, confusing everyone.
+                        ++ ((parseFailedJobEvals {- err -} "") <&> \(job, msg) -> GitHub.CheckRun owner repo $ GitHub.CheckRunPayload
                             { name        = "ci/eval:" <> job
                             , headSha     = hash
                             , detailsUrl  = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors"
