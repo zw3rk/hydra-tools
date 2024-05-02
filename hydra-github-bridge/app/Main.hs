@@ -30,6 +30,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
 import qualified Data.ByteString.Lazy.Char8              as BSL
+import qualified Data.ByteString.Lazy                    as BSLw
 import           Data.Duration                           (oneSecond)
 import           Data.Foldable                           (foldr')
 import           Data.Functor                            ((<&>))
@@ -333,7 +334,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                     logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
                         if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
                         then ioError ioe
-                        else catchIOError (BSL.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
+                        else catchIOError (BSLw.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
                             if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
                             then ioError ioe2
                             else return Nothing
