@@ -11,6 +11,8 @@
     };
     servant-github-webhook.url = github:input-output-hk/servant-github-webhook;
     servant-github-webhook.flake = false;
+    github-webhooks.url = github:dermetfan/github-webhooks/pr-draft;
+    github-webhooks.flake = false;
   };
 
   outputs = inputs:

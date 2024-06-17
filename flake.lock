@@ -151,6 +151,23 @@
         "type": "github"
       }
     },
+    "github-webhooks": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1718644923,
+        "narHash": "sha256-b1XSG3rASeYYAnS0m80W8RAHw3HVQ2zrFtQAdVCCLks=",
+        "owner": "dermetfan",
+        "repo": "github-webhooks",
+        "rev": "558eaf99402a15efa22745229f2cdb52714b3b6e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dermetfan",
+        "ref": "pr-draft",
+        "repo": "github-webhooks",
+        "type": "github"
+      }
+    },
     "hackage": {
       "flake": false,
       "locked": {
@@ -520,6 +537,7 @@
     "root": {
       "inputs": {
         "flake-parts": "flake-parts",
+        "github-webhooks": "github-webhooks",
         "haskellNix": "haskellNix",
         "nixpkgs": [
           "haskellNix",

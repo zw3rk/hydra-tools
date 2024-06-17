@@ -149,10 +149,15 @@ type PullRequestHookAPI =
     :> Post '[JSON] ()
 
 pullRequestHook :: DsQueue Command -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
-pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
+pullRequestHook queue _ (_, ev@PullRequestEvent
+        { evPullReqAction = action
+        , evPullReqPayload = HookPullRequest{ whPullReqIsDraft = isDraft }
+        , evPullReqRepo = HookRepository{ whRepoFullName = repoName }
+        })
     | action `elem` [ PullRequestOpenedAction
                     , PullRequestReopenedAction
-                    , (PullRequestActionOther "synchronize") ]
+                    , (PullRequestActionOther "synchronize") ] &&
+      (not (repoName `elem` [ "IntersectMBO/ouroboros-network" ]) || not (maybe False id isDraft))
     = liftIO $ do
     -- we now want to send a request to
     -- $hydraApiUrl
@@ -196,7 +201,6 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = action })
     --  flake = "github:${info.head.repo.owner.login}/${info.head.repo.name}/${info.head.ref}";
     --
     --
-    let repoName = whRepoFullName (evPullReqRepo ev)
     let jobset = defHydraFlakeJobset
             { hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
             , hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev)

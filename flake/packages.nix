@@ -16,7 +16,10 @@
           hydra-tools = final.haskell-nix.project' {
             src = ../.;
             compiler-nix-name = "ghc92";
-            inputMap."https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
+            inputMap = {
+              "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
+              "https://github.com/dermetfan/github-webhooks" = inputs.github-webhooks;
+            };
           };
         })
       ];
