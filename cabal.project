@@ -17,9 +17,10 @@ source-repository-package
    tag: 9418ceed4b962368d90079143987e1fc67d27b31
    subdir:
      .
+-- TODO remove once this commit hit stackage
 source-repository-package
    type: git
-   location: https://github.com/dermetfan/github-webhooks
-   tag: 558eaf99402a15efa22745229f2cdb52714b3b6e
+   location: https://github.com/cuedo/github-webhooks
+   tag: 586cd07da027f92265dfa7a15a4d7bc201d9dec1
    subdir:
      .

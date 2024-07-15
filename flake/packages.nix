@@ -18,7 +18,7 @@
             compiler-nix-name = "ghc92";
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
-              "https://github.com/dermetfan/github-webhooks" = inputs.github-webhooks;
+              "https://github.com/cuedo/github-webhooks" = inputs.github-webhooks;
             };
           };
         })
