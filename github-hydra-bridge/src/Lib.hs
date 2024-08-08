@@ -104,7 +104,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
         -- We Update the Jobset instead of Delete, so that past build results will
         -- still be available.  This should update the sha to 000000, and as such
         -- allow us to find them and delete them later.
-        liftIO $ do
+        do
             putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             DsQueue.write queue (UpdateJobset repoName projName jobsetName jobset)
 
@@ -120,7 +120,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
             projName = escapeHydraName repoName
             jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
 
-        liftIO $ do
+        do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
     | ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ] ]
@@ -135,7 +135,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
                 , hjFlake = "github:" <> repoName <> "/" <> headSha
                 }
 
-        liftIO $ do
+        do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
