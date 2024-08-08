@@ -29,8 +29,8 @@ import           Control.Exception                       (SomeException,
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
-import qualified Data.ByteString.Lazy.Char8              as BSL
 import qualified Data.ByteString.Lazy                    as BSLw
+import qualified Data.ByteString.Lazy.Char8              as BSL
 import           Data.Duration                           (oneSecond)
 import           Data.Foldable                           (foldr')
 import           Data.Functor                            ((<&>))
