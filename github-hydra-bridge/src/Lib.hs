@@ -123,14 +123,15 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
         liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
-    | (ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ]]) || ("refs/heads/release/" `Text.isPrefixOf` ref) || ("refs/heads/ci/" `Text.isPrefixOf` ref)
+    | ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ] ]
+        || any (`Text.isPrefixOf` ref) [ "refs/" <> x <> "/" | x <- [ "tags", "heads/release", "heads/ci" ] ]
     = liftIO $ do
         let projName = escapeHydraName repoName
-            refName = Text.drop (Text.length "refs/heads/") ref
+            refName = maybe (Text.drop (Text.length "refs/tags/") ref) id $ Text.stripPrefix "refs/heads/" ref
             jobsetName = escapeHydraName refName
             jobset = defHydraFlakeJobset
                 { hjName = jobsetName
-                , hjDescription = refName <> " branch"
+                , hjDescription = refName <> " " <> if "refs/heads/" `Text.isPrefixOf` ref then "branch" else "tag"
                 , hjFlake = "github:" <> repoName <> "/" <> headSha
                 }
 
