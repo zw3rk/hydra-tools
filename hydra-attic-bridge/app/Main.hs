@@ -26,13 +26,13 @@ import System.Process (callProcess, readCreateProcessWithExitCode, shell)
 import System.Exit (ExitCode(..))
 import Control.Monad (unless, when)
 
-processDrvPath :: Connection -> IO ()
-processDrvPath conn = do
+processDrvPath :: Connection -> String -> IO ()
+processDrvPath conn cache = do
     more <- withTransaction conn $ do
         result <- query_ conn "SELECT drvpath FROM DrvpathsToUpload FOR UPDATE SKIP LOCKED LIMIT 1;"
         case result of
             [Only drvPath] -> do
-                (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ drvPath) ""
+                (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
                 case exitCode of
                     ExitFailure code -> do
                         putStrLn $ "Attic push failed with exit code " ++ show code
@@ -42,7 +42,7 @@ processDrvPath conn = do
                         execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
                         pure True
             _ -> pure False
-    when more (processDrvPath conn)
+    when more (processDrvPath conn cache)
 
 -- main ()
 main :: IO ()
@@ -56,10 +56,11 @@ main = do
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     attic <- maybe "localhost" id <$> lookupEnv "ATTIC_HOST"
+    cache <- maybe "local" id <$> lookupEnv "ATTIC_CACHE"
     token <- maybe mempty id <$> lookupEnv "ATTIC_TOKEN"
 
     (exitCode, output, errOutput) <- readCreateProcessWithExitCode
-                                     (shell $ "attic login local " ++ attic ++ " " ++ token) ""
+                                     (shell $ "attic login " ++ cache ++ " " ++ attic ++ " " ++ token) ""
 
     case exitCode of
         ExitFailure code -> do
@@ -68,6 +69,6 @@ main = do
         _ -> withConnect (ConnectInfo host 5432 user pass "hydra") $ \conn -> do
             _ <- execute_ conn "LISTEN step_finished"   -- (build id, step id, logpath)
             -- process all pre-existing drv paths we might have missed.
-            _ <- processDrvPath conn
+            _ <- processDrvPath conn cache
             -- use the notificaitons as triggers to run the processDrvPath
-            forever $ getNotification conn >> processDrvPath conn
+            forever $ getNotification conn >> processDrvPath conn cache
