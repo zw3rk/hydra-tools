@@ -35,6 +35,7 @@ processDrvPath conn cache = do
                 (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
                 case exitCode of
                     ExitFailure code -> do
+                        putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
                         putStrLn $ "Attic push failed with exit code " ++ show code
                         unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
                         pure False
@@ -64,6 +65,7 @@ main = do
 
     case exitCode of
         ExitFailure code -> do
+            putStrLn $ "Ran: attic login local " ++ attic ++ " <token>"
             putStrLn $ "Login failed with exit code " ++ show code
             unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
         _ -> withConnect (ConnectInfo host 5432 user pass "hydra") $ \conn -> do
