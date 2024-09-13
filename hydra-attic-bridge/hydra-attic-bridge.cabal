@@ -1,0 +1,26 @@
+cabal-version:      3.0
+name:               hydra-attic-bridge
+version:            0.1.0.0
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Moritz Angermann
+maintainer:         moritz.angermann@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+common warnings
+    ghc-options: -Wall
+
+executable hydra-attic-bridge
+    import:           warnings
+    main-is:          Main.hs
+    -- other-modules:
+    build-depends:    base ^>=4.14
+                    , postgresql-simple
+                    , bytestring
+                    , text
+                    , process
+
+    ghc-options: -threaded -rtsopts
+    hs-source-dirs:   app
+    default-language: Haskell2010

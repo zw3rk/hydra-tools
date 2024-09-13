@@ -6,7 +6,7 @@
 
     inputs.flake-utils.url = "github:numtide/flake-utils";
 
-    outputs = { self, nixpkgs, flake-utils, haskellNix }: 
+    outputs = { self, nixpkgs, flake-utils, haskellNix }:
     let overlays = [
             haskellNix.overlay
             (final: prev: {
@@ -22,22 +22,30 @@
                 };
             })
             (final: prev: {
+                hydra-attic-bridge = final.haskell-nix.project' {
+                    src = ./hydra-attic-bridge;
+                    compiler-nix-name = "ghc8107";
+                };
+            })
+            (final: prev: {
                 hydra-crystal-notify = final.callPackage ./hydra-crystal-notify {};
             })
         ];
-    in flake-utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
+    in flake-utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" ] (system:
     let
         pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
         flake = pkgs.github-hydra-bridge.flake { };
         flake2 = pkgs.hydra-github-bridge.flake { };
+        flake3 = pkgs.hydra-attic-bridge.flake { };
     in flake // rec {
       # Built by `nix build .`
       packages.github-hydra-bridge  = flake.packages."github-hydra-bridge:exe:github-hydra-bridge";
       packages.hydra-github-bridge  = flake2.packages."hydra-github-bridge:exe:hydra-github-bridge";
+      packages.hydra-attic-bridge   = flake3.packages."hydra-attic-bridge:exe:hydra-attic-bridge";
       packages.hydra-crystal-notify = pkgs.hydra-crystal-notify.hydra-crystal-notify;
       hydraJobs = packages;
     }) // {
-        nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}: 
+        nixosModules.github-hydra-bridge = { config, lib, pkgs, ...}:
         with lib;
         let cfg = config.services.github-hydra-bridge;
         inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
@@ -84,7 +92,7 @@
                         type = types.nullOr types.path;
                         default = null;
                         description = ''
-                        plaintext environment file, containing `KEY`, 
+                        plaintext environment file, containing `KEY`,
                         `HYDRA_USER`, `HYDRA_PASS`, and `PORT`.
                         '';
                     };
@@ -95,7 +103,7 @@
                     wantedBy = [ "multi-user.target" ];
                     after = [ "postgresql.service" ];
                     partOf = [ "hydra-server.service" ]; # implies after (systemd/systemd#13847)
-                    
+
                     startLimitIntervalSec = 0;
 
                     serviceConfig = {
@@ -113,9 +121,9 @@
                       // optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
                       // optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
                 };
-            };            
+            };
         };
-        nixosModules.hydra-github-bridge = { config, lib, pkgs, ...}: 
+        nixosModules.hydra-github-bridge = { config, lib, pkgs, ...}:
         with lib;
         let cfg = config.services.hydra-github-bridge;
         inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
@@ -173,8 +181,67 @@
                     } // optionalAttrs (cfg.ghToken != "")
                     { GITHUB_TOKEN = cfg.ghToken; };
                 };
-            };            
-        };        
+            };
+        };
+        nixosModules.hydra-attic-bridge = { config, lib, pkgs, ...}:
+        with lib;
+        let cfg = config.services.hydra-attic-bridge;
+        inherit (lib) mkIf mkOption types mkEnableOption concatStringsSep optionals optionalAttrs;
+        in {
+            options = {
+                services.hydra-attic-bridge = {
+                    enable = mkEnableOption "hydra attic bridge";
+                    package = mkOption {
+                        type = types.package;
+                        default = self.packages.${pkgs.system}.hydra-attic-bridge;
+                        defaultText = "hydra-attic-bridge";
+                        description = "The hydra to github webhook bridge";
+                    };
+                    host = mkOption {
+                        type = types.str;
+                        default = "";
+                        description = ''
+                        Hydra DB host string. Empty means unix socket.
+                        '';
+                    };
+                    attic = mkOption {
+                        type = types.str;
+                        default = "localhost:8080";
+                        description = ''
+                        The attic URL to use for the bridge.
+                        '';
+                    };
+                    environmentFile = mkOption {
+                        type = types.nullOr types.path;
+                        default = null;
+                        description = ''
+                        plaintext environment file, containing and `HYDRA_USER`, `HYDRA_PASS`, and `ATTIC_TOKEN`.
+                        '';
+                    };
+                };
+            };
+            config = mkIf cfg.enable {
+                systemd.services.hydra-attic-bridge = {
+                    wantedBy = [ "multi-user.target" ];
+                    after = [ "postgresql.service" ];
+                    startLimitIntervalSec = 0;
+
+                    serviceConfig = {
+                        ExecStart = "@${cfg.package}/bin/hydra-attic-bridge hydra-attic-bridge";
+                        User = "hydra";
+                        Group = "hydra";
+                        Restart = "always";
+                        RestartSec = "10s";
+                    } // optionalAttrs (cfg.environmentFile != null)
+                    { EnvironmentFile = builtins.toPath cfg.environmentFile; };
+
+                    environment = {
+                        HYDRA_HOST = cfg.host;
+                        ATTIC_HOST = cfg.attic;
+                    };
+                };
+            };
+        };
         nixosModules.hydra-crystal-notify = { config, lib, pkgs, ... }:
         with lib;
         let cfg = config.services.hydra-crystal-notify;
@@ -385,5 +452,5 @@
       ];
       # post-build-hook = "./upload-to-cache.sh";
       allow-import-from-derivation = "true";
-    };    
+    };
 }
