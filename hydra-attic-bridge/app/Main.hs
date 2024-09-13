@@ -56,11 +56,11 @@ main = do
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     attic <- maybe "localhost" id <$> lookupEnv "ATTIC_HOST"
-    cache <- maybe "local" id <$> lookupEnv "ATTIC_CACHE"
+    cache <- maybe id <$> lookupEnv "ATTIC_CACHE"
     token <- maybe mempty id <$> lookupEnv "ATTIC_TOKEN"
 
     (exitCode, output, errOutput) <- readCreateProcessWithExitCode
-                                     (shell $ "attic login " ++ cache ++ " " ++ attic ++ " " ++ token) ""
+                                     (shell $ "attic login local " ++ attic ++ " " ++ token) ""
 
     case exitCode of
         ExitFailure code -> do
