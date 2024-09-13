@@ -211,6 +211,12 @@
                         The attic URL to use for the bridge.
                         '';
                     };
+                    cache = mkOption {
+                        type = types.str;
+                        description = ''
+                        The attic cache name.
+                        '';
+                    };
                     environmentFile = mkOption {
                         type = types.nullOr types.path;
                         default = null;
@@ -238,6 +244,7 @@
                     environment = {
                         HYDRA_HOST = cfg.host;
                         ATTIC_HOST = cfg.attic;
+                        ATTIC_CACHE = cfg.cache;
                     };
                 };
             };
