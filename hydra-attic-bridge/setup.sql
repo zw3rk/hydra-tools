@@ -1,5 +1,7 @@
 CREATE TABLE IF NOT EXISTS DrvpathsToUpload (
-    drvpath TEXT NOT NULL
+    drvpath TEXT NOT NULL,
+    last TIMESTAMP DEFAULT NOW(),
+    tries INTEGER DEFAULT 0
 );
 
 CREATE OR REPLACE FUNCTION process_build_step_update()

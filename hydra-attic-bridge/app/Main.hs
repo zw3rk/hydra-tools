@@ -29,7 +29,7 @@ import Control.Monad (unless, when)
 processDrvPath :: Connection -> String -> IO ()
 processDrvPath conn cache = do
     more <- withTransaction conn $ do
-        result <- query_ conn "SELECT drvpath FROM DrvpathsToUpload FOR UPDATE SKIP LOCKED LIMIT 1;"
+        result <- query_ conn "SELECT drvpath FROM DrvpathsToUpload WHERE last < NOW() FOR UPDATE SKIP LOCKED LIMIT 1;"
         case result of
             [Only drvPath] -> do
                 (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
@@ -38,7 +38,8 @@ processDrvPath conn cache = do
                         putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
                         putStrLn $ "Attic push failed with exit code " ++ show code
                         unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
-                        pure False
+                        execute conn "UPDATE DrvpathsToUpload SET last = last + interval '5 minutes', tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
+                        pure True
                     ExitSuccess -> do
                         execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
                         pure True
