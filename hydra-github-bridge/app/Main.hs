@@ -69,8 +69,20 @@ instance ToJSON GitHubStatusPayload where
 instance FromJSON GitHubStatusPayload where
     parseJSON = genericParseJSON $ aesonDrop 0 camelCase
 
+
+-- The following table exists in the databse:
+--
+-- CREATE TABLE github_status (
+--     id SERIAL,
+--     owner TEXT NOT NULL,
+--     repo TEXT NOT NULL,
+--     sha TEXT NOT NULL,
+--     payload JSONB NOT NULL,
+--     PRIMARY KEY (id)
+-- );
+
 data GitHubStatus
-    = GitHubStatus 
+    = GitHubStatus
     { owner :: Text
     , repo :: Text
     , sha :: Text
@@ -118,7 +130,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Added (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
+            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
@@ -128,7 +140,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         [(Only flake')] <- query conn "select flake from jobsetevals where id = ?" (Only eid)
         Text.putStrLn $ "Eval Cached (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
         case parseGitHubFlakeURI flake of
-            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of 
+            Just (owner, repo, hash) -> pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
                 (Just err,_) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Evaluation has errors.") "ci/eval"))
                 (_,Just err) | not (Text.null err) -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Failure {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid <> "#tabs-errors") {- description: -} (Just "Failed to fetch.") "ci/eval"))
                 _            -> Just (GitHubStatus owner repo hash (GitHubStatusPayload Success {- target url: -} ("https://ci.zw3rk.com/eval/" <> tshow eid) {- description: -} Nothing "ci/eval"))
@@ -145,7 +157,7 @@ handleHydraNotification conn e = flip catch (handler e) $ case e of
         handler n ex = print (show n ++ " triggert exception " ++ displayException ex) >> pure Nothing
 
 -- GitHub Status PI
--- /repos/{owner}/{repo}/statuses/{sha} with 
+-- /repos/{owner}/{repo}/statuses/{sha} with
 -- {"state":"success"
 --  ,"target_url":"https://example.com/build/status"
 --  ,"description":"The build succeeded!"
@@ -191,7 +203,7 @@ statusHandler token queue = do
 
 -- Main
 main :: IO ()
-main = do 
+main = do
 
     hSetBuffering stdin LineBuffering
     hSetBuffering stdout LineBuffering
@@ -209,7 +221,7 @@ main = do
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
         _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
         -- _ <- forkIO $ do
-        forever $ do 
+        forever $ do
             note <- toHydraNotification <$> getNotification conn
             handleHydraNotification conn note >>= \case
                 Just status -> atomically (writeTChan queue status)
