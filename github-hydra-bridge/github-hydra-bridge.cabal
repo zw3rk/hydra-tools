@@ -43,8 +43,6 @@ executable github-hydra-bridge
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       base
-                     , disk-store
-                     , ds-queue
                      , github-hydra-bridge
                      , wai
                      , warp

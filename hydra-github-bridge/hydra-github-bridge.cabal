@@ -21,8 +21,6 @@ common common
                     , bytestring
                     , bz2
                     , string-conversions
-                    , disk-store
-                    , ds-queue
                     , github-rest
                     , regex-tdfa
                     , text
