@@ -299,14 +299,15 @@
 
               Restart = "always";
               RestartSec = "10s";
-            } // optionalAttrs (cfg.environmentFile != null)
+            } // lib.optionalAttrs (cfg.environmentFile != null)
             { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
             environment = { PORT = "${toString cfg.port}"; }
-              // optionalAttrs (cfg.ghSecret != "") { KEY = cfg.ghSecret; }
-              // optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
-              // optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
+              // lib.optionalAttrs (cfg.ghSecret != "") { KEY = cfg.ghSecret; }
+              // lib.optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
+              // lib.optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
         };
+      };
     });
   };
 }
