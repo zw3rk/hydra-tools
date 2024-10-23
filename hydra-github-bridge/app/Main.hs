@@ -9,6 +9,7 @@ module Main where
 
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
+import Data.Char (toLower)
 import Control.Concurrent
 import Control.Monad
 import Control.Exception (catch, displayException, SomeException)
@@ -18,11 +19,14 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import GHC.Generics
 import Data.Text (Text)
+import Data.Text.Lazy (toStrict)
 import System.Environment (lookupEnv)
 import Control.Concurrent.STM (newTChan, atomically)
 import Control.Concurrent.STM (newTVarIO, TChan, readTChan, writeTChan, atomically)
 
+import qualified Data.Aeson as Aeson
 import           Data.Aeson hiding (Success, Error)
+import           Data.Aeson.Text (encodeToLazyText)
 import           Data.Aeson.Casing
 import Servant.Client
 import           Data.Proxy
@@ -47,13 +51,17 @@ data StatusState = Error | Failure | Pending | Success
     deriving (Show, Eq, Generic)
 
 instance ToJSON StatusState where
-  toJSON Error   = "error"
-  toJSON Failure = "failure"
-  toJSON Pending = "pending"
-  toJSON Success = "success"
+  toJSON = genericToJSON toLowerModifier
 
 instance FromJSON StatusState where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+  parseJSON = genericParseJSON toLowerModifier
+
+-- Downcase the first letter of JSON values
+toLowerModifier :: Options
+toLowerModifier = defaultOptions { constructorTagModifier = modifier }
+    where
+      modifier (s:ss) = toLower s : ss
+      modifier [] = []
 
 data GitHubStatusPayload
     = GitHubStatusPayload
@@ -181,25 +189,54 @@ mkStatus :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text -> Text
 
 mkStatus = client (Proxy @GitHubAPI)
 
-statusHandler :: Text -> TChan GitHubStatus -> IO ()
-statusHandler token queue = do
-    action <- atomically (readTChan queue)
-    print action
+-- TODO: What do we do if the request fails?
+sendStatusToGitHub :: Text -> GitHubStatus -> IO ()
+sendStatusToGitHub token status = do
     manager <- newManager tlsManagerSettings
     let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
-    putStrLn $ BSL.unpack $ encode (payload action)
-    res <- flip runClientM env $ do
+    putStrLn $ BSL.unpack $ encode (payload status)
+    void . flip runClientM env $ do
         mkStatus (Just "hydra-github-bridge")
                  (Just "application/vnd.github+json")
                  (Just token)
                  (Just "2022-11-28")
-                 (owner action)
-                 (repo action)
-                 (sha action)
-                 (payload action)
-    print res
-    -- todo make servant client request
+                 (owner status)
+                 (repo status)
+                 (sha status)
+                 (payload status)
 
+saveStatusToDb :: Connection -> GitHubStatus -> IO Int
+saveStatusToDb conn status = do
+    let q = "insert into github_status (owner, repo, sha, payload) values (?, ?, ?, ?) returning id"
+    [Only id'] <- query conn q (owner status, repo status, sha status, encode (payload status))
+    pure id'
+
+lookupStatusFromDB :: Connection -> Int -> IO (Maybe GitHubStatus)
+lookupStatusFromDB conn id' = do
+    let q = "select owner, repo, sha, payload from github_status where id = ?"
+    [(owner', repo', sha', payload')] <- query conn q (Only id')
+
+    case fromJSON payload' of
+        Aeson.Success p -> do
+          pure $ Just (GitHubStatus owner' repo' sha' p)
+        Aeson.Error err -> do
+          Text.putStrLn $ "Could not parse status: " <> toStrict (encodeToLazyText payload')
+          pure Nothing
+
+-- For each new status, run the procedure:
+--
+--  1. Save the status to a Hydra table
+--  2. Send it to GitHub
+--  3. Delete it from the Hydra table
+--
+-- TODO: What do we do with statuses left in the database?
+handleStatus :: Connection -> Text -> GitHubStatus -> IO ()
+handleStatus conn token status = do
+    id' <- saveStatusToDb conn status
+    void . forkIO $
+      lookupStatusFromDB conn id' >>= \case
+        Just status -> sendStatusToGitHub token status
+        Nothing -> pure ()
 
 -- Main
 main :: IO ()
@@ -214,15 +251,15 @@ main = do
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     token <- maybe mempty Text.pack <$> lookupEnv "GITHUB_TOKEN"
     queue <- atomically $ newTChan
-    forkIO $ forever $ statusHandler token queue
+
     withConnect (ConnectInfo host 5432 user pass "hydra") $ \conn -> do
         _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
         _ <- execute_ conn "LISTEN eval_added"   -- (opaque id, jobset id, eval record id)
         _ <- execute_ conn "LISTEN eval_cached"  -- (opaque id, jobset id, prev identical eval id)
         _ <- execute_ conn "LISTEN eval_failed"  -- (opaque id, jobset id)
-        -- _ <- forkIO $ do
+
         forever $ do
             note <- toHydraNotification <$> getNotification conn
             handleHydraNotification conn note >>= \case
-                Just status -> atomically (writeTChan queue status)
+                Just status -> handleStatus conn token status
                 Nothing -> pure ()
