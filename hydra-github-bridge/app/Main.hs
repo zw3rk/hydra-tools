@@ -86,6 +86,8 @@ instance FromJSON GitHubStatusPayload where
 --     repo TEXT NOT NULL,
 --     sha TEXT NOT NULL,
 --     payload JSONB NOT NULL,
+--     created TIMESTAMP DEFAULT NOW(),
+--     sent TIMESTAMP DEFAULT NULL,
 --     PRIMARY KEY (id)
 -- );
 
