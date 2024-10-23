@@ -8,25 +8,40 @@ maintainer:         moritz.angermann@gmail.com
 category:           Network
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
-common warnings
-    ghc-options: -Wall
 
-executable hydra-github-bridge
-    import:           warnings
-    main-is:          Main.hs
-    -- other-modules:
-    build-depends:    base ^>=4.14
+common common
+    ghc-options:      -Wall -Werror
+    default-language: Haskell2010
+    build-depends:    base >=4.16 && < 5
+                    , aeson
+                    , aeson-casing
+                    , async
+                    , human-readable-duration
                     , postgresql-simple
                     , bytestring
+                    , bz2
+                    , string-conversions
+                    , disk-store
+                    , ds-queue
+                    , github-rest
+                    , regex-tdfa
                     , text
-                    , stm
-                    , http-client
-                    , http-client-tls
-                    , servant
-                    , servant-client
-                    , aeson < 2.0
-                    , aeson-casing
+                    , time
+                    , filepath
 
-    ghc-options: -threaded -rtsopts
-    hs-source-dirs:   app
-    default-language: Haskell2010
+library
+    import: common
+    hs-source-dirs:   src
+    exposed-modules:    Lib
+                      , Lib.Hydra
+                      , Lib.GitHub
+                      , Lib.Data.Duration
+                      , Lib.Data.List
+                      , Lib.Data.Text
+
+executable hydra-github-bridge
+    import:           common
+    ghc-options:      -threaded -rtsopts
+    hs-source-dirs:   app, src
+    other-modules:    Lib, Lib.GitHub, Lib.Hydra, Lib.Data.Duration, Lib.Data.List, Lib.Data.Text
+    main-is:          Main.hs

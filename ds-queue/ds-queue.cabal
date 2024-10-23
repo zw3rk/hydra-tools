@@ -1,0 +1,48 @@
+cabal-version:       2.2
+name:                ds-queue
+version:             0.1.0
+synopsis:            A Queue (FIFO) with disk backing
+description:         This is an STM Queue (FIFO) which is in the IO monad but also has disk backing
+                     so that the current state of the queue is stored on disk so that when an
+                     application starts up, its inital state can be read from disk.
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              IOHK Engineering Team
+maintainer:          operations@iohk.io
+copyright:           (c) 2023 IOG
+category:            CI
+build-type:          Simple
+extra-source-files:  CHANGELOG.md
+
+library
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror
+  hs-source-dirs:      src
+  exposed-modules:     DsQueue
+  build-depends:       base >=4.7 && <5
+                     , disk-store
+                     , stm
+
+test-suite test
+  default-language:     Haskell2010
+  type:                 exitcode-stdio-1.0
+  main-is:              test.hs
+  hs-source-dirs:       test
+
+  ghc-options:          -Wall -Werror
+
+  other-modules:        Test.DsQueue
+
+  build-depends:        base
+                      , async
+                      , hedgehog
+                      , hedgehog-corpus
+                      , directory
+                      , disk-store
+                      , ds-queue
+                      , exceptions
+                      , lifted-base
+                      , monad-control
+                      , temporary
+                      , transformers
+                      , unliftio-core
