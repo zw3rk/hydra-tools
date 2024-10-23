@@ -238,5 +238,75 @@
           }
       );
     });
+
+    hydra-attic-bridge = moduleWithSystem (perSystem @ {config}: {
+      config,
+      lib,
+      pkgs,
+      ...
+    }: let
+      cfg = config.services.hydra-attic-bridge;
+    in {
+      options.services.hydra-attic-bridge = with lib; {
+        enable = mkEnableOption "github attic bridge";
+        package = mkOption {
+            type = types.package;
+            default = perSystem.config.packages.hydra-attic-bridge;
+            defaultText = "hydra-attic-bridge";
+            description = "The hydra to attic bridge";
+        };
+        host = mkOption {
+            type = types.str;
+            default = "";
+            description = ''
+            Hydra DB host string. Empty means unix socket.
+            '';
+        };
+        attic = mkOption {
+            type = types.str;
+            default = "localhost:8080";
+            description = ''
+            The attic URL to use for the bridge.
+            '';
+        };
+        cache = mkOption {
+            type = types.str;
+            description = ''
+            The attic cache name.
+            '';
+        };
+        environmentFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = ''
+            plaintext environment file, containing and `HYDRA_USER`, `HYDRA_PASS`, and `ATTIC_TOKEN`.
+            '';
+        };
+      };
+      config = lib.mkIf cfg.enable {
+        systemd.services.hydra-attic-bridge = {
+            wantedBy = ["multi-user.target"];
+            after = ["postgresql.service"];
+            partOf = [ "hydra-server.service" ]; # implies after (systemd/systemd#13847)
+
+            startLimitIntervalSec = 0;
+
+            serviceConfig = {
+              ExecStart = "@${cfg.package}/bin/github-hydra-bridge github-hydra-bridge";
+
+              User = config.users.users.hydra.name;
+              Group = config.users.groups.hydra.name;
+
+              Restart = "always";
+              RestartSec = "10s";
+            } // optionalAttrs (cfg.environmentFile != null)
+            { EnvironmentFile = builtins.toPath cfg.environmentFile; };
+
+            environment = { PORT = "${toString cfg.port}"; }
+              // optionalAttrs (cfg.ghSecret != "") { KEY = cfg.ghSecret; }
+              // optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
+              // optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
+        };
+    });
   };
 }
