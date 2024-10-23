@@ -19,8 +19,6 @@ import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
-import           DsQueue                      (DsQueue)
-import qualified DsQueue
 import           GitHub.Data.Webhooks.Events  (CheckRunEvent (..),
                                                CheckRunEventAction (..),
                                                CheckSuiteEvent (..),

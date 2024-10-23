@@ -22,7 +22,6 @@ library
                      , aeson >=2.0.1.0
                      , aeson-schemas
                      , aeson-casing
-                     , ds-queue
                      , exceptions
                      , servant
                      , servant-server

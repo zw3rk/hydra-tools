@@ -77,65 +77,6 @@ data HydraNotification
     | EvalFailed JobSetId
     deriving (Show, Eq)
 
-data StatusState = Error | Failure | Pending | Success
-    deriving (Show, Eq, Generic)
-
-instance ToJSON StatusState where
-  toJSON = genericToJSON toLowerModifier
-
-instance FromJSON StatusState where
-  parseJSON = genericParseJSON toLowerModifier
-
--- Downcase the first letter of JSON values
-toLowerModifier :: Options
-toLowerModifier = defaultOptions { constructorTagModifier = modifier }
-    where
-      modifier (s:ss) = toLower s : ss
-      modifier [] = []
-
-data GitHubStatusPayload
-    = GitHubStatusPayload
-    { state :: StatusState
-    , target_url :: Text
-    , description :: Maybe Text
-    , context :: Text
-    } deriving (Show, Eq, Generic)
-
-instance ToJSON GitHubStatusPayload where
-    toJSON = genericToJSON $ aesonDrop 0 camelCase
-
-instance FromJSON GitHubStatusPayload where
-    parseJSON = genericParseJSON $ aesonDrop 0 camelCase
-
-
--- The following table exists in the databse:
---
--- CREATE TABLE github_status (
---     id SERIAL,
---     owner TEXT NOT NULL,
---     repo TEXT NOT NULL,
---     sha TEXT NOT NULL,
---     payload JSONB NOT NULL,
---     created TIMESTAMP DEFAULT NOW(),
---     sent TIMESTAMP DEFAULT NULL,
---     PRIMARY KEY (id)
--- );
-
-data GitHubStatus
-    = GitHubStatus
-    { owner :: Text
-    , repo :: Text
-    , sha :: Text
-    , payload :: GitHubStatusPayload
-    }
-    deriving (Show, Eq, Generic)
-
-instance ToJSON GitHubStatus where
-  toJSON = genericToJSON $ aesonDrop 0 camelCase
-
-instance FromJSON GitHubStatus where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
-
 -- Text utils
 tshow :: Show a => a -> Text
 tshow = cs . show
@@ -569,9 +510,8 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                         , if totalLength > limit then Nothing else Just . cs $ Text.concat parts
                         )
 
-statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> DsQueue GitHub.CheckRun -> IO ()
-statusHandler ghUserAgent getGitHubToken queue = do
-    checkRun <- DsQueue.read queue
+statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> GitHub.CheckRun -> IO (Either SomeException Value)
+statusHandler ghUserAgent getGitHubToken checkRun = do
     print checkRun
     BSL.putStrLn $ "-> " <> encode checkRun
 
@@ -582,7 +522,7 @@ statusHandler ghUserAgent getGitHubToken queue = do
             , userAgent = ghUserAgent
             , apiVersion = GitHub.apiVersion
             }
-    eres <- try . liftIO . runGitHubT githubSettings $ queryGitHub GHEndpoint
+    try . liftIO . runGitHubT githubSettings $ queryGitHub GHEndpoint
         { method = POST
         , endpoint = "/repos/:owner/:repo/check-runs"
         , endpointVals =
@@ -592,9 +532,6 @@ statusHandler ghUserAgent getGitHubToken queue = do
         , ghData = GitHub.toKeyValue checkRun.payload
         }
         :: IO (Either SomeException Value)
-    case eres of
-      Right res -> BSL.putStrLn $ "<- " <> encode res
-      Left  e   -> putStrLn $ "statusHandler:" ++ show e
 
 main :: IO ()
 main = do
@@ -632,7 +569,17 @@ main = do
                 fetchGitHubToken
 
     eres <- Async.race
-        (forever $ statusHandler ghUserAgent getValidGitHubToken queue)
+        (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
+            forever $ do
+                _ <- execute_ conn "LISTEN github_status"
+                _ <- getNotification conn
+                [(id, owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status ORDER BY id WHERE sent = NULL limit 1"
+                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo (decode payload))
+                case eres of
+                    Right res -> do BSL.putStrLn $ "<- " <> encode res
+                                    _ <- execute_ conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id)
+                    Left  e   -> putStrLn $ "statusHandler:" ++ show e
+            )
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
             _ <- execute_ conn "LISTEN eval_started"          -- (opaque id, jobset id)
             _ <- execute_ conn "LISTEN eval_added"            -- (opaque id, jobset id, eval record id)
@@ -646,6 +593,10 @@ main = do
             forever $ do
                 note <- toHydraNotification <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
-                forM_ statuses $ DsQueue.write queue
-            )
+                forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
+                    [Only id'] <- execute_ conn "insert into github_status (owner, repo, payload) values (?, ?, ?, ?) returning id"
+                                           (owner, repo, encode payload)
+                    _ <- execute_ conn "NOTIFY github_status" (Only id')
+                )
+        )
     either (const . putStrLn $ "statusHandler exited") (const . putStrLn $ "withConnect exited") eres

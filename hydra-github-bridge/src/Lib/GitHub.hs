@@ -132,6 +132,18 @@ instance RESTKeyValue CheckRunPayload where
         ++ maybeKV "completed_at" payload.completedAt iso8601Show
         ++ maybeKV "output"       payload.output      toKeyValue
 
+-- The following table exists in the databse:
+--
+-- CREATE TABLE github_status (
+--     id SERIAL,
+--     owner TEXT NOT NULL,
+--     repo TEXT NOT NULL,
+--     payload JSONB NOT NULL,
+--     created TIMESTAMP DEFAULT NOW(),
+--     sent TIMESTAMP DEFAULT NULL,
+--     PRIMARY KEY (id)
+-- );
+
 data CheckRun = CheckRun
     { owner   :: Text
     , repo    :: Text
