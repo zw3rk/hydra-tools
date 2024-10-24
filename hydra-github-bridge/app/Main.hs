@@ -37,6 +37,7 @@ import           Data.Functor                            ((<&>))
 import           Data.IORef                              (newIORef)
 import           Data.List                               (intercalate,
                                                           singleton)
+import           Data.Maybe                              (fromJust)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
@@ -69,13 +70,6 @@ import           System.IO                               (BufferMode (LineBuffer
 import           System.IO.Error                         (catchIOError,
                                                           ioeGetErrorType,
                                                           isDoesNotExistErrorType)
-
-data HydraNotification
-    = EvalStarted JobSetId
-    | EvalAdded JobSetId EvalRecordId
-    | EvalCached JobSetId EvalRecordId
-    | EvalFailed JobSetId
-    deriving (Show, Eq)
 
 -- Text utils
 tshow :: Show a => a -> Text
@@ -573,11 +567,11 @@ main = do
             forever $ do
                 _ <- execute_ conn "LISTEN github_status"
                 _ <- getNotification conn
-                [(id, owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status ORDER BY id WHERE sent = NULL limit 1"
-                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo (decode payload))
+                [(id', owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status ORDER BY id WHERE sent = NULL limit 1"
+                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo (fromJust $ decode payload))
                 case eres of
-                    Right res -> do BSL.putStrLn $ "<- " <> encode res
-                                    _ <- execute_ conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id)
+                    Right res -> do _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                                    BSL.putStrLn $ "<- " <> encode res
                     Left  e   -> putStrLn $ "statusHandler:" ++ show e
             )
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
@@ -594,9 +588,9 @@ main = do
                 note <- toHydraNotification <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
-                    [Only id'] <- execute_ conn "insert into github_status (owner, repo, payload) values (?, ?, ?, ?) returning id"
-                                           (owner, repo, encode payload)
-                    _ <- execute_ conn "NOTIFY github_status" (Only id')
-                )
-        )
+                    [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?, ?) returning id"
+                                        (owner, repo, encode payload) :: IO [Only Int]
+                    execute_ conn "NOTIFY github_status"
+                    )
+            )
     either (const . putStrLn $ "statusHandler exited") (const . putStrLn $ "withConnect exited") eres

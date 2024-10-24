@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -19,6 +20,7 @@ import           Data.Char                    (isNumber)
 import           Data.Maybe                   (fromJust)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
+import           GHC.Generics
 import           GitHub.Data.Webhooks.Events  (CheckRunEvent (..),
                                                CheckRunEventAction (..),
                                                CheckSuiteEvent (..),
@@ -48,15 +50,39 @@ import           Servant.GitHub.Webhook       (GitHubEvent, GitHubSignedReqBody,
 import           System.Exit                  (die)
 import           Text.Read                    (readMaybe)
 
+import           Database.PostgreSQL.Simple  (Connection, Only (..), execute,
+                                              query_)
+
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
 
+-- The following table exists in the database
+--
+-- CREATE TABLE IF NOT EXISTS github_commands (
+--     id SERIAL PRIMARY KEY,
+--     command JSONB NOT NULL,
+--     created TIMESTAMP DEFAULT NOW(),
+--     processed TIMESTAMP DEFAULT NULL
+-- );
 data Command
     = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
     | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
     | EvaluateJobset Text Text
     | RestartBuild Int
-    deriving (Read, Show)
+    deriving (Eq, Generic, Read, Show)
+
+instance Aeson.ToJSON Command
+instance Aeson.FromJSON Command
+
+readCommand :: Connection -> IO Command
+readCommand conn = do
+    [(_id, cmd)] <- query_ conn "SELECT id, command FROM github_commands WHERE processed IS NULL ORDER BY created LIMIT 1"
+    void $ execute conn "UPDATE github_commands SET processed = NOW() WHERE id = ?" (Only _id :: Only Int)
+    return (fromJust (Aeson.decode cmd))
+
+writeCommand :: Connection -> Command -> IO ()
+writeCommand conn cmd = do
+    void $ execute conn "INSERT INTO github_commands (command) VALUES (?)" (Only (Aeson.encode cmd))
 
 gitHubKey :: ByteString -> GitHubKey
 gitHubKey k = GitHubKey (SGH.gitHubKey $ pure k)
@@ -81,8 +107,8 @@ parseMergeQueueRef ref = do
 
     return (branchName, prNumber)
 
-pushHook :: DsQueue Command -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
+pushHook :: Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook conn _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository { whRepoFullName = repoName } })
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
     , "0000000000000000000000000000000000000000" == headSha
@@ -104,7 +130,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
         -- allow us to find them and delete them later.
         do
             putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            DsQueue.write queue (UpdateJobset repoName projName jobsetName jobset)
+            writeCommand conn (UpdateJobset repoName projName jobsetName jobset)
 
     | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref
     , Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref
@@ -120,7 +146,7 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
 
         do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+            writeCommand conn (CreateOrUpdateJobset repoName projName jobsetName jobset)
     | ref `elem` [ "refs/heads/" <> x | x <- [ "main", "master", "develop" ] ]
         || any (`Text.isPrefixOf` ref) [ "refs/" <> x <> "/" | x <- [ "tags", "heads/release", "heads/ci" ] ]
     = liftIO $ do
@@ -135,9 +161,9 @@ pushHook queue _ (_, PushEvent { evPushRef = ref, evPushHeadSha = Just headSha, 
 
         do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-            DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+            writeCommand conn (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
-pushHook _queue _ (_, ev) = liftIO $ do
+pushHook _conn _ (_, ev) = liftIO $ do
     putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
     print $ (fromJust . evPushHeadSha) ev
 
@@ -147,8 +173,8 @@ type PullRequestHookAPI =
     :> GitHubSignedReqBody '[JSON] PullRequestEvent
     :> Post '[JSON] ()
 
-pullRequestHook :: DsQueue Command -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
-pullRequestHook queue _ (_, ev@PullRequestEvent
+pullRequestHook :: Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook conn _ (_, ev@PullRequestEvent
         { evPullReqAction = action
         , evPullReqPayload = HookPullRequest{ whPullReqIsDraft = isDraft }
         , evPullReqRepo = HookRepository{ whRepoFullName = repoName }
@@ -213,9 +239,9 @@ pullRequestHook queue _ (_, ev@PullRequestEvent
 
     liftIO $ do
         putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        DsQueue.write queue (CreateOrUpdateJobset repoName projName jobsetName jobset)
+        writeCommand conn (CreateOrUpdateJobset repoName projName jobsetName jobset)
 
-pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
+pullRequestHook conn _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestClosedAction }) = liftIO $ do
     let repoName = whRepoFullName (evPullReqRepo ev)
         projName = escapeHydraName repoName
         jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
@@ -237,7 +263,7 @@ pullRequestHook queue _ (_, ev@PullRequestEvent{ evPullReqAction = PullRequestCl
     -- allow us to find them and delete them later.
     liftIO $ do
         putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        DsQueue.write queue (UpdateJobset repoName projName jobsetName jobset)
+        writeCommand conn (UpdateJobset repoName projName jobsetName jobset)
 
 pullRequestHook _ _ (_, ev)
     = liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
@@ -268,8 +294,8 @@ type CheckSuiteHookAPI =
     :> GitHubSignedReqBody '[JSON] CheckSuiteEvent
     :> Post '[JSON] ()
 
-checkSuiteHook :: ClientEnv -> DsQueue Command -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook env queue _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSuiteEventActionRerequested }) = liftIO $ do
+checkSuiteHook :: ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook env conn _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSuiteEventActionRerequested }) = liftIO $ do
     let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
         repoName = whRepoFullName $ evCheckSuiteRepository ev
         projName = escapeHydraName repoName
@@ -284,7 +310,7 @@ checkSuiteHook env queue _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSui
                 Aeson.Success v -> return v
 
         putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        DsQueue.write queue $ UpdateJobset repoName projName jobsetName $ jobset
+        writeCommand conn $ UpdateJobset repoName projName jobsetName $ jobset
             { hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr) }
 
 checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev)
@@ -295,8 +321,8 @@ type CheckRunHookAPI =
     :> GitHubSignedReqBody '[JSON] CheckRunEvent
     :> Post '[JSON] ()
 
-checkRunHook :: DsQueue Command -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
-checkRunHook queue _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventActionRerequested }) = liftIO $ do
+checkRunHook :: Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
+checkRunHook conn _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventActionRerequested }) = liftIO $ do
     let checkRun = evCheckRunCheckRun ev
         checkRunName = whCheckRunName checkRun
         repoName = whRepoFullName $ evCheckRunRepository ev
@@ -308,18 +334,22 @@ checkRunHook queue _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventActio
         let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
         putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        DsQueue.write queue $ EvaluateJobset projName jobsetName
+        writeCommand conn $ EvaluateJobset projName jobsetName
     else do
         let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
         putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
-        DsQueue.write queue $ RestartBuild externalId
+        writeCommand conn $ RestartBuild externalId
 
 checkRunHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkRunEvent with action: " ++ show (evCheckRunAction ev)
 
 type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI :<|> CheckRunHookAPI)
 
-singleEndpoint :: ClientEnv -> DsQueue Command -> Server SingleHookEndpointAPI
-singleEndpoint env queue = (pushHook queue) :<|> issueCommentHook :<|> (pullRequestHook queue) :<|> (checkSuiteHook env queue) :<|> (checkRunHook queue)
+singleEndpoint :: ClientEnv -> Connection -> Server SingleHookEndpointAPI
+singleEndpoint env conn = (pushHook conn)
+                        :<|> issueCommentHook
+                        :<|> (pullRequestHook conn)
+                        :<|> (checkSuiteHook env conn)
+                        :<|> (checkRunHook conn)
 
 -- combinator for handing 404 (not found)
 on404 :: ClientM a -> ClientM a -> ClientM a
@@ -388,16 +418,16 @@ hydraClientEnv host user pass = do
 
     return env
 
-hydraClient :: ClientEnv -> DsQueue Command -> IO ()
-hydraClient env queue =
+hydraClient :: ClientEnv -> Connection -> IO ()
+hydraClient env conn =
     -- loop forever, working down the hydra commands
-    forever $ DsQueue.read queue >>= flip runClientM env . handleCmd >>= \case
+    forever $ readCommand conn >>= flip runClientM env . handleCmd >>= \case
         Left e  -> print e
         Right _ -> pure ()
 
-app :: ClientEnv -> DsQueue Command -> GitHubKey -> Application
-app env queue key
+app :: ClientEnv -> Connection -> GitHubKey -> Application
+app env conn key
   = serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint env queue)
+    (singleEndpoint env conn)

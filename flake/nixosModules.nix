@@ -94,6 +94,9 @@
             {
               HYDRA_HOST = cfg.hydraHost;
               PORT = toString cfg.port;
+              HYDRA_DB = cfg.hydraDb;
+              HYDRA_DB_USER = cfg.hydraDbUser;
+              HYDRA_DB_PASS = cfg.hydraDbPass;
             }
             // lib.optionalAttrs (cfg.hydraUser != "") {HYDRA_USER = cfg.hydraUser;};
         };
