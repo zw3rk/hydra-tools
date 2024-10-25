@@ -292,9 +292,7 @@
             } // lib.optionalAttrs (cfg.environmentFile != null)
             { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
-            environment = { PORT = "${toString cfg.port}"; }
-              // lib.optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
-              // lib.optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
+            environment = { PORT = "${toString cfg.port}"; };
         };
       };
     });
