@@ -293,7 +293,6 @@
             { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
             environment = { PORT = "${toString cfg.port}"; }
-              // lib.optionalAttrs (cfg.ghSecret != "") { KEY = cfg.ghSecret; }
               // lib.optionalAttrs (cfg.hydraPass != "") { HYDRA_PASS = cfg.hydraPass; }
               // lib.optionalAttrs (cfg.hydraUser != "") { HYDRA_USER = cfg.hydraUser; };
         };
