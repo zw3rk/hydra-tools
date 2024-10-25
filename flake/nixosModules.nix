@@ -57,6 +57,13 @@
             The port to listen on for webhooks.
           '';
         };
+        environmentFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = ''
+            plaintext environment file, containing and `HYDRA_USER`, and `HYDRA_PASS`.
+            '';
+        };
       };
 
       config = lib.mkIf cfg.enable {
@@ -79,7 +86,8 @@
               ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
 
             StateDirectory = "hydra";
-          };
+          } // lib.optionalAttrs (cfg.environmentFile != null)
+          { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
           script = ''
             ${lib.optionalString (cfg.hydraPassFile != "") ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
