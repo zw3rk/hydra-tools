@@ -291,8 +291,6 @@
               RestartSec = "10s";
             } // lib.optionalAttrs (cfg.environmentFile != null)
             { EnvironmentFile = builtins.toPath cfg.environmentFile; };
-
-            environment = { PORT = "${toString cfg.port}"; };
         };
       };
     });
