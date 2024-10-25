@@ -33,7 +33,6 @@
             The user to authenticate as with hydra.
           '';
         };
-
         port = mkOption {
           type = types.port;
           default = 8811;
@@ -45,7 +44,7 @@
             type = types.nullOr types.path;
             default = null;
             description = ''
-            plaintext environment file, containing and `HYDRA_USER`, and `HYDRA_PASS`.
+            plaintext environment file, containing and `HYDRA_DB`, `HYDRA_DB_USER`, and `HYDRA_DB_PASS`.
             '';
         };
       };
@@ -79,9 +78,6 @@
             {
               HYDRA_HOST = cfg.hydraHost;
               PORT = toString cfg.port;
-              HYDRA_DB = cfg.hydraDb;
-              HYDRA_DB_USER = cfg.hydraDbUser;
-              HYDRA_DB_PASS = cfg.hydraDbPass;
             }
             // lib.optionalAttrs (cfg.hydraUser != "") {HYDRA_USER = cfg.hydraUser;};
         };
@@ -164,11 +160,12 @@
 
               hydraDb = mkOption {
                 type = types.str;
-                default = "hydra";
+                default = "";
                 description = ''
                   Hydra DB host string. Empty means unix socket.
                 '';
               };
+
               environmentFile = mkOption {
                   type = types.nullOr types.path;
                   default = null;
