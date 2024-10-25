@@ -164,7 +164,7 @@
 
               hydraDb = mkOption {
                 type = types.str;
-                default = "";
+                default = "hydra";
                 description = ''
                   Hydra DB host string. Empty means unix socket.
                 '';
