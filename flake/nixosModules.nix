@@ -184,6 +184,13 @@
                   Hydra DB host string. Empty means unix socket.
                 '';
               };
+              environmentFile = mkOption {
+                  type = types.nullOr types.path;
+                  default = null;
+                  description = ''
+                  plaintext environment file, containing and `HYDRA_USER`, and `HYDRA_PASS`.
+                  '';
+              };
             };
           });
         };
@@ -210,16 +217,14 @@
                 ++ lib.optional (iCfg.ghAppKeyFile != "") "github-app-key-file:${iCfg.ghAppKeyFile}";
 
               StateDirectory = "hydra";
-            };
+            } // lib.optionalAttrs (iCfg.environmentFile != null)
+            { EnvironmentFile = builtins.toPath iCfg.environmentFile; };
 
             script = ''
               ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
               ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
               export HYDRA_STATE_DIR="$STATE_DIRECTORY"
-              export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
-
-              mkdir -p "$QUEUE_DIR"
 
               exec ${lib.getExe iCfg.package}
             '';
