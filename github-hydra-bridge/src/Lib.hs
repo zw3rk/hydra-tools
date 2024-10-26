@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE NumericUnderscores    #-}
 module Lib where
 
 import           Control.Concurrent.STM       (newTVarIO)
