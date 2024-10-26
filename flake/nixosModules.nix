@@ -282,7 +282,7 @@
             startLimitIntervalSec = 0;
 
             serviceConfig = {
-              ExecStart = "@${cfg.package}/bin/github-hydra-bridge github-hydra-bridge";
+              ExecStart = "@${cfg.package}/bin/hydra-attic-bridge hydra-attic-bridge";
 
               User = config.users.users.hydra.name;
               Group = config.users.groups.hydra.name;
