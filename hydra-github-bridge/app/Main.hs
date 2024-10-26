@@ -37,7 +37,6 @@ import           Data.Functor                            ((<&>))
 import           Data.IORef                              (newIORef)
 import           Data.List                               (intercalate,
                                                           singleton)
-import           Data.Maybe                              (fromJust)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
 import qualified Data.Text                               as Text
@@ -60,6 +59,7 @@ import           System.Environment                      (getEnv, lookupEnv)
 import           Text.Regex.TDFA                         ((=~))
 
 import           Data.Aeson                              hiding (Error, Success)
+import qualified Data.Aeson as Aeson
 import           Data.Maybe                              (isNothing)
 
 import           System.FilePath                         (takeFileName, (<.>),
@@ -568,7 +568,10 @@ main = do
                 _ <- execute_ conn "LISTEN github_status"
                 _ <- getNotification conn
                 [(id', owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status ORDER BY id WHERE sent = NULL limit 1"
-                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo (fromJust $ decode payload))
+                let payload' = case fromJSON payload of
+                        Aeson.Success p -> p
+                        Aeson.Error e   -> error e
+                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                 case eres of
                     Right res -> do _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
                                     BSL.putStrLn $ "<- " <> encode res
@@ -589,7 +592,7 @@ main = do
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
                     [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?, ?) returning id"
-                                        (owner, repo, encode payload) :: IO [Only Int]
+                                        (owner, repo, toJSON payload) :: IO [Only Int]
                     execute_ conn "NOTIFY github_status"
                     )
             )
