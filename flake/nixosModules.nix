@@ -33,6 +33,13 @@
             The user to authenticate as with hydra.
           '';
         };
+        hydraDb = mkOption {
+          type = types.str;
+          default = "";
+          description = ''
+            Hydra DB host string. Empty means unix socket.
+          '';
+        };
         port = mkOption {
           type = types.port;
           default = 8811;
@@ -76,6 +83,7 @@
 
           environment =
             {
+              HYDRA_DB = cfg.hydraDb;
               HYDRA_HOST = cfg.hydraHost;
               PORT = toString cfg.port;
             }

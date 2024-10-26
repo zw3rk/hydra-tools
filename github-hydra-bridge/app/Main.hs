@@ -24,7 +24,7 @@ main = do
 
   port <- maybe 8080 read <$> lookupEnv "PORT"
   key <- maybe mempty C8.pack <$> lookupEnv "KEY"
-  db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
+  db <- maybe mempty id <$> lookupEnv "HYDRA_DB"
   db_user <- maybe mempty id <$> lookupEnv "HYDRA_DB_USER"
   db_pass <- maybe mempty id <$> lookupEnv "HYDRA_DB_PASS"
   user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
