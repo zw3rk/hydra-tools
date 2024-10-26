@@ -76,9 +76,11 @@ instance Aeson.FromJSON Command
 
 readCommand :: Connection -> IO Command
 readCommand conn = do
-    [(_id, cmd)] <- query_ conn "SELECT id, command FROM github_commands WHERE processed IS NULL ORDER BY created LIMIT 1"
-    void $ execute conn "UPDATE github_commands SET processed = NOW() WHERE id = ?" (Only _id :: Only Int)
-    return (fromJust (Aeson.decode cmd))
+    query_ conn "SELECT id, command FROM github_commands WHERE processed IS NULL ORDER BY created LIMIT 1" $ \case
+        [] -> threadDelay 10_000_000 >> readCommand conn -- 10 sec
+        [(_id, cmd)] -> do
+            void $ execute conn "UPDATE github_commands SET processed = NOW() WHERE id = ?" (Only _id :: Only Int)
+            return (fromJust (Aeson.decode cmd))
 
 writeCommand :: Connection -> Command -> IO ()
 writeCommand conn cmd = do
