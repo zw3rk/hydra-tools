@@ -83,12 +83,14 @@ readCommand conn = do
         [] -> threadDelay 10_000_000 >> readCommand conn -- 10 sec
         [(_id, cmd)] -> do
             void $ execute conn "UPDATE github_commands SET processed = NOW() WHERE id = ?" (Only _id :: Only Int)
-            return (fromJust (Aeson.decode cmd))
+            case (Aeson.fromJSON cmd) of
+                Aeson.Error   e -> error $ show cmd ++ " readCommand: " ++ e
+                Aeson.Success x -> return x
         x -> error $ "readCommand: " ++ show x
 
 writeCommand :: Connection -> Command -> IO ()
 writeCommand conn cmd = do
-    void $ execute conn "INSERT INTO github_commands (command) VALUES (?)" (Only (Aeson.encode cmd))
+    void $ execute conn "INSERT INTO github_commands (command) VALUES (?)" (Only (Aeson.toJSON cmd))
 
 gitHubKey :: ByteString -> GitHubKey
 gitHubKey k = GitHubKey (SGH.gitHubKey $ pure k)
