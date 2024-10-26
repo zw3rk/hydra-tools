@@ -54,6 +54,8 @@ import           Text.Read                    (readMaybe)
 import           Database.PostgreSQL.Simple  (Connection, Only (..), execute,
                                               query_)
 
+import           Control.Concurrent           (threadDelay)
+
 newtype GitHubKey = GitHubKey (forall result. SGH.GitHubKey result)
 
 -- The following table exists in the database
