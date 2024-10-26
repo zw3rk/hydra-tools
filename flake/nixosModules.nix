@@ -291,6 +291,11 @@
               RestartSec = "10s";
             } // lib.optionalAttrs (cfg.environmentFile != null)
             { EnvironmentFile = builtins.toPath cfg.environmentFile; };
+            environment = {
+              ATTIC_HOST = cfg.attic;
+              ATTIC_CACHE = cfg.cache;
+              HYDRA_HOST = cfg.host;
+            };
         };
       };
     });
