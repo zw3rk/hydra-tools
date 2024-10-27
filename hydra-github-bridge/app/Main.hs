@@ -591,7 +591,7 @@ main = do
                 note <- toHydraNotification <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
-                    [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?, ?) returning id"
+                    [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
                                         (owner, repo, toJSON payload) :: IO [Only Int]
                     execute_ conn "NOTIFY github_status"
                     )
