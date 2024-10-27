@@ -567,7 +567,7 @@ main = do
             forever $ do
                 _ <- execute_ conn "LISTEN github_status"
                 _ <- getNotification conn
-                [(id', owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status ORDER BY id WHERE sent = NULL limit 1"
+                [(id', owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL ORDER BY id LIMIT 1"
                 let payload' = case fromJSON payload of
                         Aeson.Success p -> p
                         Aeson.Error e   -> error e
