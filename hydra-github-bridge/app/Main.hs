@@ -506,6 +506,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
 
 statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> GitHub.CheckRun -> IO (Either SomeException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
+    putStrLn $ "Sending status for " <> show checkRun
     print checkRun
     BSL.putStrLn $ "-> " <> encode checkRun
 
