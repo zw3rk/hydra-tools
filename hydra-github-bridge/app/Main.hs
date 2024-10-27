@@ -588,9 +588,11 @@ main = do
             _ <- execute_ conn "LISTEN build_finished"        -- (build id, dependent build ids...)
             _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
             forever $ do
+                putStrLn "Waiting for notification..."
                 note <- toHydraNotification <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
+                    putStrLn $ "Sending status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> "with payload: " <> show payload
                     [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
                                         (owner, repo, toJSON payload) :: IO [Only Int]
                     execute_ conn "NOTIFY github_status"
