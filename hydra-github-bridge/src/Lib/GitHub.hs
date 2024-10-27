@@ -46,7 +46,11 @@ instance ToJSON CheckRunStatus where
         (Completed)  -> "completed"
 
 instance FromJSON CheckRunStatus where
-    parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+    parseJSON = \case
+        "queued"      -> return Queued
+        "in_progress" -> return InProgress
+        "completed"   -> return Completed
+        _             -> fail "Invalid CheckRunStatus"
 
 data CheckRunConclusion
     = ActionRequired
