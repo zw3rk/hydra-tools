@@ -53,7 +53,6 @@ import           GitHub.REST                             (GHEndpoint (..),
                                                           GitHubSettings (..),
                                                           KeyValue ((:=)),
                                                           StdMethod (POST),
-                                                          Token (..),
                                                           queryGitHub,
                                                           runGitHubT)
 import           System.Environment                      (getEnv, lookupEnv)
@@ -505,7 +504,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                         , if totalLength > limit then Nothing else Just . cs $ Text.concat parts
                         )
 
-statusHandler :: BS.ByteString -> IO GitHub.TokenLease -> GitHub.CheckRun -> IO (Either SomeException Value)
+statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
     putStrLn $ "Sending status for " <> show checkRun
     print checkRun
@@ -516,7 +515,7 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
     putStrLn $ "GitHub Token: " <> show ghToken
 
     let githubSettings = GitHubSettings
-            { token = Just ghToken.token
+            { token = Just (head [tok.token | (owner, tok) <- ghToken, Text.pack owner == checkRun.owner])
             , userAgent = ghUserAgent
             , apiVersion = GitHub.apiVersion
             }
@@ -544,27 +543,27 @@ main = do
     stateDir <- getEnv "HYDRA_STATE_DIR"
 
     ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
-    let fetchGitHubToken = do
-            ghTokenBS <- maybe mempty cs <$> lookupEnv "GITHUB_TOKEN"
-            let ghToken
-                    | BS.null ghTokenBS                = Nothing
-                    | "ghp_" `BS.isPrefixOf` ghTokenBS = Just $ AccessToken ghTokenBS
-                    | otherwise                        = Just $ BearerToken ghTokenBS
+    let fetchGitHubTokens :: IO [(String, GitHub.TokenLease)]
+        fetchGitHubTokens = do
+            ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+            ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+            -- expect a haskell list: [(String, Int)], e.g. '[("owner1", 1), ("owner2", 2)]'
+            ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read
 
-            (\n -> maybe n (\t -> return $ GitHub.TokenLease t Nothing) ghToken) $ do
-                ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
-                ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-                ghAppInstallId <- getEnv "GITHUB_APP_INSTALL_ID" >>= return . read
-
-                lease <- GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghAppInstallId ghUserAgent
-                putStrLn $ "Fetched new GitHub App installation token valid until " <> show lease.expiry
-                return lease
-    ghToken <- fetchGitHubToken >>= newIORef
+            leases <- forM ghAppInstallIds $ mapM (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
+            forM_ leases $ \(owner, lease) -> putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> show lease.expiry
+            return leases
+    -- ghTokens is basically [(String, Token)]
+    ghTokens <- fetchGitHubTokens >>= newIORef
     let getValidGitHubToken =
             let buffer = 5 :: NominalDiffTime in
-            GitHub.getValidToken buffer ghToken $ do
+            GitHub.getValidToken buffer ghTokens $ \owner -> do
                 putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
-                fetchGitHubToken
+                ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+                ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read
+                let ghAppInstallId = head [id' | (owner', id') <- ghAppInstallIds, owner == owner']
+                ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+                GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent ghAppInstallId
 
     eres <- Async.race
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do

@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE TupleSections         #-}
 
 module Lib.GitHub where
 
@@ -29,6 +30,7 @@ import           GitHub.REST              (GHEndpoint (..), GitHubSettings (..),
                                            Token (BearerToken), queryGitHub,
                                            runGitHubT, (.:))
 import           GitHub.REST.Auth         (getJWTToken, loadSigner)
+import           Control.Monad            (forM)
 
 class RESTKeyValue a where
     toKeyValue :: a -> [KeyValue]
@@ -188,8 +190,8 @@ data TokenLease = TokenLease
 apiVersion :: BS.ByteString
 apiVersion = "2022-11-28"
 
-fetchAppInstallationToken :: Int -> FilePath -> Int -> BS.ByteString -> IO TokenLease
-fetchAppInstallationToken appId appKeyFile appInstallationId ghUserAgent = do
+fetchAppInstallationToken :: Int -> FilePath -> BS.ByteString -> Int -> IO TokenLease
+fetchAppInstallationToken appId appKeyFile ghUserAgent appInstallationId = do
     signer <- loadSigner appKeyFile
     jwt <- getJWTToken signer appId
 
@@ -217,14 +219,13 @@ fetchAppInstallationToken appId appKeyFile appInstallationId ghUserAgent = do
         , expiry = Just expiry
         }
 
-getValidToken :: NominalDiffTime -> IORef TokenLease -> IO TokenLease -> IO TokenLease
+getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO TokenLease) -> IO [(String, TokenLease)]
 getValidToken buffer lease fetch = do
-    lease' <- readIORef lease
-    (\j -> maybe (return lease') j lease'.expiry) $ \expiry -> do
-        now <- getCurrentTime
-        if addUTCTime buffer now < expiry
-        then return lease'
-        else do
-            newLease <- fetch
-            writeIORef lease newLease
-            return newLease
+    leases' <- readIORef lease
+    now <- getCurrentTime
+    leases'' <- forM leases' $ \(owner, tok) -> do
+        case tok.expiry of
+            Just expiry | addUTCTime buffer now < expiry -> return (owner, tok)
+            _ -> (owner,) <$> fetch owner
+    writeIORef lease leases''
+    return leases''
