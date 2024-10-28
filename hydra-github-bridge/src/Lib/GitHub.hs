@@ -75,7 +75,16 @@ instance ToJSON CheckRunConclusion where
         (TimedOut)       -> "timed_out"
 
 instance FromJSON CheckRunConclusion where
-    parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+    parseJSON = \case
+        "action_required" -> return ActionRequired
+        "cancelled"       -> return Cancelled
+        "failure"         -> return Failure
+        "neutral"         -> return Neutral
+        "success"         -> return Success
+        "skipped"         -> return Skipped
+        "stale"           -> return Stale
+        "timed_out"       -> return TimedOut
+        _                 -> fail "Invalid CheckRunConclusion"
 
 data CheckRunOutput = CheckRunOutput
     { title   :: Text
