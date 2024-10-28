@@ -174,6 +174,7 @@ data TokenLease = TokenLease
     { token  :: Token
     , expiry :: Maybe UTCTime
     }
+    deriving Show
 
 apiVersion :: BS.ByteString
 apiVersion = "2022-11-28"

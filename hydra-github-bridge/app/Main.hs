@@ -510,7 +510,9 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
     print checkRun
     BSL.putStrLn $ "-> " <> encode checkRun
 
+    putStrLn $ "Obtain GitHub token..."
     ghToken <- getGitHubToken
+    putStrLn $ "GitHub Token: " <> show ghToken
 
     let githubSettings = GitHubSettings
             { token = Just ghToken.token
