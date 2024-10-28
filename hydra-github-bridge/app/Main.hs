@@ -25,7 +25,8 @@ import           Control.Concurrent.Async                as Async
 import           Control.Exception                       (SomeException,
                                                           catchJust,
                                                           displayException,
-                                                          fromException, try)
+                                                          fromException, try,
+                                                          throw)
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
@@ -568,17 +569,22 @@ main = do
     eres <- Async.race
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
             forever $ do
+                let processStatuses = do
+                        query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL ORDER BY id LIMIT 1" >>= \case
+                            [(id', owner, repo, payload)] -> do
+                                let payload' = case fromJSON payload of
+                                        Aeson.Success p -> p
+                                        Aeson.Error e   -> error e
+                                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
+                                case eres of
+                                    Left  e   -> throw e
+                                    Right res -> do _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                                                    BSL.putStrLn $ "<- " <> encode res
+                                                    processStatuses
+                            _ -> return ()
                 _ <- execute_ conn "LISTEN github_status"
                 _ <- getNotification conn
-                [(id', owner, repo, payload)] <- query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL ORDER BY id LIMIT 1"
-                let payload' = case fromJSON payload of
-                        Aeson.Success p -> p
-                        Aeson.Error e   -> error e
-                eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
-                case eres of
-                    Right res -> do _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
-                                    BSL.putStrLn $ "<- " <> encode res
-                    Left  e   -> putStrLn $ "statusHandler:" ++ show e
+                processStatuses
             )
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
             _ <- execute_ conn "LISTEN eval_started"          -- (opaque id, jobset id)
