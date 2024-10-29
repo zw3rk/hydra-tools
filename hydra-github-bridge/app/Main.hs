@@ -71,6 +71,8 @@ import           System.IO.Error                         (catchIOError,
                                                           ioeGetErrorType,
                                                           isDoesNotExistErrorType)
 
+import            Debug.Trace                            (traceShowId)
+
 -- Text utils
 tshow :: Show a => a -> Text
 tshow = cs . show
@@ -597,7 +599,7 @@ main = do
             _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
             forever $ do
                 putStrLn "Waiting for notification..."
-                note <- toHydraNotification <$> getNotification conn
+                note <- toHydraNotification . traceShowId <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
                     putStrLn $ "Sending status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> "with payload: " <> show payload
