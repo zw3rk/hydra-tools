@@ -172,10 +172,6 @@ instance ToJSON CheckRun where
 instance FromJSON CheckRun where
     parseJSON = genericParseJSON $ aesonDrop 0 camelCase
 
-github:input-output-hk/devx/
-f5c873280009cf6e87aa085440275c0d1540102
-?narHash=sha256-3X947Uq5NRg2oT61WULjJMqzeG33eEHF%2BsX1i79qeTo%3D
-
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
     | "github:" `Text.isPrefixOf` uri =
