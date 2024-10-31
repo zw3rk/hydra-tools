@@ -172,13 +172,17 @@ instance ToJSON CheckRun where
 instance FromJSON CheckRun where
     parseJSON = genericParseJSON $ aesonDrop 0 camelCase
 
+github:input-output-hk/devx/
+f5c873280009cf6e87aa085440275c0d1540102
+?narHash=sha256-3X947Uq5NRg2oT61WULjJMqzeG33eEHF%2BsX1i79qeTo%3D
+
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
     | "github:" `Text.isPrefixOf` uri =
         case Text.splitOn "/" (Text.drop 7 uri) of
             -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
             (owner:repo:hash:[]) | Text.length hash == 40 -> Just (owner, repo, hash)
-            (owner:repo:hash:[]) | (hash':[]) <- Text.splitOn "?" hash
+            (owner:repo:hash:[]) | (hash':_) <- Text.splitOn "?" hash
                                  , Text.length hash' == 40 -> Just (owner, repo, hash')
             _                    -> Nothing
     | otherwise = Nothing
