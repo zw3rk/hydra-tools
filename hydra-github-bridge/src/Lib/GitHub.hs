@@ -178,6 +178,8 @@ parseGitHubFlakeURI uri
         case Text.splitOn "/" (Text.drop 7 uri) of
             -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
             (owner:repo:hash:[]) | Text.length hash == 40 -> Just (owner, repo, hash)
+            (owner:repo:hash:[]) | (hash':[]) <- Text.splitOn "?" hash
+                                 , Text.length hash' == 40 -> Just (owner, repo, hash')
             _                    -> Nothing
     | otherwise = Nothing
 
