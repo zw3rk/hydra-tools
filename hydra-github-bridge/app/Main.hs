@@ -197,7 +197,7 @@ sendStatusToGitHub token status = do
     manager <- newManager tlsManagerSettings
     let env = (mkClientEnv manager (BaseUrl Https "api.github.com" 443 ""))
     putStrLn $ BSL.unpack $ encode (payload status)
-    void . flip runClientM env $ do
+    resp <- flip runClientM env $ do
         mkStatus (Just "hydra-github-bridge")
                  (Just "application/vnd.github+json")
                  (Just token)
@@ -206,6 +206,10 @@ sendStatusToGitHub token status = do
                  (repo status)
                  (sha status)
                  (payload status)
+
+    case resp of
+      Left err -> Text.putStrLn $ "Could not send status to GitHub: " <> tshow (displayException err)
+      Right _ -> pure ()
 
 saveStatusToDb :: Connection -> GitHubStatus -> IO Int
 saveStatusToDb conn status = do
