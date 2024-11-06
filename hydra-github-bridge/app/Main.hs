@@ -578,8 +578,9 @@ main = do
                                         Aeson.Error e   -> error e
                                 eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                                 case eres of
-                                    Left  e   -> throw e
-                                    Right res -> do _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                                    Left  e   -> putStrLn "Failed to write payload" >> throw e
+                                    Right res -> do putStrLn "Payload written"
+                                                    _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
                                                     BSL.putStrLn $ "<- " <> encode res
                                                     processStatuses
                             _ -> return ()
