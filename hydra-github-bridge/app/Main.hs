@@ -26,7 +26,7 @@ import           Control.Exception                       (SomeException,
                                                           catchJust,
                                                           displayException,
                                                           fromException, try,
-                                                          throw)
+                                                          throw, toException)
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Char8                   as BS
@@ -516,8 +516,11 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
     ghToken <- getGitHubToken
     putStrLn $ "GitHub Token: " <> show ghToken
 
+    let token' = case [tok.token | (owner, tok) <- ghToken, Text.pack owner == checkRun.owner] of
+            [t] -> Just t
+            _   -> throw (toException $ userError ("No GitHub token found for " <> Text.unpack checkRun.owner))
     let githubSettings = GitHubSettings
-            { token = Just (head [tok.token | (owner, tok) <- ghToken, Text.pack owner == checkRun.owner])
+            { token = token'
             , userAgent = ghUserAgent
             , apiVersion = GitHub.apiVersion
             }
@@ -578,7 +581,7 @@ main = do
                                         Aeson.Error e   -> error e
                                 eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                                 case eres of
-                                    Left  e   -> putStrLn "Failed to write payload" >> throw e
+                                    Left  e   -> putStrLn $ "Failed to write payload; Exception: " <> (show e)
                                     Right res -> do putStrLn "Payload written"
                                                     _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
                                                     BSL.putStrLn $ "<- " <> encode res
