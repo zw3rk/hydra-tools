@@ -574,18 +574,21 @@ main = do
         (withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
             forever $ do
                 let processStatuses = do
-                        query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL ORDER BY id LIMIT 1" >>= \case
+                        query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL and tries < 5 ORDER BY created LIMIT 1" >>= \case
                             [(id', owner, repo, payload)] -> do
                                 let payload' = case fromJSON payload of
                                         Aeson.Success p -> p
                                         Aeson.Error e   -> error e
                                 eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                                 case eres of
-                                    Left  e   -> putStrLn $ "Failed to write payload; Exception: " <> (show e)
+                                    Left  e   -> do putStrLn $ "Failed to write payload; Exception: " <> (show e)
+                                                    _ <- execute conn "UPDATE github_status SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
+                                                    return ()
                                     Right res -> do putStrLn "Payload written"
                                                     _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
                                                     BSL.putStrLn $ "<- " <> encode res
-                                                    processStatuses
+                                -- recurse until empty
+                                processStatuses
                             _ -> return ()
                 _ <- execute_ conn "LISTEN github_status"
                 _ <- getNotification conn
@@ -606,7 +609,7 @@ main = do
                 note <- toHydraNotification . traceShowId <$> getNotification conn
                 statuses <- handleHydraNotification conn (cs host) stateDir note
                 forM_ statuses $ (\(GitHub.CheckRun owner repo payload) -> do
-                    putStrLn $ "Sending status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> "with payload: " <> show payload
+                    putStrLn $ "Queueing status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> " with payload: " <> show payload
                     [Only _id'] <- query conn "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
                                         (owner, repo, toJSON payload) :: IO [Only Int]
                     execute_ conn "NOTIFY github_status"
