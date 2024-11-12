@@ -156,6 +156,7 @@ instance RESTKeyValue CheckRunPayload where
 --     payload JSONB NOT NULL,
 --     created TIMESTAMP DEFAULT NOW(),
 --     sent TIMESTAMP DEFAULT NULL,
+--     tries INTEGER DEFAULT 0,
 --     PRIMARY KEY (id)
 -- );
 
