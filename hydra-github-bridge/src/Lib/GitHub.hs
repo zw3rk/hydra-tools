@@ -176,13 +176,19 @@ instance FromJSON CheckRun where
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
     | "github:" `Text.isPrefixOf` uri =
-        case Text.splitOn "/" (Text.drop 7 uri) of
-            -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
-            (owner:repo:hash:[]) | Text.length hash == 40 -> Just (owner, repo, hash)
-            (owner:repo:hash:[]) | (hash':_) <- Text.splitOn "?" hash
-                                 , Text.length hash' == 40 -> Just (owner, repo, hash')
-            _                    -> Nothing
+        case splitFlakeRef (Text.drop 7 uri) of
+          Just (owner, repo, hash) | Text.length hash == 40 -> Just (owner, repo, hash)
+          Just (owner, repo, hash) | (hash':_) <- Text.splitOn "?" hash
+                                   , Text.length hash' == 40 -> Just (owner, repo, hash')
+          _                        -> Nothing
     | otherwise = Nothing
+  where
+    splitFlakeRef t =
+      case Text.splitOn "/" t of
+        -- Query parameters can contain slashes that we don't want to split, so combine everything
+        -- after repo
+        (owner:repo:ts) -> Just (owner, repo, Text.concat ts)
+        _ -> Nothing
 
 data TokenLease = TokenLease
     { token  :: Token
