@@ -212,7 +212,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
             [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
             [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
             Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-            withGithubFlake flake $ \owner repo hash -> do
+            withGithubFlake flake' $ \owner repo hash -> do
                 let
                     startedAt = posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral timestamp
                     fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt

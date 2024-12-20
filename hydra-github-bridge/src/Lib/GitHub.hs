@@ -147,8 +147,10 @@ instance FromJSON CheckRun where
 
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
-    | "github:" `Text.isPrefixOf` uri =
-        case Text.splitOn "/" (Text.drop 7 uri) of
+    | "github:" `Text.isPrefixOf` uri = do
+        uriWithoutPrefix <- Text.stripPrefix "github:" uri
+        let uriWithoutQuery = Text.takeWhile (/= '?') uriWithoutPrefix
+        case Text.splitOn "/" uriWithoutQuery of
             -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
             (owner:repo:hash:[]) | Text.length hash == 40 -> Just (owner, repo, hash)
             _                    -> Nothing
