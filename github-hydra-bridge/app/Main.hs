@@ -34,5 +34,5 @@ main = do
   putStrLn $ maybe "No $HYDRA_STATE_DIR specified." ("$HYDRA_STATE_DIR is: " ++) mStateDir
   queue <- DsQueue.new (fmap (\sd -> DiskStoreConfig sd "github-hydra-bridge/queue" 10) mStateDir)
   env <- hydraClientEnv host user pass
-  void . forkIO $ hydraClient env queue
+  void . forkIO $ hydraClient host env queue
   run port (app env queue (gitHubKey key))

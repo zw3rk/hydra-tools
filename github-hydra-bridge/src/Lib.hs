@@ -329,8 +329,8 @@ on404 a b = a `catchError` handle
     where handle (FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) = b
           handle e = throwError e
 
-handleCmd :: Command -> ClientM ()
-handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
+handleCmd :: Text -> Command -> ClientM ()
+handleCmd host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     void $ mkJobset projName jobsetName jobset `on404` do
             let proj = snd $ splitRepo repoName
@@ -341,10 +341,10 @@ handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
             mkJobset projName jobsetName jobset
 
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
     return ()
 
-handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
+handleCmd host (UpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     -- ensure we try to get this first, ...
     void $ getJobset projName jobsetName
@@ -359,19 +359,19 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
 
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
     return ()
 
-handleCmd (DeleteJobset projName jobsetName) = do
+handleCmd _ (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
     return ()
 
-handleCmd (EvaluateJobset projName jobsetName) = do
+handleCmd host (EvaluateJobset projName jobsetName) = do
     liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
     return ()
 
-handleCmd (RestartBuild bid) = do
+handleCmd _ (RestartBuild bid) = do
     liftIO (putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart...")
     void $ restartBuild $ bid
     return ()
@@ -390,10 +390,10 @@ hydraClientEnv host user pass = do
 
     return env
 
-hydraClient :: ClientEnv -> DsQueue Command -> IO ()
-hydraClient env queue =
+hydraClient :: Text -> ClientEnv -> DsQueue Command -> IO ()
+hydraClient host env queue =
     -- loop forever, working down the hydra commands
-    forever $ DsQueue.read queue >>= flip runClientM env . handleCmd >>= \case
+    forever $ DsQueue.read queue >>= flip runClientM env . (handleCmd $ Text.append "https://" host) >>= \case
         Left e  -> print e
         Right _ -> pure ()
 
