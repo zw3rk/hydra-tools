@@ -1,3 +1,25 @@
-index-state: 2023-04-28T00:00:00Z
+-- Currenlty build with ghc-9.2
+index-state: 2023-06-28T05:23:25Z
 
-packages: github-hydra-bridge hydra-github-bridge
+packages:
+  github-hydra-bridge
+  hydra-github-bridge
+  hydra-attic-bridge
+
+tests: True
+
+test-show-details: direct
+
+source-repository-package
+   type: git
+   location: https://github.com/input-output-hk/servant-github-webhook
+   tag: 9418ceed4b962368d90079143987e1fc67d27b31
+   subdir:
+     .
+-- TODO remove once this commit hit stackage
+source-repository-package
+   type: git
+   location: https://github.com/cuedo/github-webhooks
+   tag: 586cd07da027f92265dfa7a15a4d7bc201d9dec1
+   subdir:
+     .

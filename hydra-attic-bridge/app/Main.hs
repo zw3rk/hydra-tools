@@ -54,7 +54,7 @@ main = do
     hSetBuffering stdout LineBuffering
     hSetBuffering stderr LineBuffering
 
-    host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
+    host <- maybe mempty id <$> lookupEnv "HYDRA_HOST"
     user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
     pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
     attic <- maybe "localhost" id <$> lookupEnv "ATTIC_HOST"
