@@ -405,6 +405,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                       then ioError ioe2
                       else return Nothing
               return (stepnr, drvpath, logs)
+        output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [String]
         pure $
           singleton $
             GitHub.CheckRun owner repo $
@@ -424,7 +425,10 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                           summary = tshow (length failedSteps) <> " failed steps",
                           text =
                             if null failedStepLogs
-                              then Nothing
+                              then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
+                              -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
+                              -- github status. And use it for nix-store -r, or similar.
+                                Just (Text.intercalate ", " (map Text.pack output))
                               else
                                 let limit = 65535
                                     maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
@@ -648,58 +652,59 @@ main = do
               GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent ghAppInstallId
 
   let numWorkers = 10 -- default number of workers
-  let statusHandlers = Async.replicateConcurrently_
-        numWorkers
-        ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
-            let processStatuses = withTransaction conn $ do
-                  query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL and tries < 5 ORDER BY created LIMIT 1 FOR UPDATE SKIP LOCKED" >>= \case
-                    [(id', owner, repo, payload)] -> do
-                      let payload' = case fromJSON payload of
-                            Aeson.Success p -> p
-                            Aeson.Error e -> error e
-                      eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
-                      case eres of
-                        Left e -> do
-                          putStrLn $ "Failed to write payload; Exception: " <> (show e)
-                          _ <- execute conn "UPDATE github_status SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
-                          return ()
-                        Right res -> do
-                          putStrLn "Payload written"
-                          _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
-                          BSL.putStrLn $ "<- " <> encode res
-                      return True
-                    _ -> return False
-            _ <- execute_ conn "LISTEN github_status"
-            let loop = do
-                  executed <- processStatuses
-                  unless executed $ void $ getNotification conn
-                  when executed loop
-            loop
-        )
+  let statusHandlers =
+        Async.replicateConcurrently_
+          numWorkers
+          ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
+              let processStatuses = withTransaction conn $ do
+                    query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL and tries < 5 ORDER BY created LIMIT 1 FOR UPDATE SKIP LOCKED" >>= \case
+                      [(id', owner, repo, payload)] -> do
+                        let payload' = case fromJSON payload of
+                              Aeson.Success p -> p
+                              Aeson.Error e -> error e
+                        eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
+                        case eres of
+                          Left e -> do
+                            putStrLn $ "Failed to write payload; Exception: " <> (show e)
+                            _ <- execute conn "UPDATE github_status SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
+                            return ()
+                          Right res -> do
+                            putStrLn "Payload written"
+                            _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                            BSL.putStrLn $ "<- " <> encode res
+                        return True
+                      _ -> return False
+              _ <- execute_ conn "LISTEN github_status"
+              let loop = do
+                    executed <- processStatuses
+                    unless executed $ void $ getNotification conn
+                    when executed loop
+              loop
+          )
   let notificationWatcher = withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> do
-          _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
-          _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
-          _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
-          _ <- execute_ conn "LISTEN eval_failed" -- (opaque id, jobset id)
-          _ <- execute_ conn "LISTEN build_queued" -- (build id)
-          _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
-          _ <- execute_ conn "LISTEN build_started" -- (build id)
-          _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
-          _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
-          forever $ do
-            putStrLn "Waiting for notification..."
-            note <- toHydraNotification . traceShowId <$> getNotification conn
-            statuses <- handleHydraNotification conn (cs host) stateDir note
-            forM_ statuses $
-              ( \(GitHub.CheckRun owner repo payload) -> do
-                  putStrLn $ "Queueing status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> " with payload: " <> show payload
-                  [Only _id'] <-
-                    query
-                      conn
-                      "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
-                      (owner, repo, toJSON payload) ::
-                      IO [Only Int]
-                  execute_ conn "NOTIFY github_status"
-              )
+        _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
+        _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
+        _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
+        _ <- execute_ conn "LISTEN eval_failed" -- (opaque id, jobset id)
+        _ <- execute_ conn "LISTEN build_queued" -- (build id)
+        _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
+        _ <- execute_ conn "LISTEN build_started" -- (build id)
+        _ <- execute_ conn "LISTEN build_finished" -- (build id, dependent build ids...)
+        _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
+        forever $ do
+          putStrLn "Waiting for notification..."
+          note <- toHydraNotification . traceShowId <$> getNotification conn
+          statuses <- handleHydraNotification conn (cs host) stateDir note
+          forM_ statuses $
+            ( \(GitHub.CheckRun owner repo payload) -> do
+                putStrLn $ "Queueing status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> " with payload: " <> show payload
+                [Only _id'] <-
+                  query
+                    conn
+                    "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
+                    (owner, repo, toJSON payload) ::
+                    IO [Only Int]
+                execute_ conn "NOTIFY github_status"
+            )
   eres <- Async.race statusHandlers notificationWatcher
   either (const . putStrLn $ "statusHandler exited") (const . putStrLn $ "withConnect exited") eres
