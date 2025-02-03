@@ -348,7 +348,7 @@ checkRunHook conn _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventAction
         putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
         writeCommand conn $ RestartBuild externalId
 
-checkRunHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkRunEvent with action: " ++ show (evCheckRunAction ev)
+checkRunHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkRunEvent with action: " ++ show (evCheckRunAction ev) ++ "; payload: " ++ show ev
 
 type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI :<|> CheckRunHookAPI)
 
