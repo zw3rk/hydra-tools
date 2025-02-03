@@ -405,7 +405,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                       then ioError ioe2
                       else return Nothing
               return (stepnr, drvpath, logs)
-        output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [String]
+        output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [Text]
         pure $
           singleton $
             GitHub.CheckRun owner repo $
@@ -428,7 +428,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                               then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
                               -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
                               -- github status. And use it for nix-store -r, or similar.
-                                Just (Text.intercalate ", " (map Text.pack output))
+                                Just (Text.intercalate ", " output)
                               else
                                 let limit = 65535
                                     maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
