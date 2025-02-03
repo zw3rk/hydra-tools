@@ -321,7 +321,7 @@ checkSuiteHook env conn _ (_, ev@CheckSuiteEvent{ evCheckSuiteAction = CheckSuit
         writeCommand conn $ UpdateJobset repoName projName jobsetName $ jobset
             { hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr) }
 
-checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev)
+checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
 -- Check Run Hook
 type CheckRunHookAPI =
