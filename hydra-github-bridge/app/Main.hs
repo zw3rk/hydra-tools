@@ -702,7 +702,7 @@ main = do
                 [Only _id'] <-
                   query
                     conn
-                    "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set id = excluded.id returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                    "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
                     (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
                     IO [Only Int]
                 execute_ conn "NOTIFY github_status"
