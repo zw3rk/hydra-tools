@@ -657,7 +657,8 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    query_ conn "SELECT id, owner, repo, payload FROM github_status WHERE sent IS NULL and tries < 5 ORDER BY created LIMIT 1 FOR UPDATE SKIP LOCKED" >>= \case
+                    rows <- query_ conn "SELECT p.id, g.owner, g.repo, p.payload FROM github_status g JOIN github_status_payload p ON g.id = p.status_id WHERE g.sent IS NULL AND g.tries < 5 ORDER BY g.created LIMIT 1 FOR UPDATE SKIP LOCKED"
+                    case rows of
                       [(id', owner, repo, payload)] -> do
                         let payload' = case fromJSON payload of
                               Aeson.Success p -> p
@@ -666,11 +667,11 @@ main = do
                         case eres of
                           Left e -> do
                             putStrLn $ "Failed to write payload; Exception: " <> (show e)
-                            _ <- execute conn "UPDATE github_status SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
+                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
                             return ()
                           Right res -> do
                             putStrLn "Payload written"
-                            _ <- execute conn "UPDATE github_status SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                            _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
                             BSL.putStrLn $ "<- " <> encode res
                         return True
                       _ -> return False
@@ -701,8 +702,8 @@ main = do
                 [Only _id'] <-
                   query
                     conn
-                    "insert into github_status (owner, repo, payload) values (?, ?, ?) returning id"
-                    (owner, repo, toJSON payload) ::
+                    "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                    (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
                     IO [Only Int]
                 execute_ conn "NOTIFY github_status"
             )

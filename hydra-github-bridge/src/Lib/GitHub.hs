@@ -148,17 +148,25 @@ instance RESTKeyValue CheckRunPayload where
         ++ maybeKV "output"       payload.output      toKeyValue
 
 -- The following table exists in the databse:
---
--- CREATE TABLE github_status (
---     id SERIAL,
---     owner TEXT NOT NULL,
---     repo TEXT NOT NULL,
---     payload JSONB NOT NULL,
---     created TIMESTAMP DEFAULT NOW(),
---     sent TIMESTAMP DEFAULT NULL,
---     tries INTEGER DEFAULT 0,
---     PRIMARY KEY (id)
--- );
+{-
+CREATE OR REPLACE TABLE github_status (
+    id SERIAL PRIMARY KEY,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    headSha TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner, repo, headSha, name)
+);
+CREATE OR REPLACE TABLE github_status_payload (
+    id SERIAL PRIMARY KEY,
+    status_id INTEGER NOT NULL, -- fk: github_status.id
+    payload JSONB NOT NULL,
+    created TIMESTAMP DEFAULT NOW(),
+    sent TIMESTAMP DEFAULT NULL,
+    tries INTEGER DEFAULT 0,
+    FOREIGN KEY (status_id) REFERENCES github_status (id) ON DELETE CASCADE
+);
+-}
 
 data CheckRun = CheckRun
     { owner   :: Text
