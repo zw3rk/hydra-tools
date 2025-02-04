@@ -657,9 +657,21 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    rows <- query_ conn "SELECT p.id, g.owner, g.repo, p.payload FROM github_status g JOIN github_status_payload p ON g.id = p.status_id WHERE p.sent IS NULL AND p.tries < 5 ORDER BY p.created LIMIT 1 FOR UPDATE SKIP LOCKED"
-                    case rows of
-                      [(id', owner, repo, payload)] -> do
+                    rows <- query_ conn (   "SELECT p.id, g.owner, g.repo, p.payload"
+                                         <> "FROM github_status_payload p"
+                                         <> "JOIN github_status g ON g.id = p.status_id"
+                                         <> "WHERE p.sent IS NULL AND p.tries < 5"
+                                         <> "ORDER BY p.created ASC"
+                                         <> "FOR UPDATE OF p, g SKIP LOCKED")
+                    -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are 
+                    -- returned last. This is only applicable if we find multiple rows. If we find only a single row this
+                    -- is irrelevant. However for multiple rows, the last item will be the most recent status and we can just
+                    -- send that to GitHub, and skip all prior ones. They usually go through queued -> in_progress -> completed.
+                    -- If we already have the status for completed, we don't need to send queued, and in_progress. This would
+                    -- just eat two requests, which for many concurrent status-updates can lead to a lot of requests, and thus
+                    -- us running into rate-limits.
+                    case (reverse rows) of
+                      (id', owner, repo, payload):_ -> do
                         let payload' = case fromJSON payload of
                               Aeson.Success p -> p
                               Aeson.Error e -> error e
@@ -680,8 +692,9 @@ main = do
                             _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
                             return ()
                           Right _res -> do
-                            Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name 
-                            _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
+                            Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name
+                            -- mark all statuses as sent; previous statueses are overridded anyway.
+                            _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id IN ?" (Only (In [id'' | (id'', _, _, _) <- rows] :: In [Int]))
                             -- BSL.putStrLn $ "<- " <> encode res
                             return ()
                         return True
