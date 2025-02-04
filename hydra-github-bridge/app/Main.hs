@@ -186,7 +186,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
         singleton $
           GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/hydra-build:" <> job,
+              { name = job,
                 headSha = hash,
                 detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                 externalId = Just $ tshow bid,
@@ -208,7 +208,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
         singleton $
           GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/hydra-build:" <> job,
+              { name = job,
                 headSha = hash,
                 detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                 externalId = Just $ tshow bid,
@@ -410,7 +410,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
           singleton $
             GitHub.CheckRun owner repo $
               GitHub.CheckRunPayload
-                { name = "ci/hydra-build:" <> job,
+                { name = job,
                   headSha = hash,
                   detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                   externalId = Just $ tshow bid,
