@@ -13,6 +13,7 @@ module Main where
 
 import qualified Codec.Compression.BZip as BZip
 import Control.Concurrent.Async as Async
+import Control.Concurrent (threadDelay)
 import Control.Exception
   ( SomeException,
     catchJust,
@@ -88,6 +89,8 @@ import System.IO.Error
     isDoesNotExistErrorType,
   )
 import Text.Regex.TDFA ((=~))
+
+import qualified Network.HTTP.Client as HTTP
 
 -- Text utils
 tshow :: (Show a) => a -> Text
@@ -583,7 +586,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                   if totalLength > limit then Nothing else Just . cs $ Text.concat parts
                 )
 
-statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
+statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either HTTP.HttpException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
   Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name 
 
@@ -611,7 +614,7 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
             ],
           ghData = GitHub.toKeyValue checkRun.payload
         } ::
-    IO (Either SomeException Value)
+    IO (Either HTTP.HttpException Value)
 
 main :: IO ()
 main = do
@@ -662,6 +665,16 @@ main = do
                               Aeson.Error e -> error e
                         eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                         case eres of
+                          Left (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _))
+                            | Just n <- read . BS.unpack <$> lookup "Retry-After" (HTTP.responseHeaders resp) -> do
+                            putStrLn $ "Hit the rate-limit: Retrying in " <> show n <> " seconds..."
+                            threadDelay (n * 1000000)
+                            return ()
+                          
+                          Left (HTTP.HttpExceptionRequest _req HTTP.ConnectionTimeout) -> do
+                            putStrLn "Connection timeout, retrying..."
+                            return ()
+                          
                           Left e -> do
                             Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ": " <> Text.pack (show e)
                             _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
