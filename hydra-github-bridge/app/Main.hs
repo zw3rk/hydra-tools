@@ -586,7 +586,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                   if totalLength > limit then Nothing else Just . cs $ Text.concat parts
                 )
 
-statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either HTTP.HttpException Value)
+statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
   Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name 
 
@@ -614,7 +614,7 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
             ],
           ghData = GitHub.toKeyValue checkRun.payload
         } ::
-    IO (Either HTTP.HttpException Value)
+    IO (Either SomeException Value)
 
 main :: IO ()
 main = do
@@ -677,13 +677,15 @@ main = do
                               Aeson.Error e -> error e
                         eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                         case eres of
-                          Left (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _))
-                            | Just n <- read . BS.unpack <$> lookup "Retry-After" (HTTP.responseHeaders resp) -> do
+                          Left ex
+                            | Just (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _)) <- fromException ex,
+                              Just n <- read . BS.unpack <$> lookup "Retry-After" (HTTP.responseHeaders resp) -> do
                             putStrLn $ "Hit the rate-limit: Retrying in " <> show n <> " seconds..."
                             threadDelay (n * 1000000)
                             return ()
                           
-                          Left (HTTP.HttpExceptionRequest _req HTTP.ConnectionTimeout) -> do
+                          Left ex 
+                            | Just (HTTP.HttpExceptionRequest _req HTTP.ConnectionTimeout) <- fromException ex -> do
                             putStrLn "Connection timeout, retrying..."
                             return ()
                           
