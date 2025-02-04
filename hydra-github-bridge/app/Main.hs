@@ -38,6 +38,7 @@ import Data.List
     singleton,
   )
 import Data.Maybe (isNothing)
+import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -657,12 +658,12 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    rows <- query_ conn (   "SELECT p.id, g.owner, g.repo, p.payload"
-                                         <> "FROM github_status_payload p"
-                                         <> "JOIN github_status g ON g.id = p.status_id"
-                                         <> "WHERE p.sent IS NULL AND p.tries < 5"
-                                         <> "ORDER BY p.created ASC"
-                                         <> "FOR UPDATE OF p, g SKIP LOCKED")
+                    rows <- query_ conn (fromString $ unwords [ "SELECT p.id, g.owner, g.repo, p.payload"
+                                                 , "FROM github_status_payload p"
+                                                 , "JOIN github_status g ON g.id = p.status_id"
+                                                 , "WHERE p.sent IS NULL AND p.tries < 5"
+                                                 , "ORDER BY p.created ASC"
+                                                 , "FOR UPDATE OF p, g SKIP LOCKED" ])
                     -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are 
                     -- returned last. This is only applicable if we find multiple rows. If we find only a single row this
                     -- is irrelevant. However for multiple rows, the last item will be the most recent status and we can just
