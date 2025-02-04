@@ -589,7 +589,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
 
 statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
-  Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name 
+  Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name <> ":" <> Text.pack (show checkRun.payload.status)
 
   -- putStrLn $ "Obtain GitHub token..."
   ghToken <- getGitHubToken
@@ -658,12 +658,28 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    rows <- query_ conn (fromString $ unwords [ "SELECT p.id, g.owner, g.repo, p.payload"
-                                                 , "FROM github_status_payload p"
-                                                 , "JOIN github_status g ON g.id = p.status_id"
-                                                 , "WHERE p.sent IS NULL AND p.tries < 5"
-                                                 , "ORDER BY p.created ASC"
-                                                 , "FOR UPDATE OF p, g SKIP LOCKED" ])
+                    rows <- query_ conn (fromString $ unwords
+                      [ "WITH OldestStatus AS ("
+                      , "  SELECT s.id, s.owner, s.repo, s.headSha, s.name"
+                      , "  FROM github_status s"
+                      , "  JOIN github_status_payload p ON s.id = p.status_id"
+                      , "  WHERE p.sent IS NULL"
+                      , "  ORDER BY p.created ASC"
+                      , "  LIMIT 1"
+                      , "  FOR UPDATE SKIP LOCKED"
+                      , ")"
+                      , "SELECT p.id, g.owner, g.repo, p.payload"
+                      , "FROM OldestStatus g"
+                      , "JOIN github_status_payload p ON g.id = p.status_id"
+                      , "ORDER BY p.created"
+                      , "FOR UPDATE SKIP LOCKED"
+                      -- "SELECT p.id, g.owner, g.repo, p.payload"
+                      --                              , "FROM github_status_payload p"
+                      --                              , "JOIN github_status g ON g.id = p.status_id"
+                      --                              , "WHERE p.sent IS NULL AND p.tries < 5"
+                      --                              , "ORDER BY p.created ASC"
+                      --                              , "FOR UPDATE OF p, g SKIP LOCKED"
+                      ])
                     -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are 
                     -- returned last. This is only applicable if we find multiple rows. If we find only a single row this
                     -- is irrelevant. However for multiple rows, the last item will be the most recent status and we can just
@@ -691,12 +707,17 @@ main = do
                             return ()
                           
                           Left e -> do
-                            Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ": " <> Text.pack (show e)
+                            Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status) <> ": " <> Text.pack (show e)
                             _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
                             return ()
                           Right _res -> do
-                            Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name
+                            Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status)
                             -- mark all statuses as sent; previous statueses are overridded anyway.
+                            forM_ rows $ \(_id, o, r, p) -> do
+                              case fromJSON p of
+                                Aeson.Success (p' :: GitHub.CheckRunPayload) ->
+                                  Text.putStrLn $ "MARK [" <> o <> "/" <> r <> "/" <> p'.headSha <> "] " <> p'.name <> ":" <> Text.pack (show p'.status) <> " SENT"
+                                Aeson.Error e -> error e
                             _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id IN ?" (Only (In [id'' | (id'', _, _, _) <- rows] :: In [Int]))
                             -- BSL.putStrLn $ "<- " <> encode res
                             return ()
@@ -725,7 +746,7 @@ main = do
           statuses <- handleHydraNotification conn (cs host) stateDir note
           forM_ statuses $
             ( \(GitHub.CheckRun owner repo payload) -> do
-                Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name
+                Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
                 [Only _id'] <-
                   query
                     conn
