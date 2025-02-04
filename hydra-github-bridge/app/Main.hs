@@ -657,7 +657,7 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    rows <- query_ conn "SELECT p.id, g.owner, g.repo, p.payload FROM github_status g JOIN github_status_payload p ON g.id = p.status_id WHERE g.sent IS NULL AND g.tries < 5 ORDER BY g.created LIMIT 1 FOR UPDATE SKIP LOCKED"
+                    rows <- query_ conn "SELECT p.id, g.owner, g.repo, p.payload FROM github_status g JOIN github_status_payload p ON g.id = p.status_id WHERE p.sent IS NULL AND p.tries < 5 ORDER BY p.created LIMIT 1 FOR UPDATE SKIP LOCKED"
                     case rows of
                       [(id', owner, repo, payload)] -> do
                         let payload' = case fromJSON payload of

@@ -149,7 +149,8 @@ instance RESTKeyValue CheckRunPayload where
 
 -- The following table exists in the databse:
 {-
-CREATE OR REPLACE TABLE github_status (
+DROP TABLE IF EXISTS github_status;
+CREATE TABLE github_status (
     id SERIAL PRIMARY KEY,
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
@@ -157,7 +158,8 @@ CREATE OR REPLACE TABLE github_status (
     name TEXT NOT NULL,
     UNIQUE (owner, repo, headSha, name)
 );
-CREATE OR REPLACE TABLE github_status_payload (
+DROP TABLE IF EXISTS github_status_payload;
+CREATE TABLE github_status_payload (
     id SERIAL PRIMARY KEY,
     status_id INTEGER NOT NULL, -- fk: github_status.id
     payload JSONB NOT NULL,
