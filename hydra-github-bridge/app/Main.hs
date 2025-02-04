@@ -667,7 +667,7 @@ main = do
                         case eres of
                           Left e -> do
                             putStrLn $ "Failed to write payload; Exception: " <> (show e)
-                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1, created = NOW() + interval '5 minutes' WHERE id = ?" (Only id' :: Only Int)
+                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
                             return ()
                           Right res -> do
                             putStrLn "Payload written"
