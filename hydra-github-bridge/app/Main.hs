@@ -28,7 +28,6 @@ import Data.Aeson hiding (Error, Success)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BSLw
-import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -586,13 +585,11 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
 
 statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
 statusHandler ghUserAgent getGitHubToken checkRun = do
-  putStrLn $ "Sending status for " <> show checkRun
-  print checkRun
-  BSL.putStrLn $ "-> " <> encode checkRun
+  Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name 
 
-  putStrLn $ "Obtain GitHub token..."
+  -- putStrLn $ "Obtain GitHub token..."
   ghToken <- getGitHubToken
-  putStrLn $ "GitHub Token: " <> show ghToken
+  -- putStrLn $ "GitHub Token: " <> show ghToken
 
   let token' = case [tok.token | (owner, tok) <- ghToken, Text.pack owner == checkRun.owner] of
         [t] -> Just t
@@ -666,13 +663,14 @@ main = do
                         eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                         case eres of
                           Left e -> do
-                            putStrLn $ "Failed to write payload; Exception: " <> (show e)
+                            Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ": " <> Text.pack (show e)
                             _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
                             return ()
-                          Right res -> do
-                            putStrLn "Payload written"
+                          Right _res -> do
+                            Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name 
                             _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id = ?" (Only id' :: Only Int)
-                            BSL.putStrLn $ "<- " <> encode res
+                            -- BSL.putStrLn $ "<- " <> encode res
+                            return ()
                         return True
                       _ -> return False
               _ <- execute_ conn "LISTEN github_status"
@@ -698,7 +696,7 @@ main = do
           statuses <- handleHydraNotification conn (cs host) stateDir note
           forM_ statuses $
             ( \(GitHub.CheckRun owner repo payload) -> do
-                putStrLn $ "Queueing status for " <> Text.unpack owner <> "/" <> Text.unpack repo <> " with payload: " <> show payload
+                Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name
                 [Only _id'] <-
                   query
                     conn
