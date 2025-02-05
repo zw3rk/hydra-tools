@@ -664,7 +664,9 @@ main = do
                       , "  FROM github_status s"
                       , "  JOIN github_status_payload p ON s.id = p.status_id"
                       , "  WHERE p.sent IS NULL"
-                      , "  ORDER BY p.created ASC"
+                      , "  ORDER BY"
+                      , "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,"  -- Prioritize 'ci/eval'
+                      , "    p.created ASC"
                       , "  LIMIT 1"
                       , "  FOR UPDATE SKIP LOCKED"
                       , ")"
