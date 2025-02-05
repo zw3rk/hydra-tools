@@ -427,7 +427,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                         { title = tshow buildStatus,
                           summary = tshow (length failedSteps) <> " failed steps",
                           text =
-                            if null failedStepLogs
+                            if buildStatus == Hydra.Succeeded
                               then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
                               -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
                               -- github status. And use it for nix-store -r, or similar.
