@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,7 +10,7 @@
 
 module Main where
 
-import qualified Codec.Compression.BZip as BZip
+import Codec.Compression.BZip qualified as BZip
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Exception
@@ -26,9 +25,9 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson hiding (Error, Success)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy as BSLw
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Char8 qualified as BS
+import Data.ByteString.Lazy qualified as BSLw
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -41,15 +40,15 @@ import Data.Maybe (isNothing)
 import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
+import Data.Text qualified as Text
+import Data.Text.IO qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Clock
   ( NominalDiffTime,
     addUTCTime,
     secondsToNominalDiffTime,
   )
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime, getPOSIXTime)
+import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
 import Debug.Trace (traceShowId)
@@ -69,9 +68,9 @@ import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
 import Lib.GitHub (parseGitHubFlakeURI)
-import qualified Lib.GitHub as GitHub
-import qualified Lib.Hydra as Hydra
-import qualified Network.HTTP.Client as HTTP
+import Lib.GitHub qualified as GitHub
+import Lib.Hydra qualified as Hydra
+import Network.HTTP.Client qualified as HTTP
 import System.Environment (getEnv, lookupEnv)
 import System.FilePath
   ( takeFileName,
@@ -634,16 +633,17 @@ main = do
       fetchGitHubTokens = do
         ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
         ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        
+
         putStrLn "Fetching GitHub App installations..."
         ghAppInstalls <- GitHub.fetchInstallations ghAppId ghAppKeyFile ghUserAgent
         putStrLn $ "Found " <> show (length ghAppInstalls) <> " installations"
-        
-        leases <- forM ghAppInstalls $ \(owner, installId) -> do
+        forM_ ghAppInstalls $ \(owner, installId) -> do
+          Text.putStrLn $ "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
+
+        forM ghAppInstalls $ \(owner, installId) -> do
           lease <- GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent installId
-          putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> show lease.expiry
+          Text.putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> Text.pack (show lease.expiry)
           return (Text.unpack owner, lease)
-        return leases
 
   -- ghTokens is basically [(String, Token)]
   ghTokens <- fetchGitHubTokens >>= newIORef
