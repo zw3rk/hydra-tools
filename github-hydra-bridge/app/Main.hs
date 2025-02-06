@@ -32,6 +32,7 @@ main = do
   host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
   putStrLn $ "Server is starting on port " ++ show port
   env <- hydraClientEnv host user pass
+
   eres <- Async.race
     (withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
       hydraClient env conn)

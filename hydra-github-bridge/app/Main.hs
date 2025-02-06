@@ -12,8 +12,8 @@
 module Main where
 
 import qualified Codec.Compression.BZip as BZip
-import Control.Concurrent.Async as Async
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async as Async
 import Control.Exception
   ( SomeException,
     catchJust,
@@ -71,6 +71,7 @@ import Lib.Data.Text (indentLine)
 import Lib.GitHub (parseGitHubFlakeURI)
 import qualified Lib.GitHub as GitHub
 import qualified Lib.Hydra as Hydra
+import qualified Network.HTTP.Client as HTTP
 import System.Environment (getEnv, lookupEnv)
 import System.FilePath
   ( takeFileName,
@@ -90,8 +91,6 @@ import System.IO.Error
     isDoesNotExistErrorType,
   )
 import Text.Regex.TDFA ((=~))
-
-import qualified Network.HTTP.Client as HTTP
 
 -- Text utils
 tshow :: (Show a) => a -> Text
@@ -658,31 +657,36 @@ main = do
           numWorkers
           ( withConnect (ConnectInfo db 5432 user pass "hydra") $ \conn -> forever $ do
               let processStatuses = withTransaction conn $ do
-                    rows <- query_ conn (fromString $ unwords
-                      [ "WITH OldestStatus AS ("
-                      , "  SELECT s.id, s.owner, s.repo, s.headSha, s.name"
-                      , "  FROM github_status s"
-                      , "  JOIN github_status_payload p ON s.id = p.status_id"
-                      , "  WHERE p.sent IS NULL"
-                      , "  ORDER BY"
-                      , "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,"  -- Prioritize 'ci/eval'
-                      , "    p.created ASC"
-                      , "  LIMIT 1"
-                      , "  FOR UPDATE SKIP LOCKED"
-                      , ")"
-                      , "SELECT p.id, g.owner, g.repo, p.payload"
-                      , "FROM OldestStatus g"
-                      , "JOIN github_status_payload p ON g.id = p.status_id"
-                      , "ORDER BY p.created"
-                      , "FOR UPDATE SKIP LOCKED"
-                      -- "SELECT p.id, g.owner, g.repo, p.payload"
-                      --                              , "FROM github_status_payload p"
-                      --                              , "JOIN github_status g ON g.id = p.status_id"
-                      --                              , "WHERE p.sent IS NULL AND p.tries < 5"
-                      --                              , "ORDER BY p.created ASC"
-                      --                              , "FOR UPDATE OF p, g SKIP LOCKED"
-                      ])
-                    -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are 
+                    rows <-
+                      query_
+                        conn
+                        ( fromString $
+                            unwords
+                              [ "WITH OldestStatus AS (",
+                                "  SELECT s.id, s.owner, s.repo, s.headSha, s.name",
+                                "  FROM github_status s",
+                                "  JOIN github_status_payload p ON s.id = p.status_id",
+                                "  WHERE p.sent IS NULL",
+                                "  ORDER BY",
+                                "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
+                                "    p.created ASC",
+                                "  LIMIT 1",
+                                "  FOR UPDATE SKIP LOCKED",
+                                ")",
+                                "SELECT p.id, g.owner, g.repo, p.payload",
+                                "FROM OldestStatus g",
+                                "JOIN github_status_payload p ON g.id = p.status_id",
+                                "ORDER BY p.created",
+                                "FOR UPDATE SKIP LOCKED"
+                                -- "SELECT p.id, g.owner, g.repo, p.payload"
+                                --                              , "FROM github_status_payload p"
+                                --                              , "JOIN github_status g ON g.id = p.status_id"
+                                --                              , "WHERE p.sent IS NULL AND p.tries < 5"
+                                --                              , "ORDER BY p.created ASC"
+                                --                              , "FOR UPDATE OF p, g SKIP LOCKED"
+                              ]
+                        )
+                    -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are
                     -- returned last. This is only applicable if we find multiple rows. If we find only a single row this
                     -- is irrelevant. However for multiple rows, the last item will be the most recent status and we can just
                     -- send that to GitHub, and skip all prior ones. They usually go through queued -> in_progress -> completed.
@@ -690,7 +694,7 @@ main = do
                     -- just eat two requests, which for many concurrent status-updates can lead to a lot of requests, and thus
                     -- us running into rate-limits.
                     case (reverse rows) of
-                      (id', owner, repo, payload):_ -> do
+                      (id', owner, repo, payload) : _ -> do
                         let payload' = case fromJSON payload of
                               Aeson.Success p -> p
                               Aeson.Error e -> error e
@@ -699,15 +703,13 @@ main = do
                           Left ex
                             | Just (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _)) <- fromException ex,
                               Just n <- read . BS.unpack <$> lookup "Retry-After" (HTTP.responseHeaders resp) -> do
-                            putStrLn $ "Hit the rate-limit: Retrying in " <> show n <> " seconds..."
-                            threadDelay (n * 1000000)
-                            return ()
-                          
-                          Left ex 
+                                putStrLn $ "Hit the rate-limit: Retrying in " <> show n <> " seconds..."
+                                threadDelay (n * 1000000)
+                                return ()
+                          Left ex
                             | Just (HTTP.HttpExceptionRequest _req HTTP.ConnectionTimeout) <- fromException ex -> do
-                            putStrLn "Connection timeout, retrying..."
-                            return ()
-                          
+                                putStrLn "Connection timeout, retrying..."
+                                return ()
                           Left e -> do
                             Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status) <> ": " <> Text.pack (show e)
                             _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
