@@ -26,7 +26,7 @@ import           Data.Time.Clock          (NominalDiffTime, addUTCTime,
 import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics
 import           GitHub.REST              (GHEndpoint (..), GitHubSettings (..),
-                                           KeyValue ((:=)), StdMethod (POST),
+                                           KeyValue ((:=)), StdMethod (POST, GET),
                                            Token (BearerToken), queryGitHub,
                                            runGitHubT, (.:))
 import           GitHub.REST.Auth         (getJWTToken, loadSigner)
@@ -208,6 +208,26 @@ data TokenLease = TokenLease
 
 apiVersion :: BS.ByteString
 apiVersion = "2022-11-28"
+
+fetchInstallations :: Int -> FilePath -> BS.ByteString -> IO [(Text, Int)]
+fetchInstallations appId appKeyFile ghUserAgent = do
+    signer <- loadSigner appKeyFile
+    jwt <- getJWTToken signer appId
+
+    let githubSettings = GitHubSettings
+            { token = Just jwt
+            , userAgent = ghUserAgent
+            , apiVersion = Lib.GitHub.apiVersion
+            }
+    response <- liftIO $ runGitHubT githubSettings $ queryGitHub GHEndpoint
+        { method = GET
+        , endpoint = "/app/installations"
+        , endpointVals = []
+        , ghData = []
+        }
+
+    return $ map (\inst -> let account = inst .: "account" :: Value
+                            in (account .: "login", inst .: "id")) response
 
 fetchAppInstallationToken :: Int -> FilePath -> BS.ByteString -> Int -> IO TokenLease
 fetchAppInstallationToken appId appKeyFile ghUserAgent appInstallationId = do

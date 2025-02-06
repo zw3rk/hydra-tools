@@ -49,7 +49,7 @@ import Data.Time.Clock
     addUTCTime,
     secondsToNominalDiffTime,
   )
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime, getPOSIXTime)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
 import Debug.Trace (traceShowId)
@@ -629,6 +629,7 @@ main = do
   stateDir <- getEnv "HYDRA_STATE_DIR"
 
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
+
   let fetchGitHubTokens :: IO [(String, GitHub.TokenLease)]
       fetchGitHubTokens = do
         ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
@@ -639,6 +640,7 @@ main = do
         leases <- forM ghAppInstallIds $ mapM (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
         forM_ leases $ \(owner, lease) -> putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> show lease.expiry
         return leases
+
   -- ghTokens is basically [(String, Token)]
   ghTokens <- fetchGitHubTokens >>= newIORef
   let getValidGitHubToken =
@@ -705,6 +707,15 @@ main = do
                               Just n <- read . BS.unpack <$> lookup "Retry-After" (HTTP.responseHeaders resp) -> do
                                 putStrLn $ "Hit the rate-limit: Retrying in " <> show n <> " seconds..."
                                 threadDelay (n * 1000000)
+                                return ()
+                          Left ex
+                            | Just (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _)) <- fromException ex,
+                              Just remaining <- read . BS.unpack <$> lookup "X-RateLimit-Remaining" (HTTP.responseHeaders resp),
+                              remaining == (0 :: Int),
+                              Just utc_epoch_offset <- read . BS.unpack <$> lookup "X-RateLimit-Reset" (HTTP.responseHeaders resp) -> do
+                                current_utc_epoch <- round <$> getPOSIXTime
+                                putStrLn $ "Hit the rate-limit: Retrying in " <> show (utc_epoch_offset - current_utc_epoch) <> " seconds..."
+                                threadDelay ((utc_epoch_offset - current_utc_epoch) * 1000000)
                                 return ()
                           Left ex
                             | Just (HTTP.HttpExceptionRequest _req HTTP.ConnectionTimeout) <- fromException ex -> do
