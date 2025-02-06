@@ -634,11 +634,15 @@ main = do
       fetchGitHubTokens = do
         ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
         ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        -- expect a haskell list: [(String, Int)], e.g. '[("owner1", 1), ("owner2", 2)]'
-        ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read
-
-        leases <- forM ghAppInstallIds $ mapM (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
-        forM_ leases $ \(owner, lease) -> putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> show lease.expiry
+        
+        putStrLn "Fetching GitHub App installations..."
+        ghAppInstalls <- GitHub.fetchInstallations ghAppId ghAppKeyFile ghUserAgent
+        putStrLn $ "Found " <> show (length ghAppInstalls) <> " installations"
+        
+        leases <- forM ghAppInstalls $ \(owner, installId) -> do
+          lease <- GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent installId
+          putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> show lease.expiry
+          return (Text.unpack owner, lease)
         return leases
 
   -- ghTokens is basically [(String, Token)]
