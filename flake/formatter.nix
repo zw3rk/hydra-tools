@@ -9,7 +9,7 @@
 
       programs = {
         alejandra.enable = true;
-        stylish-haskell.enable = true;
+        ormolu.enable = true;
       };
     };
   };
