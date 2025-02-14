@@ -423,18 +423,19 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                     Just $
                       GitHub.CheckRunOutput
                         { title = tshow buildStatus,
-                          summary = if buildStatus == Hydra.Succeeded
-                                    -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
-                                    -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
-                                    -- github status. And use it for nix-store -r, or similar.
-                                    then Just (Text.intercalate ", " (fmap fromOnly output))
-                                    else tshow (length failedSteps) <> " failed steps",
+                          summary =
+                            if buildStatus == Hydra.Succeeded
+                              then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
+                              -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
+                              -- github status. And use it for nix-store -r, or similar.
+                                Text.intercalate ", " (fmap fromOnly output)
+                              else tshow (length failedSteps) <> " failed steps",
                           text =
                             if buildStatus == Hydra.Succeeded
                               then Nothing
-                                -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
-                                -- build page.
-                              else
+                              else -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
+                              -- build page.
+
                                 let limit = 65535
                                     maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
                                     indentPrefix = cs $ indentLine "" :: String
