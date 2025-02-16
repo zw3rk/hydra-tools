@@ -33,6 +33,22 @@
             The user to authenticate as with hydra.
           '';
         };
+
+        hydraPassFile = mkOption {
+          type = types.path;
+          default = "";
+          description = ''
+            A file containing the password to authenticate with against hydra.
+          '';
+        };
+
+        ghSecretFile = mkOption {
+          type = types.path;
+          description = ''
+            The agreed upon secret with GitHub for the Webhook payloads.
+          '';
+        };
+        
         hydraDb = mkOption {
           type = types.str;
           default = "";
@@ -72,10 +88,17 @@
             RestartSec = "10s";
 
             StateDirectory = "hydra";
+          } // lib.optionalAttrs (cfg.hydraPassFile != "" || cfg.ghSecretFile != "") 
+          { LoadCredential =
+               lib.optional (cfg.hydraPassFile != "") "hydra-pass:${cfg.hydraPassFile}"
+            ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
           } // lib.optionalAttrs (cfg.environmentFile != null)
           { EnvironmentFile = builtins.toPath cfg.environmentFile; };
 
           script = ''
+            ${lib.optionalString (cfg.hydraPassFile != "") ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
+            ${lib.optionalString (cfg.ghSecretFile != "") ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
+    
             export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
             exec ${lib.getExe cfg.package}
