@@ -61,7 +61,7 @@
 
       config = lib.mkIf cfg.enable {
         systemd.services.github-hydra-bridge = {
-          wantedBy = ["multi-user.target"];
+          wantedBy = ["hydra-server.service"];
           after = ["postgresql.service" "hydra-server.service"];
           partOf = ["hydra-server.service"];
 
