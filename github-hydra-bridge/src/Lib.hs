@@ -158,7 +158,9 @@ pullRequestHook queue _ (_, ev@PullRequestEvent
     | action `elem` [ PullRequestOpenedAction
                     , PullRequestReopenedAction
                     , (PullRequestActionOther "synchronize") ] &&
-      (not (repoName `elem` [ "IntersectMBO/ouroboros-network" ]) || not (maybe False id isDraft))
+      (repoName `notElem` [ "IntersectMBO/ouroboros-network"
+                          , "IntersectMBO/cardano-cli"
+                          , "IntersectMBO/cardano-api" ] || not (maybe False id isDraft))
     = liftIO $ do
     -- we now want to send a request to
     -- $hydraApiUrl
