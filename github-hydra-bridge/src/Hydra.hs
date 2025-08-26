@@ -153,6 +153,7 @@ type HydraAPI = "project"
                 :> "push"
                 :> Header "Origin" Text
                 :> QueryParam "jobsets" Text
+                :> QueryParam "force" Bool
                 :> Post '[JSON] Value
               -- Not actually part of the API but this is what the restart button does.
               :<|> "build"
@@ -166,7 +167,7 @@ mkJobset :: Text -> Text -> HydraJobset -> ClientM (Union '[WithStatus 200 Objec
 getJobset :: Text -> Text -> ClientM Value
 rmJobset :: Text -> Text -> ClientM Value
 login :: Maybe Text -> HydraLogin -> ClientM Value
-push :: Maybe Text -> Maybe Text -> ClientM Value
+push :: Maybe Text -> Maybe Text -> Maybe Bool -> ClientM Value
 restartBuild :: Int -> ClientM NoContent
 
 -- This will provide us with the definitions for mkProject, mkJobset, ... push,

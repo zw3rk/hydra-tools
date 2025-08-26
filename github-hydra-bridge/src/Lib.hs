@@ -56,7 +56,7 @@ data Command
     = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
     | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
-    | EvaluateJobset Text Text
+    | EvaluateJobset Text Text Bool
     | RestartBuild Int
     deriving (Read, Show)
 
@@ -312,7 +312,7 @@ checkRunHook queue _ (_, ev@CheckRunEvent{ evCheckRunAction = CheckRunEventActio
         let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
         putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        DsQueue.write queue $ EvaluateJobset projName jobsetName
+        DsQueue.write queue $ EvaluateJobset projName jobsetName True
     else do
         let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
         putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
@@ -343,7 +343,7 @@ handleCmd host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
             mkJobset projName jobsetName jobset
 
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
     return ()
 
 handleCmd host (UpdateJobset repoName projName jobsetName jobset) = do
@@ -361,16 +361,16 @@ handleCmd host (UpdateJobset repoName projName jobsetName jobset) = do
 
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
     return ()
 
 handleCmd _ (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
     return ()
 
-handleCmd host (EvaluateJobset projName jobsetName) = do
+handleCmd host (EvaluateJobset projName jobsetName force) = do
     liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
-    void $ push (Just host) $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) (Just force)
     return ()
 
 handleCmd _ (RestartBuild bid) = do
