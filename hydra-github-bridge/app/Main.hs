@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -28,6 +30,7 @@ import Data.Aeson hiding (Error, Success)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSLw
+import Data.ByteString.Lazy.Char8 qualified as BSL
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -60,6 +63,7 @@ import GitHub.REST
     GitHubSettings (..),
     KeyValue ((:=)),
     StdMethod (POST),
+    Token (..),
     queryGitHub,
     runGitHubT,
   )
@@ -113,7 +117,6 @@ toHydraNotification Notification {notificationChannel = chan, notificationData =
 
 whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
 whenStatusOrJob _status _prevStepStatus _job action = action
-
 -- \| or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- [ "required", "nonrequired" ]] = action
 -- \| Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
 -- \| Just pss <- prevStepStatus, pss /= Hydra.Succeeded && maybe True (== GitHub.Success) status = action
@@ -251,7 +254,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
       [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
       [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
       Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-      withGithubFlake flake $ \owner repo hash -> do
+      withGithubFlake flake' $ \owner repo hash -> do
         let startedAt = posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral timestamp
             fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt
             evalCompletedAt = addUTCTime (fromIntegral evaltime) fetchCompletedAt

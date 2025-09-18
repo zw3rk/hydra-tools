@@ -74,7 +74,7 @@
 
       config = lib.mkIf cfg.enable {
         systemd.services.github-hydra-bridge = {
-          wantedBy = ["multi-user.target"];
+          wantedBy = ["hydra-server.service"];
           after = ["postgresql.service" "hydra-server.service"];
           partOf = ["hydra-server.service"];
 
@@ -213,18 +213,19 @@
           });
         };
 
-      config.systemd.services = lib.flip lib.mapAttrs' cfg (
-        name: iCfg:
-          lib.nameValuePair "hydra-github-bridge-${name}" {
-            inherit (iCfg) enable;
+      config.systemd = lib.mkIf (cfg != {}) {
+        services = lib.flip lib.mapAttrs' cfg (
+          name: iCfg:
+            lib.nameValuePair "hydra-github-bridge-${name}" {
+              inherit (iCfg) enable;
 
-            wantedBy = ["multi-user.target"];
-            after = ["postgresql.service"];
+              wantedBy = ["hydra-github-bridge.target"];
+              after = ["postgresql.service"];
+              partOf = ["hydra-github-bridge.target"];
 
-            startLimitIntervalSec = 0;
+              startLimitIntervalSec = 0;
 
-            serviceConfig =
-              {
+              serviceConfig = {
                 User = config.users.users.hydra.name;
                 Group = config.users.groups.hydra.name;
 
@@ -240,31 +241,37 @@
               // lib.optionalAttrs (iCfg.environmentFile != null)
               {EnvironmentFile = builtins.toPath iCfg.environmentFile;};
 
-            script = ''
-              ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
-              ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
+              environment =
+                {
+                  HYDRA_HOST = iCfg.hydraHost;
+                  HYDRA_DB = iCfg.hydraDb;
+                }
+                // lib.optionalAttrs (iCfg.ghUserAgent != "") {
+                  GITHUB_USER_AGENT = iCfg.ghUserAgent;
+                }
+                // lib.optionalAttrs (iCfg.ghAppId != 0) {
+                  GITHUB_APP_ID = toString iCfg.ghAppId;
+                }
+                // lib.optionalAttrs (iCfg.ghAppInstallIds != []) {
+                  GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
+                };
 
-              export HYDRA_STATE_DIR="$STATE_DIRECTORY"
+                script = ''
+                  ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+                  ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
-              exec ${lib.getExe iCfg.package}
-            '';
+                  export HYDRA_STATE_DIR="$STATE_DIRECTORY"
+                  export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
 
-            environment =
-              {
-                HYDRA_HOST = iCfg.hydraHost;
-                HYDRA_DB = iCfg.hydraDb;
-              }
-              // lib.optionalAttrs (iCfg.ghUserAgent != "") {
-                GITHUB_USER_AGENT = iCfg.ghUserAgent;
-              }
-              // lib.optionalAttrs (iCfg.ghAppId != 0) {
-                GITHUB_APP_ID = toString iCfg.ghAppId;
-              }
-              // lib.optionalAttrs (iCfg.ghAppInstallIds != 0) {
-                GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
-              };
-          }
-      );
+                  mkdir -p "$QUEUE_DIR"
+
+                  exec ${lib.getExe iCfg.package}
+                '';
+            }
+        );
+
+        targets.hydra-github-bridge.wantedBy = ["hydra-server.service"];
+      };
     });
 
     hydra-attic-bridge = moduleWithSystem (perSystem @ {config}: {

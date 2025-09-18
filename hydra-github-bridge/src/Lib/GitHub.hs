@@ -198,6 +198,7 @@ parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
   | "github:" `Text.isPrefixOf` uri =
       case splitFlakeRef (Text.drop 7 uri) of
+        -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
         Just (owner, repo, hash) | Text.length hash == 40 -> Just (owner, repo, hash)
         Just (owner, repo, hash)
           | (hash' : _) <- Text.splitOn "?" hash,
