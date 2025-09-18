@@ -70,7 +70,7 @@ data Command
     = UpdateJobset Text Text Text HydraJobset         -- only update it, never create
     | CreateOrUpdateJobset Text Text Text HydraJobset -- create or update.
     | DeleteJobset Text Text
-    | EvaluateJobset Text Text
+    | EvaluateJobset Text Text Bool
     | RestartBuild Int
     deriving (Eq, Generic, Read, Show)
 
@@ -190,7 +190,9 @@ pullRequestHook conn _ (_, ev@PullRequestEvent
     | action `elem` [ PullRequestOpenedAction
                     , PullRequestReopenedAction
                     , (PullRequestActionOther "synchronize") ] &&
-      (not (repoName `elem` [ "IntersectMBO/ouroboros-network" ]) || not (maybe False id isDraft))
+      (repoName `notElem` [ "IntersectMBO/ouroboros-network"
+                          , "IntersectMBO/cardano-cli"
+                          , "IntersectMBO/cardano-api" ] || not (maybe False id isDraft))
     = liftIO $ do
     -- we now want to send a request to
     -- $hydraApiUrl
@@ -365,8 +367,8 @@ on404 a b = a `catchError` handle
     where handle (FailureResponse _ (Response { responseStatusCode = Status { statusCode = 404 } })) = b
           handle e = throwError e
 
-handleCmd :: Command -> ClientM ()
-handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
+handleCmd :: Text -> Command -> ClientM ()
+handleCmd host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     void $ mkJobset projName jobsetName jobset `on404` do
             let proj = snd $ splitRepo repoName
@@ -377,10 +379,10 @@ handleCmd (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
             mkJobset projName jobsetName jobset
 
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
     return ()
 
-handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
+handleCmd host (UpdateJobset repoName projName jobsetName jobset) = do
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
     -- ensure we try to get this first, ...
     void $ getJobset projName jobsetName
@@ -395,19 +397,19 @@ handleCmd (UpdateJobset repoName projName jobsetName jobset) = do
 
     -- or triggering an eval
     liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
     return ()
 
-handleCmd (DeleteJobset projName jobsetName) = do
+handleCmd _ (DeleteJobset projName jobsetName) = do
     void $ rmJobset projName jobsetName
     return ()
 
-handleCmd (EvaluateJobset projName jobsetName) = do
+handleCmd host (EvaluateJobset projName jobsetName force) = do
     liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
-    void $ push $ Just (projName <> ":" <> jobsetName)
+    void $ push (Just host) (Just (projName <> ":" <> jobsetName)) (Just force)
     return ()
 
-handleCmd (RestartBuild bid) = do
+handleCmd _ (RestartBuild bid) = do
     liftIO (putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart...")
     void $ restartBuild $ bid
     return ()

@@ -593,21 +593,28 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
   let token' = case [tok.token | (owner, tok) <- ghToken, Text.pack owner == checkRun.owner] of
           [t] -> Just t
           _   -> throw (toException $ userError ("No GitHub token found for " <> Text.unpack checkRun.owner))
-  let githubSettings = GitHubSettings
-          { token = token'
-          , userAgent = ghUserAgent
-          , apiVersion = GitHub.apiVersion
+  let githubSettings =
+        GitHubSettings
+          { token = token',
+            userAgent = ghUserAgent,
+            apiVersion = GitHub.apiVersion
           }
-  try . liftIO . runGitHubT githubSettings $ queryGitHub GHEndpoint
-      { method = POST
-      , endpoint = "/repos/:owner/:repo/check-runs"
-      , endpointVals =
-          [ "owner" := checkRun.owner
-          , "repo" := checkRun.repo
-          ]
-      , ghData = GitHub.toKeyValue checkRun.payload
-      }
-      :: IO (Either SomeException Value)
+  eres <-
+    try . liftIO . runGitHubT githubSettings $
+      queryGitHub
+        GHEndpoint
+          { method = POST,
+            endpoint = "/repos/:owner/:repo/check-runs",
+            endpointVals =
+              [ "owner" := checkRun.owner,
+                "repo" := checkRun.repo
+              ],
+            ghData = GitHub.toKeyValue checkRun.payload
+          } ::
+      IO (Either SomeException Value)
+  case eres of
+    Right res -> BSL.putStrLn $ "<- " <> encode res
+    Left e -> putStrLn $ "statusHandler:" ++ show e
 
 main :: IO ()
 main = do
