@@ -1,8 +1,0 @@
-modules = ["haskell-ghc9.4", "nix"]
-run = "bash"
-
-[nix]
-channel = "stable-24_05"
-
-[deployment]
-run = ["sh", "-c", "bash"]
