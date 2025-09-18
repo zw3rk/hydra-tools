@@ -1,23 +1,26 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators     #-}
+{-# LANGUAGE TypeOperators #-}
 
-import qualified Data.ByteString.Char8    as C8
-import qualified Data.Text                as Text
-import           Lib
-import           Network.Wai.Handler.Warp (run)
-import           System.Environment       (lookupEnv)
-
-import           System.IO                (BufferMode (LineBuffering),
-                                           hSetBuffering, stderr, stdin, stdout)
-import           Control.Concurrent.Async                as Async
-import           Database.PostgreSQL.Simple
+import Control.Concurrent.Async as Async
+import qualified Data.ByteString.Char8 as C8
+import qualified Data.Text as Text
+import Database.PostgreSQL.Simple
+import Lib
+import Network.Wai.Handler.Warp (run)
+import System.Environment (lookupEnv)
+import System.IO
+  ( BufferMode (LineBuffering),
+    hSetBuffering,
+    stderr,
+    stdin,
+    stdout,
+  )
 
 main :: IO ()
 main = do
-
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
@@ -33,9 +36,12 @@ main = do
   putStrLn $ "Server is starting on port " ++ show port
   env <- hydraClientEnv host user pass
 
-  eres <- Async.race
-    (withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-      hydraClient host env conn)
-    (withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-      run port (app env conn (gitHubKey key)))
+  eres <-
+    Async.race
+      ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+          hydraClient host env conn
+      )
+      ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+          run port (app env conn (gitHubKey key))
+      )
   either (const . putStrLn $ "hydraClient exited") (const . putStrLn $ "app exited") eres

@@ -48,7 +48,10 @@ import Data.Time.Clock
     addUTCTime,
     secondsToNominalDiffTime,
   )
-import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
+import Data.Time.Clock.POSIX
+  ( getPOSIXTime,
+    posixSecondsToUTCTime,
+  )
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
 import Debug.Trace (traceShowId)
