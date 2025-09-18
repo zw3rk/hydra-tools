@@ -1,8 +1,7 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 
-import           Hedgehog.Main (defaultMain)
-
-import qualified Test.DsQueue
+import Hedgehog.Main (defaultMain)
+import Test.DsQueue qualified
 
 main :: IO ()
 main =

@@ -1,25 +1,28 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators     #-}
+{-# LANGUAGE TypeOperators #-}
 
-import           Control.Concurrent       (forkIO)
-import           Control.Monad            (void)
-import qualified Data.ByteString.Char8    as C8
-import qualified Data.Text                as Text
-import           DiskStore                (DiskStoreConfig (..))
+import Control.Concurrent (forkIO)
+import Control.Monad (void)
+import qualified Data.ByteString.Char8 as C8
+import qualified Data.Text as Text
+import DiskStore (DiskStoreConfig (..))
 import qualified DsQueue
-import           Lib
-import           Network.Wai.Handler.Warp (run)
-import           System.Environment       (lookupEnv)
-
-import           System.IO                (BufferMode (LineBuffering),
-                                           hSetBuffering, stderr, stdin, stdout)
+import Lib
+import Network.Wai.Handler.Warp (run)
+import System.Environment (lookupEnv)
+import System.IO
+  ( BufferMode (LineBuffering),
+    hSetBuffering,
+    stderr,
+    stdin,
+    stdout,
+  )
 
 main :: IO ()
 main = do
-
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering

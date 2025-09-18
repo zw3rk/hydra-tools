@@ -1,33 +1,36 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell     #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.DsQueue
-  ( tests
-  , manualTest
-  ) where
+  ( tests,
+    manualTest,
+  )
+where
 
-import           Control.Concurrent       (threadDelay)
-import           Control.Concurrent.Async (race)
-import           Control.Exception.Lifted (bracket)
-import           Control.Monad            (void)
-import           Control.Monad.Catch      (MonadCatch, catch)
-
-import           DiskStore                (DiskStoreConfig (..))
-import qualified DsQueue
-
-import           Hedgehog                 (Gen, Property, PropertyT, discover,
-                                           (===))
-import qualified Hedgehog
-import qualified Hedgehog.Gen             as Gen
-import qualified Hedgehog.Range           as Range
-
-import           System.Directory         (removeDirectoryRecursive)
-import           System.IO.Temp           (createTempDirectory)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (race)
+import Control.Exception.Lifted (bracket)
+import Control.Monad (void)
+import Control.Monad.Catch (MonadCatch, catch)
+import DiskStore (DiskStoreConfig (..))
+import DsQueue qualified
+import Hedgehog
+  ( Gen,
+    Property,
+    PropertyT,
+    discover,
+    (===),
+  )
+import Hedgehog qualified
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
+import System.Directory (removeDirectoryRecursive)
+import System.IO.Temp (createTempDirectory)
 
 prop_length_correct :: Property
 prop_length_correct =
@@ -46,8 +49,8 @@ prop_maintains_order =
     dsq <- Hedgehog.evalIO $ DsQueue.new Nothing
     original <- Hedgehog.forAll genOrderedIntList
     output <- Hedgehog.evalIO $ do
-                DsQueue.writeMany dsq original
-                DsQueue.readCount dsq $ length original
+      DsQueue.writeMany dsq original
+      DsQueue.readCount dsq $ length original
     original === output
 
 -- This test does real disk IO so only run 10 tests.
@@ -55,8 +58,8 @@ prop_maintains_order =
 prop_stored_state_ok :: Property
 prop_stored_state_ok =
   Hedgehog.withTests 10 . Hedgehog.property $
-    propertyTWithTempDirectory "/tmp" "dsq-test-1" $ \ dir -> do
-      let storeConfig = DiskStoreConfig { scDirectory = dir, scName = "blah", scKeepCount = 5  }
+    propertyTWithTempDirectory "/tmp" "dsq-test-1" $ \dir -> do
+      let storeConfig = DiskStoreConfig {scDirectory = dir, scName = "blah", scKeepCount = 5}
       dsq <- Hedgehog.evalIO $ DsQueue.new (Just storeConfig)
       len0 <- Hedgehog.evalIO $ DsQueue.length dsq
       len0 === 0
@@ -90,9 +93,11 @@ prop_read_blocks_ok =
     -- `race` will return the first result which should be a `Right` containing the value
     -- returned by `DsQueue.read`. If the read returns before the write has been done, the value
     -- is very unlikely to match. If result is `Left ()` then something is very wrong.
-    result <- Hedgehog.evalIO $ race
-                (threadDelay 1000 >> DsQueue.write dsq val >> threadDelay 1000)
-                (DsQueue.read dsq)
+    result <-
+      Hedgehog.evalIO $
+        race
+          (threadDelay 1000 >> DsQueue.write dsq val >> threadDelay 1000)
+          (DsQueue.read dsq)
     result === Right val
 
 -- This test does real disk IO so only run 10 tests.
@@ -100,8 +105,8 @@ prop_read_blocks_ok =
 prop_state_reload_ok :: Property
 prop_state_reload_ok =
   Hedgehog.withShrinks 0 . Hedgehog.withTests 10 . Hedgehog.property $
-    propertyTWithTempDirectory "/tmp" "dsq-test-2" $ \ dir -> do
-      let storeConfig = DiskStoreConfig { scDirectory = dir, scName = "blah", scKeepCount = 5 }
+    propertyTWithTempDirectory "/tmp" "dsq-test-2" $ \dir -> do
+      let storeConfig = DiskStoreConfig {scDirectory = dir, scName = "blah", scKeepCount = 5}
       dsq1 <- Hedgehog.evalIO $ DsQueue.new (Just storeConfig)
       xs1 <- Hedgehog.forAll $ Gen.list (Range.linear 5 20) (Gen.int $ Range.linear 0 100)
       Hedgehog.evalIO $ DsQueue.writeMany dsq1 xs1
@@ -119,15 +124,15 @@ genOrderedIntList :: Gen [Int]
 genOrderedIntList = do
   start <- Gen.int (Range.linear 0 1000)
   count <- Gen.int (Range.linear 2 100)
-  pure [ start .. start + count ]
+  pure [start .. start + count]
 
 -- Slightly modified version of `withTempDirectory` from the `temporary` package.
-propertyTWithTempDirectory
-    :: FilePath -> String -> (FilePath -> PropertyT IO a) -> PropertyT IO a
+propertyTWithTempDirectory ::
+  FilePath -> String -> (FilePath -> PropertyT IO a) -> PropertyT IO a
 propertyTWithTempDirectory targetDir template =
-    bracket
-      (Hedgehog.evalIO slowCreateTempDirectory)
-      (Hedgehog.evalIO . ignoringIOErrors . removeDirectoryRecursive)
+  bracket
+    (Hedgehog.evalIO slowCreateTempDirectory)
+    (Hedgehog.evalIO . ignoringIOErrors . removeDirectoryRecursive)
   where
     ignoringIOErrors :: MonadCatch m => m () -> m ()
     ignoringIOErrors ioe = ioe `catch` (\(_ :: IOError) -> pure ())
@@ -146,8 +151,8 @@ propertyTWithTempDirectory targetDir template =
 -- A manual test.
 manualTest :: IO ()
 manualTest = do
-  let storeConfig = DiskStoreConfig { scDirectory = "/tmp/xxxx", scName = "blah", scKeepCount = 5  }
-      xs = [ 1, 35, 23, 12 :: Int ]
+  let storeConfig = DiskStoreConfig {scDirectory = "/tmp/xxxx", scName = "blah", scKeepCount = 5}
+      xs = [1, 35, 23, 12 :: Int]
   dsq1 <- DsQueue.new (Just storeConfig)
   DsQueue.writeMany dsq1 xs
 
