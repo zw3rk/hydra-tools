@@ -30,7 +30,6 @@ import Data.Aeson hiding (Error, Success)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSLw
-import Data.ByteString.Lazy.Char8 qualified as BSL
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -63,7 +62,6 @@ import GitHub.REST
     GitHubSettings (..),
     KeyValue ((:=)),
     StdMethod (POST),
-    Token (..),
     queryGitHub,
     runGitHubT,
   )
