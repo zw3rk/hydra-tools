@@ -35,15 +35,16 @@
         };
 
         hydraPassFile = mkOption {
-          type = types.path;
-          default = "";
+          type = types.nullOr types.path;
+          default = null;
           description = ''
             A file containing the password to authenticate with against hydra.
           '';
         };
 
         ghSecretFile = mkOption {
-          type = types.path;
+          type = types.nullOr types.path;
+          default = null;
           description = ''
             The agreed upon secret with GitHub for the Webhook payloads.
           '';
@@ -90,18 +91,18 @@
 
               StateDirectory = "hydra";
             }
-            // lib.optionalAttrs (cfg.hydraPassFile != "" || cfg.ghSecretFile != "")
+            // lib.optionalAttrs (cfg.hydraPassFile != "" || cfg.ghSecretFile != null)
             {
               LoadCredential =
-                lib.optional (cfg.hydraPassFile != "") "hydra-pass:${cfg.hydraPassFile}"
-                ++ lib.optional (cfg.ghSecretFile != "") "github-secret:${cfg.ghSecretFile}";
+                lib.optional (cfg.hydraPassFile != null) "hydra-pass:${cfg.hydraPassFile}"
+                ++ lib.optional (cfg.ghSecretFile != null) "github-secret:${cfg.ghSecretFile}";
             }
             // lib.optionalAttrs (cfg.environmentFile != null)
             {EnvironmentFile = builtins.toPath cfg.environmentFile;};
 
           script = ''
-            ${lib.optionalString (cfg.hydraPassFile != "") ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
-            ${lib.optionalString (cfg.ghSecretFile != "") ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
+            ${lib.optionalString (cfg.hydraPassFile != null) ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
+            ${lib.optionalString (cfg.ghSecretFile != null) ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
 
             export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
