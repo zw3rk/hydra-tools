@@ -476,13 +476,34 @@ hydraClientEnv host user pass = do
 
   return env
 
-hydraClient :: Text -> ClientEnv -> Connection -> IO ()
-hydraClient host env conn =
+-- Re-authenticate with Hydra when session expires
+reAuthenticate :: Text -> Text -> Text -> ClientEnv -> IO ()
+reAuthenticate host user pass env = do
+  flip runClientM env (login (Just $ Text.append "https://" host) (HydraLogin user pass)) >>= \case
+    Left e -> die ("Re-authentication failed: " ++ show e)
+    Right _ -> pure ()
+
+-- Check if error is due to authentication failure (403 Forbidden)
+isAuthError :: ClientError -> Bool
+isAuthError (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 403}})) = True
+isAuthError _ = False
+
+hydraClient :: Text -> Text -> Text -> ClientEnv -> Connection -> IO ()
+hydraClient host user pass env conn =
   -- loop forever, working down the hydra commands
   forever $
-    readCommand conn >>= flip runClientM env . handleCmd (Text.append "https://" host) >>= \case
-      Left e -> print e
-      Right _ -> pure ()
+    readCommand conn >>= \cmd -> do
+      result <- runClientM (handleCmd (Text.append "https://" host) cmd) env
+      case result of
+        Left e | isAuthError e -> do
+          putStrLn "Authentication error detected, re-authenticating..."
+          reAuthenticate host user pass env
+          -- Retry the command after re-authentication
+          runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
+            Left e' -> print e'
+            Right _ -> pure ()
+        Left e -> print e
+        Right _ -> pure ()
 
 app :: ClientEnv -> Connection -> GitHubKey -> Application
 app env conn key =

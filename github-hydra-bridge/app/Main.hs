@@ -39,7 +39,7 @@ main = do
   eres <-
     Async.race
       ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          hydraClient host env conn
+          hydraClient host user pass env conn
       )
       ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
           run port (app env conn (gitHubKey key))
