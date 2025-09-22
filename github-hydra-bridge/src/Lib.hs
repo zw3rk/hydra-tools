@@ -460,7 +460,15 @@ handleCmd _ (RestartBuild bid) = do
   void $ restartBuild $ bid
   return ()
 
-hydraClientEnv :: Text -> Text -> Text -> IO ClientEnv
+-- Hydra client environment that includes credentials for re-authentication
+data HydraClientEnv = HydraClientEnv
+  { hceHost :: Text,
+    hceUser :: Text,
+    hcePass :: Text,
+    hceClientEnv :: ClientEnv
+  }
+
+hydraClientEnv :: Text -> Text -> Text -> IO HydraClientEnv
 hydraClientEnv host user pass = do
   mgr <- newManager tlsManagerSettings
   jar <- newTVarIO mempty
@@ -474,15 +482,39 @@ hydraClientEnv host user pass = do
     Left e -> die (show e)
     Right _ -> pure ()
 
-  return env
+  return $ HydraClientEnv host user pass env
 
-hydraClient :: Text -> ClientEnv -> Connection -> IO ()
-hydraClient host env conn =
+-- Re-authenticate with Hydra when session expires
+reAuthenticate :: HydraClientEnv -> IO (Either String ())
+reAuthenticate (HydraClientEnv host user pass env) = do
+  result <- runClientM (login (Just $ Text.append "https://" host) (HydraLogin user pass)) env
+  case result of
+    Left e -> return $ Left ("Re-authentication failed: " ++ show e)
+    Right _ -> return $ Right ()
+
+-- Check if error is due to authentication failure (403 Forbidden)
+isAuthError :: ClientError -> Bool
+isAuthError (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 403}})) = True
+isAuthError _ = False
+
+hydraClient :: HydraClientEnv -> Connection -> IO ()
+hydraClient henv@(HydraClientEnv host _ _ env) conn =
   -- loop forever, working down the hydra commands
   forever $
-    readCommand conn >>= flip runClientM env . handleCmd (Text.append "https://" host) >>= \case
-      Left e -> print e
-      Right _ -> pure ()
+    readCommand conn >>= \cmd -> do
+      result <- runClientM (handleCmd (Text.append "https://" host) cmd) env
+      case result of
+        Left e | isAuthError e -> do
+          putStrLn "Authentication error detected, re-authenticating..."
+          reAuthenticate henv >>= \case
+            Left authErr -> putStrLn authErr
+            Right () -> do
+              -- Retry the command after successful re-authentication
+              runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
+                Left e' -> print e'
+                Right _ -> pure ()
+        Left e -> print e
+        Right _ -> pure ()
 
 app :: ClientEnv -> Connection -> GitHubKey -> Application
 app env conn key =
