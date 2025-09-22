@@ -329,8 +329,8 @@ type CheckSuiteHookAPI =
     :> GitHubSignedReqBody '[JSON] CheckSuiteEvent
     :> Post '[JSON] ()
 
-checkSuiteHook :: ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
+checkSuiteHook :: HydraClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook henv conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
   let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
       repoName = whRepoFullName $ evCheckSuiteRepository ev
       projName = escapeHydraName repoName
@@ -338,19 +338,18 @@ checkSuiteHook env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuit
   forM_ prs $ \pr -> do
     let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-    jobset <-
-      (flip runClientM env $ getJobset projName jobsetName)
-        >>= either (die . show) return
-        >>= \response -> case fromJSON response of
-          Aeson.Error e -> die $ show e
-          Aeson.Success v -> return v
-
-    putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-    writeCommand conn $
-      UpdateJobset repoName projName jobsetName $
-        jobset
-          { hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
-          }
+    jobsetResult <- runHydraClientM henv $ getJobset projName jobsetName
+    case jobsetResult of
+      Left e -> die (show e)
+      Right response -> case fromJSON response of
+        Aeson.Error e -> die $ show e
+        Aeson.Success jobset -> do
+          putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+          writeCommand conn $
+            UpdateJobset repoName projName jobsetName $
+              jobset
+                { hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
+                }
 checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
 -- Check Run Hook
@@ -390,12 +389,12 @@ checkRunHook _ _ (_, ev) =
 
 type SingleHookEndpointAPI = "hook" :> (PushHookAPI :<|> IssueCommentHookAPI :<|> PullRequestHookAPI :<|> CheckSuiteHookAPI :<|> CheckRunHookAPI)
 
-singleEndpoint :: ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint env conn =
+singleEndpoint :: HydraClientEnv -> Connection -> Server SingleHookEndpointAPI
+singleEndpoint henv conn =
   (pushHook conn)
     :<|> issueCommentHook
     :<|> (pullRequestHook conn)
-    :<|> (checkSuiteHook env conn)
+    :<|> (checkSuiteHook henv conn)
     :<|> (checkRunHook conn)
 
 -- combinator for handing 404 (not found)
@@ -405,10 +404,11 @@ on404 a b = a `catchError` handle
     handle (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 404}})) = b
     handle e = throwError e
 
-handleCmd :: Text -> Command -> ClientM ()
-handleCmd host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
-  liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
-  void $
+handleCmd :: HydraClientEnv -> Text -> Command -> IO ()
+handleCmd henv host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
+  putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue."
+  
+  result <- runHydraClientM henv $
     mkJobset projName jobsetName jobset `on404` do
       let proj = snd $ splitRepo repoName
       void $
@@ -422,43 +422,67 @@ handleCmd host (CreateOrUpdateJobset repoName projName jobsetName jobset) = do
           )
       mkJobset projName jobsetName jobset
 
-  liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-  void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
-  return ()
-handleCmd host (UpdateJobset repoName projName jobsetName jobset) = do
-  liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
+  case result of
+    Left e -> print e
+    Right _ -> do
+      putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push..."
+      pushResult <- runHydraClientM henv $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
+      case pushResult of
+        Left e -> print e
+        Right _ -> pure ()
+
+handleCmd henv host (UpdateJobset repoName projName jobsetName jobset) = do
+  putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue."
+  
   -- ensure we try to get this first, ...
-  void $ getJobset projName jobsetName
-  -- if get fails, no point in making one.
-  void $
-    mkJobset projName jobsetName jobset `on404` do
-      let proj = snd $ splitRepo repoName
-      void $
-        mkProject
-          projName
-          ( defHydraProject
-              { hpName = projName,
-                hpDisplayname = proj,
-                hpHomepage = "https://github.com/" <> repoName
-              }
-          )
-      mkJobset projName jobsetName jobset
+  getResult <- runHydraClientM henv $ getJobset projName jobsetName
+  case getResult of
+    Left e -> print e
+    Right _ -> do
+      -- if get succeeds, update the jobset
+      result <- runHydraClientM henv $
+        mkJobset projName jobsetName jobset `on404` do
+          let proj = snd $ splitRepo repoName
+          void $
+            mkProject
+              projName
+              ( defHydraProject
+                  { hpName = projName,
+                    hpDisplayname = proj,
+                    hpHomepage = "https://github.com/" <> repoName
+                  }
+              )
+          mkJobset projName jobsetName jobset
 
-  -- or triggering an eval
-  liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-  void $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
-  return ()
-handleCmd _ (DeleteJobset projName jobsetName) = do
-  void $ rmJobset projName jobsetName
-  return ()
-handleCmd host (EvaluateJobset projName jobsetName force) = do
-  liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
-  void $ push (Just host) (Just (projName <> ":" <> jobsetName)) (Just force)
-  return ()
-handleCmd _ (RestartBuild bid) = do
-  liftIO (putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart...")
-  void $ restartBuild $ bid
-  return ()
+      case result of
+        Left e -> print e
+        Right _ -> do
+          -- trigger push
+          putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push..."
+          pushResult <- runHydraClientM henv $ push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
+          case pushResult of
+            Left e -> print e
+            Right _ -> pure ()
+
+handleCmd henv _ (DeleteJobset projName jobsetName) = do
+  result <- runHydraClientM henv $ rmJobset projName jobsetName
+  case result of
+    Left e -> print e
+    Right _ -> pure ()
+
+handleCmd henv host (EvaluateJobset projName jobsetName force) = do
+  putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push..."
+  result <- runHydraClientM henv $ push (Just host) (Just (projName <> ":" <> jobsetName)) (Just force)
+  case result of
+    Left e -> print e
+    Right _ -> pure ()
+
+handleCmd henv _ (RestartBuild bid) = do
+  putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart..."
+  result <- runHydraClientM henv $ restartBuild bid
+  case result of
+    Left e -> print e
+    Right _ -> pure ()
 
 -- Hydra client environment that includes credentials for re-authentication
 data HydraClientEnv = HydraClientEnv
@@ -497,28 +521,33 @@ isAuthError :: ClientError -> Bool
 isAuthError (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 403}})) = True
 isAuthError _ = False
 
+-- Abstracted hydra client that automatically handles authentication
+runHydraClientM :: HydraClientEnv -> ClientM a -> IO (Either ClientError a)
+runHydraClientM henv@(HydraClientEnv _ _ _ env) action = do
+  result <- runClientM action env
+  case result of
+    Left e | isAuthError e -> do
+      putStrLn "Authentication error detected in API call, re-authenticating..."
+      reAuthenticate henv >>= \case
+        Left authErr -> do
+          putStrLn authErr
+          return $ Left e  -- Return the original auth error
+        Right () -> do
+          -- Retry the action after successful re-authentication
+          putStrLn "Retrying API call after re-authentication..."
+          runClientM action env
+    _ -> return result
+
 hydraClient :: HydraClientEnv -> Connection -> IO ()
-hydraClient henv@(HydraClientEnv host _ _ env) conn =
+hydraClient henv@(HydraClientEnv host _ _ _) conn =
   -- loop forever, working down the hydra commands
   forever $
     readCommand conn >>= \cmd -> do
-      result <- runClientM (handleCmd (Text.append "https://" host) cmd) env
-      case result of
-        Left e | isAuthError e -> do
-          putStrLn "Authentication error detected, re-authenticating..."
-          reAuthenticate henv >>= \case
-            Left authErr -> putStrLn authErr
-            Right () -> do
-              -- Retry the command after successful re-authentication
-              runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
-                Left e' -> print e'
-                Right _ -> pure ()
-        Left e -> print e
-        Right _ -> pure ()
+      handleCmd henv (Text.append "https://" host) cmd
 
-app :: ClientEnv -> Connection -> GitHubKey -> Application
-app env conn key =
+app :: HydraClientEnv -> Connection -> GitHubKey -> Application
+app henv conn key =
   serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint env conn)
+    (singleEndpoint henv conn)
