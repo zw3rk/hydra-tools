@@ -2,3 +2,4 @@
 .vscode
 dist-newstyle
 hydra-crystal-notify/lib/
+cabal.project.local
