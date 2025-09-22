@@ -262,9 +262,6 @@
                   ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
                   export HYDRA_STATE_DIR="$STATE_DIRECTORY"
-                  export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
-
-                  mkdir -p "$QUEUE_DIR"
 
                   exec ${lib.getExe iCfg.package}
                 '';
