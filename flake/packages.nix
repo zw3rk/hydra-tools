@@ -44,15 +44,18 @@ in {
     {
       system,
       pkgs,
+      config,
       ...
     }: let
       jobs = (haskellPkgSet system).flake'.hydraJobs;
+      packages = config.packages;
     in
       jobs
+      // packages
       // {
         required = pkgs.releaseTools.aggregate {
           name = "required";
-          constituents = lib.collect lib.isDerivation jobs;
+          constituents = lib.collect lib.isDerivation (jobs // packages);
         };
       }
   ));
