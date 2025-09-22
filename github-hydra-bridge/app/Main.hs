@@ -8,8 +8,6 @@ import Control.Concurrent.Async as Async
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple
-import Control.Concurrent (forkIO)
-import Control.Monad (void)
 import Lib
 import Network.Wai.Handler.Warp (run)
 import System.Environment (lookupEnv)
