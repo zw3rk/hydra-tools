@@ -477,11 +477,12 @@ hydraClientEnv host user pass = do
   return env
 
 -- Re-authenticate with Hydra when session expires
-reAuthenticate :: Text -> Text -> Text -> ClientEnv -> IO ()
+reAuthenticate :: Text -> Text -> Text -> ClientEnv -> IO (Either String ())
 reAuthenticate host user pass env = do
-  flip runClientM env (login (Just $ Text.append "https://" host) (HydraLogin user pass)) >>= \case
-    Left e -> die ("Re-authentication failed: " ++ show e)
-    Right _ -> pure ()
+  result <- runClientM (login (Just $ Text.append "https://" host) (HydraLogin user pass)) env
+  case result of
+    Left e -> return $ Left ("Re-authentication failed: " ++ show e)
+    Right _ -> return $ Right ()
 
 -- Check if error is due to authentication failure (403 Forbidden)
 isAuthError :: ClientError -> Bool
@@ -497,11 +498,13 @@ hydraClient host user pass env conn =
       case result of
         Left e | isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
-          reAuthenticate host user pass env
-          -- Retry the command after re-authentication
-          runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
-            Left e' -> print e'
-            Right _ -> pure ()
+          reAuthenticate host user pass env >>= \case
+            Left authErr -> putStrLn authErr
+            Right () -> do
+              -- Retry the command after successful re-authentication
+              runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
+                Left e' -> print e'
+                Right _ -> pure ()
         Left e -> print e
         Right _ -> pure ()
 
