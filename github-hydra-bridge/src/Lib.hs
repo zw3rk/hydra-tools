@@ -372,7 +372,7 @@ checkRunHook conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventAction
       let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
       putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-      writeCommand conn $ EvaluateJobset projName jobsetName
+      writeCommand conn $ EvaluateJobset projName jobsetName True
     else do
       let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
       putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
