@@ -34,14 +34,14 @@ main = do
   pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
   host <- maybe mempty Text.pack <$> lookupEnv "HYDRA_HOST"
   putStrLn $ "Server is starting on port " ++ show port
-  henv <- hydraClientEnv host user pass
+  env <- hydraClientEnv host user pass
 
   eres <-
     Async.race
       ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          hydraClient henv conn
+          hydraClient env conn
       )
       ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          run port (app (hceClientEnv henv) conn (gitHubKey key))
+          run port (app (hceClientEnv env) conn (gitHubKey key))
       )
   either (const . putStrLn $ "hydraClient exited") (const . putStrLn $ "app exited") eres
