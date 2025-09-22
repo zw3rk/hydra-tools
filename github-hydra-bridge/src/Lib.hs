@@ -460,7 +460,15 @@ handleCmd _ (RestartBuild bid) = do
   void $ restartBuild $ bid
   return ()
 
-hydraClientEnv :: Text -> Text -> Text -> IO ClientEnv
+-- Hydra client environment that includes credentials for re-authentication
+data HydraClientEnv = HydraClientEnv
+  { hceHost :: Text,
+    hceUser :: Text,
+    hcePass :: Text,
+    hceClientEnv :: ClientEnv
+  }
+
+hydraClientEnv :: Text -> Text -> Text -> IO HydraClientEnv
 hydraClientEnv host user pass = do
   mgr <- newManager tlsManagerSettings
   jar <- newTVarIO mempty
@@ -474,11 +482,11 @@ hydraClientEnv host user pass = do
     Left e -> die (show e)
     Right _ -> pure ()
 
-  return env
+  return $ HydraClientEnv host user pass env
 
 -- Re-authenticate with Hydra when session expires
-reAuthenticate :: Text -> Text -> Text -> ClientEnv -> IO (Either String ())
-reAuthenticate host user pass env = do
+reAuthenticate :: HydraClientEnv -> IO (Either String ())
+reAuthenticate (HydraClientEnv host user pass env) = do
   result <- runClientM (login (Just $ Text.append "https://" host) (HydraLogin user pass)) env
   case result of
     Left e -> return $ Left ("Re-authentication failed: " ++ show e)
@@ -489,8 +497,8 @@ isAuthError :: ClientError -> Bool
 isAuthError (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 403}})) = True
 isAuthError _ = False
 
-hydraClient :: Text -> Text -> Text -> ClientEnv -> Connection -> IO ()
-hydraClient host user pass env conn =
+hydraClient :: HydraClientEnv -> Connection -> IO ()
+hydraClient henv@(HydraClientEnv host _ _ env) conn =
   -- loop forever, working down the hydra commands
   forever $
     readCommand conn >>= \cmd -> do
@@ -498,7 +506,7 @@ hydraClient host user pass env conn =
       case result of
         Left e | isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
-          reAuthenticate host user pass env >>= \case
+          reAuthenticate henv >>= \case
             Left authErr -> putStrLn authErr
             Right () -> do
               -- Retry the command after successful re-authentication
