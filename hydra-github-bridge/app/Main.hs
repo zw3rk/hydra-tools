@@ -681,7 +681,7 @@ main = do
                                 "  SELECT s.id, s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
-                                "  WHERE p.sent IS NULL",
+                                "  WHERE p.sent IS NULL AND p.tries < 5",
                                 "  ORDER BY",
                                 "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
                                 "    p.created ASC",
