@@ -736,7 +736,7 @@ main = do
                                 return ()
                           Left e -> do
                             Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status) <> ": " <> Text.pack (show e)
-                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
+                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE status_id = ?" (Only id' :: Only Int)
                             return ()
                           Right _res -> do
                             Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status)
