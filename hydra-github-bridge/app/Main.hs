@@ -681,7 +681,7 @@ main = do
                                 "  SELECT s.id, MAX(p.id) AS mostRecentPaylodID, s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
-                                "  GROUP BY s.is, s.owner, s.repo, s.headSha, s.name",
+                                "  GROUP BY s.id, s.owner, s.repo, s.headSha, s.name",
                                 ")",
                                 "SELECT p.id, g.owner, g.repo, p.payload",
                                 "FROM AllStatus g",
