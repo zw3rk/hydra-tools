@@ -677,21 +677,20 @@ main = do
                         conn
                         ( fromString $
                             unwords
-                              [ "WITH OldestStatus AS (",
-                                "  SELECT s.id, s.owner, s.repo, s.headSha, s.name",
+                              [ "WITH AllStatus AS (",
+                                "  SELECT s.id, mostRecentPaylodID = MAX(p.id), s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
-                                "  WHERE p.sent IS NULL AND p.tries < 5",
-                                "  ORDER BY",
-                                "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
-                                "    p.created ASC",
-                                "  LIMIT 1",
-                                "  FOR UPDATE SKIP LOCKED",
+                                "  GROUP BY s.is, s.owner, s.repo, s.headSha, s.name
                                 ")",
                                 "SELECT p.id, g.owner, g.repo, p.payload",
-                                "FROM OldestStatus g",
+                                "FROM AllStatus g",
                                 "JOIN github_status_payload p ON g.id = p.status_id",
-                                "ORDER BY p.created",
+                                "WHERE p.id = g.mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
+                                "ORDER BY",
+                                "  CASE WHEN g.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
+                                "  MAX(g.mostRecentPaylodID) ASC",
+                                "LIMIT 1",
                                 "FOR UPDATE SKIP LOCKED"
                                 -- "SELECT p.id, g.owner, g.repo, p.payload"
                                 --                              , "FROM github_status_payload p"
@@ -736,7 +735,7 @@ main = do
                                 return ()
                           Left e -> do
                             Text.putStrLn $ "FAIL [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status) <> ": " <> Text.pack (show e)
-                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE status_id = ?" (Only id' :: Only Int)
+                            _ <- execute conn "UPDATE github_status_payload SET tries = tries + 1 WHERE id = ?" (Only id' :: Only Int)
                             return ()
                           Right _res -> do
                             Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status)
