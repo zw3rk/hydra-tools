@@ -677,19 +677,19 @@ main = do
                         conn
                         ( fromString $
                             unwords
-                              [ "WITH OldestStatus AS (",
+                              [ "WITH AllStatus AS (",
                                 "  SELECT s.id, mostRecentPaylodID = MAX(p.id), s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
                                 "  GROUP BY s.is, s.owner, s.repo, s.headSha, s.name
-                                "  ORDER BY",
-                                "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
-                                "    MAX(p.id) ASC",
                                 ")",
                                 "SELECT p.id, g.owner, g.repo, p.payload",
-                                "FROM OldestStatus g",
+                                "FROM AllStatus g",
                                 "JOIN github_status_payload p ON g.id = p.status_id",
-                                "WHERE p.id = mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
+                                "WHERE p.id = g.mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
+                                "ORDER BY",
+                                "  CASE WHEN g.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
+                                "  MAX(g.mostRecentPaylodID) ASC",
                                 "LIMIT 1",
                                 "FOR UPDATE SKIP LOCKED"
                                 -- "SELECT p.id, g.owner, g.repo, p.payload"
