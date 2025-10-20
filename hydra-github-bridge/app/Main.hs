@@ -678,7 +678,7 @@ main = do
                         ( fromString $
                             unwords
                               [ "WITH AllStatus AS (",
-                                "  SELECT s.id, mostRecentPaylodID = MAX(p.id), s.owner, s.repo, s.headSha, s.name",
+                                "  SELECT s.id, MAX(p.id) AS mostRecentPaylodID, s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
                                 "  GROUP BY s.is, s.owner, s.repo, s.headSha, s.name",
