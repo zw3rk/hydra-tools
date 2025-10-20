@@ -678,10 +678,10 @@ main = do
                         ( fromString $
                             unwords
                               [ "WITH AllStatus AS (",
-                                "  SELECT s.id, mostRecentPaylodID = MAX(p.id), s.owner, s.repo, s.headSha, s.name",
+                                "  SELECT s.id, MAX(p.id) AS mostRecentPaylodID, s.owner, s.repo, s.headSha, s.name",
                                 "  FROM github_status s",
                                 "  JOIN github_status_payload p ON s.id = p.status_id",
-                                "  GROUP BY s.is, s.owner, s.repo, s.headSha, s.name
+                                "  GROUP BY s.id, s.owner, s.repo, s.headSha, s.name",
                                 ")",
                                 "SELECT p.id, g.owner, g.repo, p.payload",
                                 "FROM AllStatus g",
@@ -689,7 +689,7 @@ main = do
                                 "WHERE p.id = g.mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
                                 "ORDER BY",
                                 "  CASE WHEN g.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
-                                "  MAX(g.mostRecentPaylodID) ASC",
+                                "  p.id ASC",
                                 "LIMIT 1",
                                 "FOR UPDATE SKIP LOCKED"
                                 -- "SELECT p.id, g.owner, g.repo, p.payload"
