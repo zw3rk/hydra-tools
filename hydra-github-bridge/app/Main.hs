@@ -685,13 +685,12 @@ main = do
                                 "  ORDER BY",
                                 "    CASE WHEN s.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
                                 "    MAX(p.id) ASC",
-                                "  LIMIT 1",
-                                "  FOR UPDATE SKIP LOCKED",
                                 ")",
                                 "SELECT p.id, g.owner, g.repo, p.payload",
                                 "FROM OldestStatus g",
                                 "JOIN github_status_payload p ON g.id = p.status_id",
                                 "WHERE p.id = mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
+                                "LIMIT 1",
                                 "FOR UPDATE SKIP LOCKED"
                                 -- "SELECT p.id, g.owner, g.repo, p.payload"
                                 --                              , "FROM github_status_payload p"
