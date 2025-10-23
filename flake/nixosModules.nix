@@ -226,21 +226,22 @@
 
               startLimitIntervalSec = 0;
 
-              serviceConfig = {
-                User = config.users.users.hydra.name;
-                Group = config.users.groups.hydra.name;
+              serviceConfig =
+                {
+                  User = config.users.users.hydra.name;
+                  Group = config.users.groups.hydra.name;
 
-                Restart = "always";
-                RestartSec = "10s";
+                  Restart = "always";
+                  RestartSec = "10s";
 
-                LoadCredential =
-                  lib.optional (iCfg.ghTokenFile != null) "github-token:${iCfg.ghTokenFile}"
-                  ++ lib.optional (iCfg.ghAppKeyFile != "") "github-app-key-file:${iCfg.ghAppKeyFile}";
+                  LoadCredential =
+                    lib.optional (iCfg.ghTokenFile != null) "github-token:${iCfg.ghTokenFile}"
+                    ++ lib.optional (iCfg.ghAppKeyFile != "") "github-app-key-file:${iCfg.ghAppKeyFile}";
 
-                StateDirectory = "hydra";
-              }
-              // lib.optionalAttrs (iCfg.environmentFile != null)
-              {EnvironmentFile = builtins.toPath iCfg.environmentFile;};
+                  StateDirectory = "hydra";
+                }
+                // lib.optionalAttrs (iCfg.environmentFile != null)
+                {EnvironmentFile = builtins.toPath iCfg.environmentFile;};
 
               environment =
                 {
@@ -257,17 +258,17 @@
                   GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
                 };
 
-                script = ''
-                  ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
-                  ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
+              script = ''
+                ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+                ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
-                  export HYDRA_STATE_DIR="$STATE_DIRECTORY"
-                  export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
+                export HYDRA_STATE_DIR="$STATE_DIRECTORY"
+                export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
 
-                  mkdir -p "$QUEUE_DIR"
+                mkdir -p "$QUEUE_DIR"
 
-                  exec ${lib.getExe iCfg.package}
-                '';
+                exec ${lib.getExe iCfg.package}
+              '';
             }
         );
 
@@ -311,6 +312,13 @@
             The attic cache name.
           '';
         };
+        workers = mkOption {
+          type = types.int;
+          default = 1;
+          description = ''
+            Number of concurrent worker threads handling attic uploads.
+          '';
+        };
         environmentFile = mkOption {
           type = types.nullOr types.path;
           default = null;
@@ -343,6 +351,7 @@
             ATTIC_HOST = cfg.attic;
             ATTIC_CACHE = cfg.cache;
             HYDRA_HOST = cfg.host;
+            ATTIC_WORKERS = toString cfg.workers;
           };
         };
       };
