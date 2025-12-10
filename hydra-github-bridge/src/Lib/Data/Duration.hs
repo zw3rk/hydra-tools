@@ -1,19 +1,19 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE NoFieldSelectors      #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Lib.Data.Duration where
 
-import           Data.Duration           as Duration
-import           Data.String.Conversions (cs)
-import           Data.Text               (Text)
-import qualified Data.Text               as Text
+import Data.Duration as Duration
+import Data.String.Conversions (cs)
+import Data.Text (Text)
+import qualified Data.Text as Text
 
 humanReadableDuration :: Duration.Seconds -> Text
 humanReadableDuration 0 = "0s"
