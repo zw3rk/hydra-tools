@@ -15,7 +15,7 @@
         (final: prev: {
           hydra-tools = final.haskell-nix.project' {
             src = ../.;
-            compiler-nix-name = "ghc92";
+            compiler-nix-name = "ghc910";
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
               "https://github.com/cuedo/github-webhooks" = inputs.github-webhooks;
