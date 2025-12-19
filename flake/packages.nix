@@ -5,7 +5,7 @@
   withSystem,
   ...
 }: let
-  haskellPkgSet = system:
+  haskellPkgSet = { system, config, ...}:
     (import inputs.nixpkgs {
       inherit system;
       inherit (inputs.haskellNix) config;
@@ -20,20 +20,29 @@
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
               "https://github.com/cuedo/github-webhooks" = inputs.github-webhooks;
             };
+
+            shell = {
+              tools = {
+                cabal = "latest";
+                haskell-language-server = "2.12.0.0";
+                hlint = "3.10";
+                weeder = "2.10.0";
+              };
+
+              inputsFrom = [config.treefmt.build.devShell];
+            };
           };
         })
       ];
     })
     .hydra-tools;
 in {
-  perSystem = {
-    system,
-    pkgs,
-    ...
-  }: {
-    packages = let
-      haskellPkgSet' = haskellPkgSet system;
-    in {
+  perSystem = ctx: let
+    haskellPkgSet' = haskellPkgSet ctx;
+  in {
+    inherit (haskellPkgSet'.flake') devShells;
+
+    packages = {
       github-hydra-bridge = haskellPkgSet'.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
       hydra-attic-bridge = haskellPkgSet'.getComponent "hydra-attic-bridge:exe:hydra-attic-bridge";
@@ -42,11 +51,10 @@ in {
 
   flake.hydraJobs = lib.genAttrs config.systems (lib.flip withSystem (
     {
-      system,
       pkgs,
       ...
-    }: let
-      jobs = (haskellPkgSet system).flake'.hydraJobs;
+    }@ctx: let
+      jobs = (haskellPkgSet ctx).flake'.hydraJobs;
     in
       jobs
       // {

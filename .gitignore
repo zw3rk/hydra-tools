@@ -2,3 +2,6 @@
 .vscode
 dist-newstyle
 hydra-crystal-notify/lib/
+
+# Nix
+.direnv
