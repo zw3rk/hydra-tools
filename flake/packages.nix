@@ -5,7 +5,11 @@
   withSystem,
   ...
 }: let
-  haskellPkgSet = { system, config, ...}:
+  haskellPkgSet = {
+    system,
+    config,
+    ...
+  }:
     (import inputs.nixpkgs {
       inherit system;
       inherit (inputs.haskellNix) config;
@@ -50,10 +54,7 @@ in {
   };
 
   flake.hydraJobs = lib.genAttrs config.systems (lib.flip withSystem (
-    {
-      pkgs,
-      ...
-    }@ctx: let
+    {pkgs, ...} @ ctx: let
       jobs = (haskellPkgSet ctx).flake'.hydraJobs;
     in
       jobs

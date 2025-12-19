@@ -441,7 +441,6 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                               then Nothing
                               else -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
                               -- build page.
-
                                 let limit = 65535
                                     maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
                                     indentPrefix = cs $ indentLine "" :: String
@@ -664,11 +663,11 @@ main = do
               putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
               ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
               ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
-              let ghAppInstallId = fmap snd . find ((owner==) . fst) $ ghAppInstallIds
+              let ghAppInstallId = fmap snd . find ((owner ==) . fst) $ ghAppInstallIds
               ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-              maybe 
-                (error $ "No configured GitHub App Installation ID " <> owner) 
-                (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent) 
+              maybe
+                (error $ "No configured GitHub App Installation ID " <> owner)
+                (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
                 ghAppInstallId
 
   let numWorkers = 10 -- default number of workers

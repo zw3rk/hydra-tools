@@ -13,7 +13,7 @@ module Lib.GitHub where
 
 import Control.Monad (forM)
 import Control.Monad.IO.Class
-import Crypto.PubKey.RSA (PrivateKey(..))
+import Crypto.PubKey.RSA (PrivateKey (..))
 import Data.Aeson hiding
   ( Error,
     KeyValue,
@@ -33,6 +33,8 @@ import Data.Time.Clock
     getCurrentTime,
   )
 import Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
+import Data.X509 (PrivKey (..))
+import Data.X509.File (readKeyFile)
 import GHC.Generics
 import GitHub.REST
   ( GHEndpoint (..),
@@ -45,8 +47,6 @@ import GitHub.REST
     (.:),
   )
 import GitHub.REST.Auth (getJWTToken)
-import Data.X509.File (readKeyFile)
-import Data.X509 (PrivKey(..))
 
 class RESTKeyValue a where
   toKeyValue :: a -> [KeyValue]
