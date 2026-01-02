@@ -13,6 +13,7 @@ module Lib.GitHub where
 
 import Control.Monad (forM)
 import Control.Monad.IO.Class
+import Crypto.PubKey.RSA (PrivateKey(..))
 import Data.Aeson hiding
   ( Error,
     KeyValue,
@@ -43,7 +44,9 @@ import GitHub.REST
     runGitHubT,
     (.:),
   )
-import GitHub.REST.Auth (getJWTToken, loadSigner)
+import GitHub.REST.Auth (getJWTToken)
+import Data.X509.File (readKeyFile)
+import Data.X509 (PrivKey(..))
 
 class RESTKeyValue a where
   toKeyValue :: a -> [KeyValue]
@@ -222,6 +225,13 @@ data TokenLease = TokenLease
 
 apiVersion :: BS.ByteString
 apiVersion = "2022-11-28"
+
+loadSigner :: FilePath -> IO PrivateKey
+loadSigner file = do
+  keys <- readKeyFile file
+  case keys of
+    [PrivKeyRSA pk] -> pure pk
+    _ -> fail $ "Not a valid RSA private key file: " <> file
 
 fetchInstallations :: Int -> FilePath -> BS.ByteString -> IO [(Text, Int)]
 fetchInstallations appId appKeyFile ghUserAgent = do
