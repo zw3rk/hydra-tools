@@ -264,8 +264,6 @@
 
                 export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
-                mkdir -p "$QUEUE_DIR"
-
                 exec ${lib.getExe iCfg.package}
               '';
             }
