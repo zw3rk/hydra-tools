@@ -3,9 +3,8 @@ index-state: 2023-06-28T05:23:25Z
 
 packages:
   github-hydra-bridge
-  disk-store
-  ds-queue
   hydra-github-bridge
+  hydra-attic-bridge
 
 tests: True
 

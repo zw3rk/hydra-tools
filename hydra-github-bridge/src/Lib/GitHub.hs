@@ -4,12 +4,14 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Lib.GitHub where
 
+import Control.Monad (forM)
 import Control.Monad.IO.Class
 import Data.Aeson hiding
   ( Error,
@@ -35,7 +37,7 @@ import GitHub.REST
   ( GHEndpoint (..),
     GitHubSettings (..),
     KeyValue ((:=)),
-    StdMethod (POST),
+    StdMethod (GET, POST),
     Token (BearerToken),
     queryGitHub,
     runGitHubT,
@@ -59,7 +61,11 @@ instance ToJSON CheckRunStatus where
     (Completed) -> "completed"
 
 instance FromJSON CheckRunStatus where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+  parseJSON = \case
+    "queued" -> return Queued
+    "in_progress" -> return InProgress
+    "completed" -> return Completed
+    _ -> fail "Invalid CheckRunStatus"
 
 data CheckRunConclusion
   = ActionRequired
@@ -84,7 +90,16 @@ instance ToJSON CheckRunConclusion where
     (TimedOut) -> "timed_out"
 
 instance FromJSON CheckRunConclusion where
-  parseJSON = genericParseJSON $ aesonDrop 0 camelCase
+  parseJSON = \case
+    "action_required" -> return ActionRequired
+    "cancelled" -> return Cancelled
+    "failure" -> return Failure
+    "neutral" -> return Neutral
+    "success" -> return Success
+    "skipped" -> return Skipped
+    "stale" -> return Stale
+    "timed_out" -> return TimedOut
+    _ -> fail "Invalid CheckRunConclusion"
 
 data CheckRunOutput = CheckRunOutput
   { title :: Text,
@@ -143,6 +158,29 @@ instance RESTKeyValue CheckRunPayload where
           ++ maybeKV "completed_at" payload.completedAt iso8601Show
           ++ maybeKV "output" payload.output toKeyValue
 
+-- The following table exists in the databse:
+{-
+DROP TABLE IF EXISTS github_status;
+CREATE TABLE github_status (
+    id SERIAL PRIMARY KEY,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    headSha TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner, repo, headSha, name)
+);
+DROP TABLE IF EXISTS github_status_payload;
+CREATE TABLE github_status_payload (
+    id SERIAL PRIMARY KEY,
+    status_id INTEGER NOT NULL, -- fk: github_status.id
+    payload JSONB NOT NULL,
+    created TIMESTAMP DEFAULT NOW(),
+    sent TIMESTAMP DEFAULT NULL,
+    tries INTEGER DEFAULT 0,
+    FOREIGN KEY (status_id) REFERENCES github_status (id) ON DELETE CASCADE
+);
+-}
+
 data CheckRun = CheckRun
   { owner :: Text,
     repo :: Text,
@@ -158,25 +196,65 @@ instance FromJSON CheckRun where
 
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
-  | "github:" `Text.isPrefixOf` uri = do
-      uriWithoutPrefix <- Text.stripPrefix "github:" uri
-      let uriWithoutQuery = Text.takeWhile (/= '?') uriWithoutPrefix
-      case Text.splitOn "/" uriWithoutQuery of
+  | "github:" `Text.isPrefixOf` uri =
+      case splitFlakeRef (Text.drop 7 uri) of
         -- TODO: hash == 40 is a _very_ poor approximation to ensure this is a sha
-        (owner : repo : hash : []) | Text.length hash == 40 -> Just (owner, repo, hash)
+        Just (owner, repo, hash) | Text.length hash == 40 -> Just (owner, repo, hash)
+        Just (owner, repo, hash)
+          | (hash' : _) <- Text.splitOn "?" hash,
+            Text.length hash' == 40 ->
+              Just (owner, repo, hash')
         _ -> Nothing
   | otherwise = Nothing
+  where
+    splitFlakeRef t =
+      case Text.splitOn "/" t of
+        -- Query parameters can contain slashes that we don't want to split, so combine everything
+        -- after repo
+        (owner : repo : ts) -> Just (owner, repo, Text.concat ts)
+        _ -> Nothing
 
 data TokenLease = TokenLease
   { token :: Token,
     expiry :: Maybe UTCTime
   }
+  deriving (Show)
 
 apiVersion :: BS.ByteString
 apiVersion = "2022-11-28"
 
-fetchAppInstallationToken :: Int -> FilePath -> Int -> BS.ByteString -> IO TokenLease
-fetchAppInstallationToken appId appKeyFile appInstallationId ghUserAgent = do
+fetchInstallations :: Int -> FilePath -> BS.ByteString -> IO [(Text, Int)]
+fetchInstallations appId appKeyFile ghUserAgent = do
+  signer <- loadSigner appKeyFile
+  jwt <- getJWTToken signer appId
+
+  let githubSettings =
+        GitHubSettings
+          { token = Just jwt,
+            userAgent = ghUserAgent,
+            apiVersion = Lib.GitHub.apiVersion
+          }
+  response <-
+    liftIO $
+      runGitHubT githubSettings $
+        queryGitHub
+          GHEndpoint
+            { method = GET,
+              endpoint = "/app/installations",
+              endpointVals = [],
+              ghData = []
+            }
+
+  return $
+    map
+      ( \inst ->
+          let account = inst .: "account" :: Value
+           in (account .: "login", inst .: "id")
+      )
+      response
+
+fetchAppInstallationToken :: Int -> FilePath -> BS.ByteString -> Int -> IO TokenLease
+fetchAppInstallationToken appId appKeyFile ghUserAgent appInstallationId = do
   signer <- loadSigner appKeyFile
   jwt <- getJWTToken signer appId
 
@@ -210,14 +288,13 @@ fetchAppInstallationToken appId appKeyFile appInstallationId ghUserAgent = do
         expiry = Just expiry
       }
 
-getValidToken :: NominalDiffTime -> IORef TokenLease -> IO TokenLease -> IO TokenLease
+getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO TokenLease) -> IO [(String, TokenLease)]
 getValidToken buffer lease fetch = do
-  lease' <- readIORef lease
-  (\j -> maybe (return lease') j lease'.expiry) $ \expiry -> do
-    now <- getCurrentTime
-    if addUTCTime buffer now < expiry
-      then return lease'
-      else do
-        newLease <- fetch
-        writeIORef lease newLease
-        return newLease
+  leases' <- readIORef lease
+  now <- getCurrentTime
+  leases'' <- forM leases' $ \(owner, tok) -> do
+    case tok.expiry of
+      Just expiry | addUTCTime buffer now < expiry -> return (owner, tok)
+      _ -> (owner,) <$> fetch owner
+  writeIORef lease leases''
+  return leases''

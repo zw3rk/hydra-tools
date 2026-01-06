@@ -36,8 +36,7 @@ in {
     in {
       github-hydra-bridge = haskellPkgSet'.getComponent "github-hydra-bridge:exe:github-hydra-bridge";
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
-      disk-store = haskellPkgSet'.getComponent "disk-store:lib:disk-store";
-      ds-queue = haskellPkgSet'.getComponent "ds-queue:lib:ds-queue";
+      hydra-attic-bridge = haskellPkgSet'.getComponent "hydra-attic-bridge:exe:hydra-attic-bridge";
     };
   };
 
