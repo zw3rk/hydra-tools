@@ -91,7 +91,7 @@
 
               StateDirectory = "hydra";
             }
-            // lib.optionalAttrs (cfg.hydraPassFile != "" || cfg.ghSecretFile != null)
+            // lib.optionalAttrs (cfg.hydraPassFile != null || cfg.ghSecretFile != null)
             {
               LoadCredential =
                 lib.optional (cfg.hydraPassFile != null) "hydra-pass:${cfg.hydraPassFile}"
@@ -236,7 +236,7 @@
 
                   LoadCredential =
                     lib.optional (iCfg.ghTokenFile != null) "github-token:${iCfg.ghTokenFile}"
-                    ++ lib.optional (iCfg.ghAppKeyFile != "") "github-app-key-file:${iCfg.ghAppKeyFile}";
+                    ++ lib.optional (iCfg.ghAppKeyFile != null) "github-app-key-file:${iCfg.ghAppKeyFile}";
 
                   StateDirectory = "hydra";
                 }
@@ -254,7 +254,7 @@
                 // lib.optionalAttrs (iCfg.ghAppId != 0) {
                   GITHUB_APP_ID = toString iCfg.ghAppId;
                 }
-                // lib.optionalAttrs (iCfg.ghAppInstallIds != []) {
+                // lib.optionalAttrs (iCfg.ghAppInstallIds != "[]") {
                   GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
                 };
 
@@ -263,9 +263,6 @@
                 ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
 
                 export HYDRA_STATE_DIR="$STATE_DIRECTORY"
-                export QUEUE_DIR="$STATE_DIRECTORY/hydra-github-bridge/"${lib.escapeShellArg name}
-
-                mkdir -p "$QUEUE_DIR"
 
                 exec ${lib.getExe iCfg.package}
               '';
