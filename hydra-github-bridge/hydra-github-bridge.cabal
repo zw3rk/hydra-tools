@@ -19,9 +19,12 @@ common common
                     , human-readable-duration
                     , postgresql-simple
                     , bytestring
+                    , crypton
+                    , crypton-x509
+                    , crypton-x509-store
                     , bz2
                     , string-conversions
-                    , github-rest
+                    , github-rest >= 1.2
                     , regex-tdfa
                     , text
                     , time

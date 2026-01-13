@@ -35,7 +35,8 @@ import Data.Foldable (foldr')
 import Data.Functor ((<&>))
 import Data.IORef (newIORef)
 import Data.List
-  ( intercalate,
+  ( find,
+    intercalate,
     singleton,
   )
 import Data.Maybe (isNothing)
@@ -440,7 +441,6 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                               then Nothing
                               else -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
                               -- build page.
-
                                 let limit = 65535
                                     maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
                                     indentPrefix = cs $ indentLine "" :: String
@@ -662,10 +662,13 @@ main = do
          in GitHub.getValidToken buffer ghTokens $ \owner -> do
               putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
               ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
-              ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read
-              let ghAppInstallId = head [id' | (owner', id') <- ghAppInstallIds, owner == owner']
+              ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
+              let ghAppInstallId = fmap snd . find ((owner ==) . fst) $ ghAppInstallIds
               ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-              GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent ghAppInstallId
+              maybe
+                (error $ "No configured GitHub App Installation ID " <> owner)
+                (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
+                ghAppInstallId
 
   let numWorkers = 10 -- default number of workers
   let statusHandlers =
