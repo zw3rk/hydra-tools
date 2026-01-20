@@ -16,6 +16,7 @@
 
       overlays = [
         inputs.haskellNix.overlay
+  
         (final: prev: {
           hydra-tools = final.haskell-nix.project' {
             src = ../.;
@@ -34,6 +35,12 @@
               };
 
               inputsFrom = [config.treefmt.build.devShell];
+
+              # Make mockoon-cli available
+              shellHook = ''
+                npm install --silent --no-save @mockoon/cli
+                export PATH="$PWD/node_modules/.bin:$PATH"
+              '';
             };
           };
         })
