@@ -55,6 +55,7 @@ import Hydra
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (Status (..))
+import Network.URI (parseURI)
 import Servant
 import Servant.Client
 import Servant.GitHub.Webhook
@@ -472,13 +473,25 @@ hydraClientEnv :: Text -> Text -> Text -> IO HydraClientEnv
 hydraClientEnv host user pass = do
   mgr <- newManager tlsManagerSettings
   jar <- newTVarIO mempty
+  
+  -- Parse host string
+  let hostStr = Text.unpack host
+  hydraUrl <- 
+    case parseURI hostStr of
+      -- It's a valid URI, use servant's parser
+      Just _ -> parseBaseUrl hostStr
+      -- Otherwise, we'll just assume it's a bare host
+      _ -> pure (BaseUrl Https hostStr 443 "")
+
   let env =
-        (mkClientEnv mgr (BaseUrl Https (Text.unpack host) 443 ""))
+        (mkClientEnv mgr hydraUrl)
           { cookieJar = Just jar
           }
+      -- The base url will be passed around in the origin header
+      host' = Text.pack (showBaseUrl hydraUrl)
 
   -- login first
-  flip runClientM env (login (Just $ Text.append "https://" host) (HydraLogin user pass)) >>= \case
+  runClientM (login (Just host') (HydraLogin user pass)) env >>= \case
     Left e -> die (show e)
     Right _ -> pure ()
 
@@ -487,7 +500,7 @@ hydraClientEnv host user pass = do
 -- Re-authenticate with Hydra when session expires
 reAuthenticate :: HydraClientEnv -> IO (Either String ())
 reAuthenticate (HydraClientEnv host user pass env) = do
-  result <- runClientM (login (Just $ Text.append "https://" host) (HydraLogin user pass)) env
+  result <- runClientM (login (Just host) (HydraLogin user pass)) env
   case result of
     Left e -> return $ Left ("Re-authentication failed: " ++ show e)
     Right _ -> return $ Right ()
@@ -502,7 +515,7 @@ hydraClient henv@(HydraClientEnv host _ _ env) conn =
   -- loop forever, working down the hydra commands
   forever $
     readCommand conn >>= \cmd -> do
-      result <- runClientM (handleCmd (Text.append "https://" host) cmd) env
+      result <- runClientM (handleCmd host cmd) env
       case result of
         Left e | isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
@@ -510,7 +523,7 @@ hydraClient henv@(HydraClientEnv host _ _ env) conn =
             Left authErr -> putStrLn authErr
             Right () -> do
               -- Retry the command after successful re-authentication
-              runClientM (handleCmd (Text.append "https://" host) cmd) env >>= \case
+              runClientM (handleCmd host cmd) env >>= \case
                 Left e' -> print e'
                 Right _ -> pure ()
         Left e -> print e
