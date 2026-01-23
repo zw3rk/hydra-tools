@@ -64,7 +64,6 @@ import GitHub.REST
     KeyValue ((:=)),
     StdMethod (POST),
     queryGitHub,
-    runGitHubT,
   )
 import Lib
   ( binarySearch,
@@ -594,8 +593,8 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
                   if totalLength > limit then Nothing else Just . cs $ Text.concat parts
                 )
 
-statusHandler :: BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
-statusHandler ghUserAgent getGitHubToken checkRun = do
+statusHandler :: Text -> BS.ByteString -> IO [(String, GitHub.TokenLease)] -> GitHub.CheckRun -> IO (Either SomeException Value)
+statusHandler ghEndpointUrl ghUserAgent getGitHubToken checkRun = do
   Text.putStrLn $ "SENDING [" <> checkRun.owner <> "/" <> checkRun.repo <> "/" <> checkRun.payload.headSha <> "] " <> checkRun.payload.name <> ":" <> Text.pack (show checkRun.payload.status)
 
   -- putStrLn $ "Obtain GitHub token..."
@@ -609,9 +608,9 @@ statusHandler ghUserAgent getGitHubToken checkRun = do
         GitHubSettings
           { token = token',
             userAgent = ghUserAgent,
-            apiVersion = GitHub.apiVersion
+            apiVersion = GitHub.gitHubApiVersion
           }
-  try . liftIO . runGitHubT githubSettings $
+  try . liftIO . GitHub.runGitHubRestT githubSettings ghEndpointUrl $
     queryGitHub
       GHEndpoint
         { method = POST,
@@ -635,6 +634,7 @@ main = do
   user <- maybe mempty id <$> lookupEnv "HYDRA_USER"
   pass <- maybe mempty id <$> lookupEnv "HYDRA_PASS"
   stateDir <- getEnv "HYDRA_STATE_DIR"
+  ghEndpointUrl <- Text.pack . maybe "https://api.github.com" id <$> lookupEnv "GITHUB_ENDPOINT_URL"
 
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
 
@@ -644,13 +644,13 @@ main = do
         ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
 
         putStrLn "Fetching GitHub App installations..."
-        ghAppInstalls <- GitHub.fetchInstallations ghAppId ghAppKeyFile ghUserAgent
+        ghAppInstalls <- GitHub.fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
         putStrLn $ "Found " <> show (length ghAppInstalls) <> " installations"
         forM_ ghAppInstalls $ \(owner, installId) -> do
           Text.putStrLn $ "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
 
         forM ghAppInstalls $ \(owner, installId) -> do
-          lease <- GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent installId
+          lease <- GitHub.fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
           Text.putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> Text.pack (show lease.expiry)
           return (Text.unpack owner, lease)
 
@@ -666,7 +666,7 @@ main = do
               ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
               maybe
                 (error $ "No configured GitHub App Installation ID " <> owner)
-                (GitHub.fetchAppInstallationToken ghAppId ghAppKeyFile ghUserAgent)
+                (GitHub.fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent)
                 ghAppInstallId
 
   let numWorkers = 10 -- default number of workers
@@ -715,7 +715,7 @@ main = do
                         let payload' = case fromJSON payload of
                               Aeson.Success p -> p
                               Aeson.Error e -> error e
-                        eres <- statusHandler ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
+                        eres <- statusHandler ghEndpointUrl ghUserAgent getValidGitHubToken (GitHub.CheckRun owner repo payload')
                         case eres of
                           Left ex
                             | Just (HTTP.HttpExceptionRequest _req (HTTP.StatusCodeException resp _)) <- fromException ex,
