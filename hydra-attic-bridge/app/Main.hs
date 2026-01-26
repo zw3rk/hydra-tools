@@ -50,7 +50,8 @@ processDrvPath conn cache = do
             putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
             putStrLn $ "Attic push failed with exit code " ++ show code
             unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
-            execute conn "UPDATE DrvpathsToUpload SET last = NOW() + interval '5 minutes', tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
+            -- Slow down retries until we only do them monthly (8640 * 5 minutes is 30 days)
+            execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
             pure True
           ExitSuccess -> do
             execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
