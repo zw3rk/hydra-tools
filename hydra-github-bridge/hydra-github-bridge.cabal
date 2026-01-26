@@ -14,6 +14,7 @@ common common
     default-language: Haskell2010
     build-depends:    base >=4.16 && < 5
                     , aeson
+                    , aeson-schemas
                     , aeson-casing
                     , async
                     , human-readable-duration
@@ -24,6 +25,7 @@ common common
                     , crypton-x509-store
                     , bz2
                     , string-conversions
+                    , github-webhooks
                     , github-rest >= 1.2
                     , regex-tdfa
                     , mtl
@@ -33,11 +35,19 @@ common common
                     , http-client
                     , http-client-tls
                     , http-types
+                    , network-uri
+                    , servant
+                    , servant-server
+                    , servant-client
+                    , servant-github-webhook
+                    , stm
+                    , warp
 
 library
     import: common
     hs-source-dirs:   src
     exposed-modules:    Lib
+                      , Lib.Bridge
                       , Lib.Hydra
                       , Lib.GitHub
                       , Lib.Data.Duration
@@ -48,5 +58,5 @@ executable hydra-github-bridge
     import:           common
     ghc-options:      -threaded -rtsopts
     hs-source-dirs:   app, src
-    other-modules:    Lib, Lib.GitHub, Lib.Hydra, Lib.Data.Duration, Lib.Data.List, Lib.Data.Text
+    other-modules:    Lib, Lib.Bridge, Lib.GitHub, Lib.Hydra, Lib.Data.Duration, Lib.Data.List, Lib.Data.Text
     main-is:          Main.hs
