@@ -97,7 +97,7 @@ defHydraJobset =
   HydraJobset
     { hjEnabled = 1,
       hjVisible = True,
-      hjKeepnr = 3,
+      hjKeepnr = 2,
       hjSchedulingshares = 42,
       hjCheckinterval = 0,
       hjEnableemail = False,
