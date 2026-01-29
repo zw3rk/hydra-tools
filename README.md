@@ -51,6 +51,8 @@ Receives GitHub webhook events and translates them into Hydra API calls:
 - PostgreSQL integration for state management
 - Built-in webhook secret validation
 
+**Usage:** See [Github Integration](docs/github-integration.md)
+
 ### 📊 hydra-github-bridge
 
 **Hydra → GitHub Status Bridge**
