@@ -19,7 +19,8 @@
     inputs.flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [
         flake/formatter.nix
-        flake/packages.nix
+        flake/packages/hydra-tools
+        flake/packages/mockoon-cli
         flake/nixosModules.nix
       ];
 

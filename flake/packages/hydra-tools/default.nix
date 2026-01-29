@@ -16,10 +16,10 @@
 
       overlays = [
         inputs.haskellNix.overlay
-  
+
         (final: prev: {
           hydra-tools = final.haskell-nix.project' {
-            src = ../.;
+            src = ../../../.;
             compiler-nix-name = "ghc9122";
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
@@ -36,11 +36,9 @@
 
               inputsFrom = [config.treefmt.build.devShell];
 
-              # Make mockoon-cli available
-              shellHook = ''
-                npm install --silent --no-save @mockoon/cli
-                export PATH="$PWD/node_modules/.bin:$PATH"
-              '';
+              buildInputs = [
+                (withSystem system ({ config, ...}: config.packages.mockoon-cli))
+              ];
             };
           };
         })
