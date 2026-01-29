@@ -37,7 +37,7 @@ Use the following settings:
    * Secret: Enter a secret token to secure the webhook. GitHub highly recommends that 
      you set a webhook secret.
  * SSL verification: Select whether to enable SSL verification. GitHub highly recommends
-   that you enable SSL verification.It is highly recommended to leave this enabled.
+   that you enable SSL verification. It is highly recommended to leave this enabled.
  * Permissions: Select following permissions
    * Checks: Read and Write
    * Commit Statuses: Read and Write
@@ -48,7 +48,9 @@ Use the following settings:
    * Check suite
    * Pull request
    * Push
- * Where can this GitHub App be installed?: Select _Only this account_
+ * Where can this GitHub App be installed?: Select _Any account_ to allow installation
+   across multiple organizations, or _Only this account_ to restrict it to your current
+   organization.
 
 Click _Create GitHub App_. This will take you to the _GitHub App settings_ page. Take note
 of the _App ID_, you'll need it to configure the GitHub Hydra Bridge server.
@@ -71,9 +73,9 @@ After registering the GitHub App, install it to give it access to your repositor
 After installation, note the _Installation ID_ (it's part of the URL), you'll need it to
 configure the GitHub Hydra Bridge server.
 
-## Step 4: Add Repository Webhooks (Optional)
+## Step 4: Add Repository Webhooks
 
-In addition to app-level webhooks, you can also configure repository-specific webhooks.
+In addition to app-level webhooks, you also need to configure repository-specific webhooks.
 
  1. Navigate the the repository on GitHub, then click on Settings.
  2. On the left sidebar, click Webhooks, then Add Webhook.
