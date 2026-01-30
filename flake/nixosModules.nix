@@ -1,125 +1,5 @@
 {moduleWithSystem, ...}: {
   flake.nixosModules = {
-    github-hydra-bridge = moduleWithSystem (perSystem @ {config}: {
-      config,
-      lib,
-      pkgs,
-      ...
-    }: let
-      cfg = config.services.github-hydra-bridge;
-    in {
-      options.services.github-hydra-bridge = with lib; {
-        enable = mkEnableOption "github hydra bridge";
-
-        package = mkOption {
-          type = types.package;
-          default = perSystem.config.packages.github-hydra-bridge;
-          defaultText = "github-hydra-bridge";
-          description = "The github to hydra webhook bridge";
-        };
-
-        hydraHost = mkOption {
-          type = types.str;
-          example = "hydra.ci.iog.io:8080";
-          description = ''
-            The host (domain or IP address, with optional port) of hydra.
-          '';
-        };
-
-        hydraUser = mkOption {
-          type = types.str;
-          default = "";
-          description = ''
-            The user to authenticate as with hydra.
-          '';
-        };
-
-        hydraPassFile = mkOption {
-          type = types.nullOr types.path;
-          default = null;
-          description = ''
-            A file containing the password to authenticate with against hydra.
-          '';
-        };
-
-        ghSecretFile = mkOption {
-          type = types.nullOr types.path;
-          default = null;
-          description = ''
-            The agreed upon secret with GitHub for the Webhook payloads.
-          '';
-        };
-
-        hydraDb = mkOption {
-          type = types.str;
-          default = "";
-          description = ''
-            Hydra DB host string. Empty means unix socket.
-          '';
-        };
-        port = mkOption {
-          type = types.port;
-          default = 8811;
-          description = ''
-            The port to listen on for webhooks.
-          '';
-        };
-        environmentFile = mkOption {
-          type = types.nullOr types.path;
-          default = null;
-          description = ''
-            plaintext environment file, containing and `HYDRA_DB`, `HYDRA_DB_USER`, and `HYDRA_DB_PASS`.
-          '';
-        };
-      };
-
-      config = lib.mkIf cfg.enable {
-        systemd.services.github-hydra-bridge = {
-          wantedBy = ["hydra-server.service"];
-          after = ["postgresql.service" "hydra-server.service"];
-          partOf = ["hydra-server.service"];
-
-          startLimitIntervalSec = 0;
-
-          serviceConfig =
-            {
-              User = config.users.users.hydra.name;
-              Group = config.users.groups.hydra.name;
-
-              Restart = "always";
-              RestartSec = "10s";
-
-              StateDirectory = "hydra";
-            }
-            // lib.optionalAttrs (cfg.hydraPassFile != null || cfg.ghSecretFile != null)
-            {
-              LoadCredential =
-                lib.optional (cfg.hydraPassFile != null) "hydra-pass:${cfg.hydraPassFile}"
-                ++ lib.optional (cfg.ghSecretFile != null) "github-secret:${cfg.ghSecretFile}";
-            }
-            // lib.optionalAttrs (cfg.environmentFile != null)
-            {EnvironmentFile = builtins.toPath cfg.environmentFile;};
-
-          script = ''
-            ${lib.optionalString (cfg.hydraPassFile != null) ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
-            ${lib.optionalString (cfg.ghSecretFile != null) ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
-
-            export HYDRA_STATE_DIR="$STATE_DIRECTORY"
-
-            exec ${lib.getExe cfg.package}
-          '';
-
-          environment =
-            {
-              HYDRA_DB = cfg.hydraDb;
-              HYDRA_HOST = cfg.hydraHost;
-              PORT = toString cfg.port;
-            }
-            // lib.optionalAttrs (cfg.hydraUser != "") {HYDRA_USER = cfg.hydraUser;};
-        };
-      };
-    });
-
     hydra-github-bridge = moduleWithSystem (perSystem @ {config}: {
       config,
       lib,
@@ -187,11 +67,36 @@
                 '';
               };
 
+              ghSecretFile = mkOption {
+                type = types.nullOr types.path;
+                default = null;
+                description = ''
+                  The agreed upon secret with GitHub for the Webhook payloads.
+                '';
+              };
+
               hydraHost = mkOption {
                 type = types.str;
+                example = "http://hydra.example.com:8080";
                 default = "localhost";
                 description = ''
-                  The host (domain or IP address, with optional port) of hydra.
+                  The host or URL of hydra.
+                '';
+              };
+
+              hydraUser = mkOption {
+                type = types.str;
+                default = "";
+                description = ''
+                  The user to authenticate as with hydra.
+                '';
+              };
+
+              hydraPassFile = mkOption {
+                type = types.nullOr types.path;
+                default = null;
+                description = ''
+                  A file containing the password to authenticate with against hydra.
                 '';
               };
 
@@ -203,11 +108,19 @@
                 '';
               };
 
+              port = mkOption {
+                type = types.port;
+                default = 8811;
+                description = ''
+                  The port to listen on for webhooks.
+                '';
+              };
+
               environmentFile = mkOption {
                 type = types.nullOr types.path;
                 default = null;
                 description = ''
-                  plaintext environment file, containing and `HYDRA_USER`, and `HYDRA_PASS`.
+                  plaintext environment file, containing and `HYDRA_DB_USER`, and `HYDRA_DB_PASS`.
                 '';
               };
             };
@@ -236,7 +149,9 @@
 
                   LoadCredential =
                     lib.optional (iCfg.ghTokenFile != null) "github-token:${iCfg.ghTokenFile}"
-                    ++ lib.optional (iCfg.ghAppKeyFile != null) "github-app-key-file:${iCfg.ghAppKeyFile}";
+                    ++ lib.optional (iCfg.ghAppKeyFile != null) "github-app-key-file:${iCfg.ghAppKeyFile}"
+                    ++ lib.optional (iCfg.hydraPassFile != null) "hydra-pass:${iCfg.hydraPassFile}"
+                    ++ lib.optional (iCfg.ghSecretFile != null) "github-secret:${iCfg.ghSecretFile}";
 
                   StateDirectory = "hydra";
                 }
@@ -247,6 +162,7 @@
                 {
                   HYDRA_HOST = iCfg.hydraHost;
                   HYDRA_DB = iCfg.hydraDb;
+                  PORT = toString iCfg.port;
                 }
                 // lib.optionalAttrs (iCfg.ghUserAgent != "") {
                   GITHUB_USER_AGENT = iCfg.ghUserAgent;
@@ -256,11 +172,16 @@
                 }
                 // lib.optionalAttrs (iCfg.ghAppInstallIds != "[]") {
                   GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
+                }
+                // lib.optionalAttrs (iCfg.hydraUser != "") {
+                  HYDRA_API_USER = iCfg.hydraUser;
                 };
 
               script = ''
-                ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_TOKEN=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
+                ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_WEBHOOK_SECRET=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
                 ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
+                ${lib.optionalString (iCfg.hydraPassFile != null) ''export HYDRA_API_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
+                ${lib.optionalString (iCfg.ghSecretFile != null) ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
 
                 export HYDRA_STATE_DIR="$STATE_DIRECTORY"
 
