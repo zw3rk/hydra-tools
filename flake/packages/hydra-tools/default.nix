@@ -60,7 +60,9 @@ in {
 
   flake.hydraJobs = lib.genAttrs config.systems (lib.flip withSystem (
     {pkgs, ...} @ ctx: let
-      jobs = (haskellPkgSet ctx).flake'.hydraJobs;
+      jobs = (haskellPkgSet ctx).flake'.hydraJobs // {
+          inherit (ctx.config) packages checks devShells;
+      };
     in
       jobs
       // {
