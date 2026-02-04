@@ -473,10 +473,10 @@ hydraClientEnv :: Text -> Text -> Text -> IO HydraClientEnv
 hydraClientEnv host user pass = do
   mgr <- newManager tlsManagerSettings
   jar <- newTVarIO mempty
-  
+
   -- Parse host string
   let hostStr = Text.unpack host
-  hydraUrl <- 
+  hydraUrl <-
     case parseURI hostStr of
       -- It's a valid URI, use servant's parser
       Just _ -> parseBaseUrl hostStr

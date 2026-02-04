@@ -92,6 +92,7 @@ data DecodeError = DecodeError
   deriving (Show)
 
 instance Exception DecodeError
+
 runGitHubRestT :: (MonadIO m) => GitHubSettings -> Text -> GitHubRestT m a -> m a
 runGitHubRestT settings url action = do
   cfg <- liftIO $ gitHubRestConfig settings url
@@ -161,7 +162,6 @@ queryGitHubRestPage (GitHubRestConfig {..}) ghEndpoint = do
           }
   where
     lookupHeader headerName = fmap Text.decodeUtf8 . lookup headerName . responseHeaders
-
 
 class RESTKeyValue a where
   toKeyValue :: a -> [KeyValue]
