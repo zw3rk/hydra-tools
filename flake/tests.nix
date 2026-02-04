@@ -93,28 +93,18 @@
               EOF
             '';
 
-            github-hydra-bridge = {
-              # This will fail until Hydra and Mock GitHub are running, so we'll start it
-              # manually
-              wantedBy = lib.mkForce [];
-              # We'll want the test to fail if it crashes
-              serviceConfig.Restart = lib.mkForce "no";
-            };
-
-            hydra-github-bridge-all = {
-              # This will fail until Hydra and Mock GitHub are running, so we'll start it
-              # manually
-              wantedBy = lib.mkForce [];
-              # We'll want the test to fail if it crashes
-              serviceConfig.Restart = lib.mkForce "no";
-            };
-
             # Start the mock server
             mock-github = {
               wantedBy = ["multi-user.target"];
               serviceConfig.ExecStart = "${config.packages.mockoon-cli}/bin/mockoon-cli start --data ${../mock-github-data.json} --port 4010 --repair";
             };
-          };
+          } // lib.genAttrs ["github-hydra-bridge" "hydra-github-bridge-all"] (name: {
+              # These will fail until Hydra and Mock GitHub are running, so we'll start
+              # them manually
+              wantedBy = lib.mkForce [];
+              # We'll want the test to fail if they crash
+              serviceConfig.Restart = lib.mkForce "no";
+          });
         };
       };
 
