@@ -48,8 +48,14 @@ library
     hs-source-dirs:   src
     exposed-modules:    Lib
                       , Lib.Bridge
+                      , Lib.Bridge.GitHubToHydra
+                      , Lib.Bridge.HydraToGitHub
                       , Lib.Hydra
+                      , Lib.Hydra.Client
+                      , Lib.Hydra.DB
                       , Lib.GitHub
+                      , Lib.GitHub.Client
+                      , Lib.GitHub.WebHookServer
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
@@ -58,5 +64,17 @@ executable hydra-github-bridge
     import:           common
     ghc-options:      -threaded -rtsopts
     hs-source-dirs:   app, src
-    other-modules:    Lib, Lib.Bridge, Lib.GitHub, Lib.Hydra, Lib.Data.Duration, Lib.Data.List, Lib.Data.Text
+    other-modules:      Lib 
+                      , Lib.Bridge
+                      , Lib.Bridge.GitHubToHydra
+                      , Lib.Bridge.HydraToGitHub
+                      , Lib.GitHub
+                      , Lib.GitHub.Client
+                      , Lib.GitHub.WebHookServer
+                      , Lib.Hydra
+                      , Lib.Hydra.Client
+                      , Lib.Hydra.DB
+                      , Lib.Data.Duration
+                      , Lib.Data.List
+                      , Lib.Data.Text
     main-is:          Main.hs
