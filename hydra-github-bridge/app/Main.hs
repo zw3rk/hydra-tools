@@ -12,7 +12,6 @@ module Main where
 import Control.Concurrent.Async as Async
 import Control.Monad
 import Data.ByteString.Char8 (ByteString)
-import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (find)
@@ -35,7 +34,7 @@ import System.IO
     stdout,
   )
 
-fetchGitHubTokens :: Int -> FilePath -> Text -> BS.ByteString -> IO [(String, TokenLease)]
+fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> IO [(String, TokenLease)]
 fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent = do
   putStrLn "Fetching GitHub App installations..."
   ghAppInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
@@ -110,37 +109,20 @@ main = do
   -- Start the app loop
   let numWorkers = 10 -- default number of workers
       getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
-  eres <-
-    Async.race
-      ( Async.race
-          ( Async.replicateConcurrently_
-              numWorkers
-              ( withConnect
-                  (ConnectInfo db 5432 db_user db_pass "hydra")
-                  (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
-              )
-          )
-          ( withConnect
-              (ConnectInfo db 5432 db_user db_pass "hydra")
-              (notificationWatcher host stateDir)
-          )
-      )
-      ( Async.race
-          ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-              hydraClient env conn
-          )
-          ( withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-              run port (app (hceClientEnv env) conn (gitHubKey ghKey))
-          )
-      )
 
-  either
-    ( either
-        (const . putStrLn $ "statusHandler exited")
-        (const . putStrLn $ "withConnect exited")
-    )
-    ( either
-        (const . putStrLn $ "hydraClient exited")
-        (const . putStrLn $ "app exited")
-    )
-    eres
+  Async.mapConcurrently_
+    id
+    [ Async.replicateConcurrently_
+        numWorkers
+        ( withConnect
+            (ConnectInfo db 5432 db_user db_pass "hydra")
+            (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
+        ),
+      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+        hydraClient env conn,
+      withConnect
+        (ConnectInfo db 5432 db_user db_pass "hydra")
+        (notificationWatcher host stateDir),
+      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+        run port (app (hceClientEnv env) conn (gitHubKey ghKey))
+    ]
