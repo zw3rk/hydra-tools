@@ -23,6 +23,7 @@ library
                      , aeson-schemas
                      , aeson-casing
                      , exceptions
+                     , network-uri
                      , servant
                      , servant-server
                      , servant-client

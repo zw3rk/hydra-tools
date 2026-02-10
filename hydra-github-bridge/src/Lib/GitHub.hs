@@ -1,18 +1,21 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE NoFieldSelectors #-}
 
 module Lib.GitHub where
 
+import Control.Exception (Exception, throwIO)
 import Control.Monad (forM)
 import Control.Monad.IO.Class
+import Control.Monad.Reader (MonadReader (..), ReaderT (..))
+import Control.Monad.Trans (MonadTrans)
 import Crypto.PubKey.RSA (PrivateKey (..))
 import Data.Aeson hiding
   ( Error,
@@ -21,11 +24,13 @@ import Data.Aeson hiding
     (.:),
   )
 import Data.Aeson.Casing
-import qualified Data.ByteString.Char8 as BS
+import Data.ByteString.Char8 qualified as BS
+import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Clock
   ( NominalDiffTime,
@@ -40,13 +45,123 @@ import GitHub.REST
   ( GHEndpoint (..),
     GitHubSettings (..),
     KeyValue ((:=)),
+    MonadGitHubREST (..),
     StdMethod (GET, POST),
     Token (BearerToken),
     queryGitHub,
-    runGitHubT,
     (.:),
   )
-import GitHub.REST.Auth (getJWTToken)
+import GitHub.REST.Auth (fromToken, getJWTToken)
+import GitHub.REST.Endpoint (endpointPath, renderMethod)
+import GitHub.REST.KeyValue (kvToValue)
+import GitHub.REST.PageLinks (PageLinks, parsePageLinks)
+import Network.HTTP.Client
+import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types (hAccept, hAuthorization, hUserAgent)
+
+-- | A simple monad that can run GitHub Rest API requests. This is similar to @GitHubT@,
+-- except that we allow overriding the GitHub API URL. This allows us to test locally
+-- with a fake API.
+newtype GitHubRestT m a = GitHubRestT
+  {unRestT :: ReaderT GitHubRestConfig m a}
+  deriving
+    ( Functor,
+      Applicative,
+      Monad,
+      MonadFail,
+      MonadIO,
+      MonadTrans
+    )
+
+data GitHubRestConfig = GitHubRestConfig
+  { ghSettings :: GitHubSettings,
+    ghManager :: Manager,
+    ghEndpointUrl :: Text
+  }
+
+data GitHubRestManager = GitHubManager
+  { ghSettings :: GitHubSettings,
+    ghUrl :: Text,
+    ghManager :: Manager
+  }
+
+data DecodeError = DecodeError
+  { decodeErrorMessage :: Text,
+    decodeErrorResponse :: Text
+  }
+  deriving (Show)
+
+instance Exception DecodeError
+
+runGitHubRestT :: (MonadIO m) => GitHubSettings -> Text -> GitHubRestT m a -> m a
+runGitHubRestT settings url action = do
+  cfg <- liftIO $ gitHubRestConfig settings url
+  runReaderT (unRestT action) cfg
+
+gitHubRestConfig :: GitHubSettings -> Text -> IO GitHubRestConfig
+gitHubRestConfig ghSettings ghUrl = do
+  ghManager <- newManager tlsManagerSettings
+  pure $
+    GitHubRestConfig
+      { ghSettings = ghSettings,
+        ghEndpointUrl = ghUrl,
+        ghManager = ghManager
+      }
+
+instance (MonadIO m) => MonadGitHubREST (GitHubRestT m) where
+  queryGitHubPage ghEndpoint = do
+    cfg <- GitHubRestT ask
+    liftIO $ queryGitHubRestPage cfg ghEndpoint
+
+-- | Same as @queryGitHubPage@, except taking a @GitHubRestConfig@ parameter and running
+-- in IO. This is mostly the same as @queryGitHubPageIO@, except the GitHub Endpoint URL
+-- can be overridden.
+queryGitHubRestPage ::
+  (FromJSON json) =>
+  GitHubRestConfig ->
+  GHEndpoint ->
+  IO (json, PageLinks)
+queryGitHubRestPage (GitHubRestConfig {..}) ghEndpoint = do
+  let GitHubSettings {..} = ghSettings
+
+      apiVersionHeader
+        | "" <- apiVersion = []
+        | otherwise = [("X-GitHub-Api-Version", apiVersion)]
+
+      request =
+        (parseRequest_ $ Text.unpack $ ghEndpointUrl <> endpointPath ghEndpoint)
+          { method = renderMethod ghEndpoint,
+            requestHeaders =
+              [ (hAccept, "application/vnd.github+json"),
+                (hUserAgent, userAgent)
+              ]
+                ++ apiVersionHeader
+                ++ maybe [] ((: []) . (hAuthorization,) . fromToken) token,
+            requestBody = RequestBodyLBS $ encode $ kvToValue $ ghData ghEndpoint,
+            checkResponse = throwErrorStatusCodes
+          }
+
+  response <- httpLbs request ghManager
+
+  let body = responseBody response
+      -- empty body always errors when decoding, even if the end user doesn't care about the
+      -- result, like creating a branch, when the endpoint doesn't return anything.
+      --
+      -- In this case, pretend like the server sent back an encoded version of the unit type,
+      -- so that `queryGitHub endpoint` would be typed to `m ()`.
+      nonEmptyBody = if LBS.null body then encode () else body
+      pageLinks = maybe mempty parsePageLinks . lookupHeader "Link" $ response
+
+  case eitherDecode nonEmptyBody of
+    Right payload -> return (payload, pageLinks)
+    Left e ->
+      throwIO $
+        DecodeError
+          { decodeErrorMessage = Text.pack e,
+            decodeErrorResponse = Text.decodeUtf8 $ LBS.toStrict body
+          }
+  where
+    lookupHeader headerName = fmap Text.decodeUtf8 . lookup headerName . responseHeaders
 
 class RESTKeyValue a where
   toKeyValue :: a -> [KeyValue]
@@ -223,8 +338,8 @@ data TokenLease = TokenLease
   }
   deriving (Show)
 
-apiVersion :: BS.ByteString
-apiVersion = "2022-11-28"
+gitHubApiVersion :: BS.ByteString
+gitHubApiVersion = "2022-11-28"
 
 loadSigner :: FilePath -> IO PrivateKey
 loadSigner file = do
@@ -233,8 +348,8 @@ loadSigner file = do
     [PrivKeyRSA pk] -> pure pk
     _ -> fail $ "Not a valid RSA private key file: " <> file
 
-fetchInstallations :: Int -> FilePath -> BS.ByteString -> IO [(Text, Int)]
-fetchInstallations appId appKeyFile ghUserAgent = do
+fetchInstallations :: Text -> Int -> FilePath -> BS.ByteString -> IO [(Text, Int)]
+fetchInstallations ghEndpointUrl appId appKeyFile ghUserAgent = do
   signer <- loadSigner appKeyFile
   jwt <- getJWTToken signer appId
 
@@ -242,11 +357,11 @@ fetchInstallations appId appKeyFile ghUserAgent = do
         GitHubSettings
           { token = Just jwt,
             userAgent = ghUserAgent,
-            apiVersion = Lib.GitHub.apiVersion
+            apiVersion = gitHubApiVersion
           }
   response <-
     liftIO $
-      runGitHubT githubSettings $
+      runGitHubRestT githubSettings ghEndpointUrl $
         queryGitHub
           GHEndpoint
             { method = GET,
@@ -263,8 +378,8 @@ fetchInstallations appId appKeyFile ghUserAgent = do
       )
       response
 
-fetchAppInstallationToken :: Int -> FilePath -> BS.ByteString -> Int -> IO TokenLease
-fetchAppInstallationToken appId appKeyFile ghUserAgent appInstallationId = do
+fetchAppInstallationToken :: Text -> Int -> FilePath -> BS.ByteString -> Int -> IO TokenLease
+fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
   signer <- loadSigner appKeyFile
   jwt <- getJWTToken signer appId
 
@@ -272,11 +387,11 @@ fetchAppInstallationToken appId appKeyFile ghUserAgent appInstallationId = do
         GitHubSettings
           { token = Just jwt,
             userAgent = ghUserAgent,
-            apiVersion = Lib.GitHub.apiVersion
+            apiVersion = gitHubApiVersion
           }
   response <-
     liftIO $
-      runGitHubT githubSettings $
+      runGitHubRestT githubSettings ghEndpointUrl $
         queryGitHub
           GHEndpoint
             { method = POST,

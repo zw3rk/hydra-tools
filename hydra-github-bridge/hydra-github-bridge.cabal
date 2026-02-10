@@ -26,10 +26,13 @@ common common
                     , string-conversions
                     , github-rest >= 1.2
                     , regex-tdfa
+                    , mtl
                     , text
                     , time
                     , filepath
                     , http-client
+                    , http-client-tls
+                    , http-types
 
 library
     import: common

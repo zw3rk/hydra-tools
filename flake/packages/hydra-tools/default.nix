@@ -16,9 +16,10 @@
 
       overlays = [
         inputs.haskellNix.overlay
+
         (final: prev: {
           hydra-tools = final.haskell-nix.project' {
-            src = ../.;
+            src = ../../../.;
             compiler-nix-name = "ghc9122";
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
@@ -34,6 +35,10 @@
               };
 
               inputsFrom = [config.treefmt.build.devShell];
+
+              buildInputs = [
+                (withSystem system ({config, ...}: config.packages.mockoon-cli))
+              ];
             };
           };
         })
@@ -55,7 +60,11 @@ in {
 
   flake.hydraJobs = lib.genAttrs config.systems (lib.flip withSystem (
     {pkgs, ...} @ ctx: let
-      jobs = (haskellPkgSet ctx).flake'.hydraJobs;
+      jobs =
+        (haskellPkgSet ctx).flake'.hydraJobs
+        // {
+          inherit (ctx.config) packages checks devShells;
+        };
     in
       jobs
       // {
