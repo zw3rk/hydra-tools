@@ -101,9 +101,8 @@ Start the mock GitHub server:
 
     mockoon-cli start --data mock-github-data.json --port 4010 --repair
 
-Start github-hydra-bridge and hydra-github-bridge:
+Start hydra-github-bridge:
 
-    cabal run github-hydra-bridge
     cabal run hydra-github-bridge
 
 ## Step 5: Send fake requests

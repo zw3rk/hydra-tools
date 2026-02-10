@@ -174,13 +174,13 @@
                   GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
                 }
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
-                  HYDRA_API_USER = iCfg.hydraUser;
+                  HYDRA_USER = iCfg.hydraUser;
                 };
 
               script = ''
                 ${lib.optionalString (iCfg.ghTokenFile != null) ''export GITHUB_WEBHOOK_SECRET=$(< "$CREDENTIALS_DIRECTORY"/github-token)''}
                 ${lib.optionalString (iCfg.ghAppKeyFile != null) ''export GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key-file''}
-                ${lib.optionalString (iCfg.hydraPassFile != null) ''export HYDRA_API_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
+                ${lib.optionalString (iCfg.hydraPassFile != null) ''export HYDRA_PASS=$(< "$CREDENTIALS_DIRECTORY"/hydra-pass)''}
                 ${lib.optionalString (iCfg.ghSecretFile != null) ''export KEY=$(< "$CREDENTIALS_DIRECTORY"/github-secret)''}
 
                 export HYDRA_STATE_DIR="$STATE_DIRECTORY"

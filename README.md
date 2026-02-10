@@ -8,8 +8,7 @@ A collection of bridge tools that enhance [Hydra](https://github.com/NixOS/hydra
 
 Hydra Tools provides three essential bridge components that address key limitations in Hydra's integration with modern development workflows:
 
-- **🔄 github-hydra-bridge**: Webhook bridge from GitHub → Hydra
-- **📊 hydra-github-bridge**: Status bridge from Hydra → GitHub  
+- **🔄 hydra-github-bridge**: Webhook/Status bridge between GitHub ↔ Hydra
 - **📦 hydra-attic-bridge**: Artifact bridge from Hydra → Attic binary cache
 
 ## Problems Solved
@@ -34,30 +33,25 @@ Instead of modifying Hydra's Perl codebase, these tools provide clean Haskell-ba
 
 ## What Each Component Offers
 
-### 🔄 github-hydra-bridge
+### 🔄 hydra-github-bridge
 
-**GitHub → Hydra Webhook Bridge**
+**GitHub ↔ Hydra Webhook Bridge**
 
 Receives GitHub webhook events and translates them into Hydra API calls:
+Monitors Hydra build events and reports status back to GitHub:
 
-- **Pull Request Events**: Automatically creates/updates/removes Hydra jobsets for PRs
-- **Push Events**: Triggers Hydra evaluations for branch updates  
+- **GitHub Events**: Automatically creates/updates/removes Hydra jobsets for PRs
+- **Real-time Status Updates**: GitHub Check Runs updated as builds progress
 - **Event-Driven**: Eliminates the need for constant polling
 - **Rate Limit Friendly**: Only makes API calls when necessary
 
 **Key Features:**
 - Handles PR lifecycle (opened, synchronized, closed)
-- Configurable through environment variables
-- PostgreSQL integration for state management
-- Built-in webhook secret validation
+- Handles real-time Hydra updates via PostgreSQL LISTEN/NOTIFY
+- GitHub App integration with JWT authentication
+- Comprehensive build log inclusion in GitHub checks
 
 **Usage:** See [Github Integration](docs/github-integration.md)
-
-### 📊 hydra-github-bridge
-
-**Hydra → GitHub Status Bridge**
-
-Monitors Hydra build events and reports status back to GitHub:
 
 - **Real-time Status Updates**: GitHub Check Runs updated as builds progress
 - **Detailed Build Information**: Links to Hydra build pages, logs, and artifacts
@@ -104,7 +98,6 @@ Automatically uploads successful build artifacts to Attic binary cache:
 make all
 
 # Build individual components
-make github-hydra-bridge
 make hydra-github-bridge  
 make hydra-attic-bridge
 
@@ -118,12 +111,11 @@ This project provides a complete Nix flake with packages and NixOS modules:
 
 ```bash
 # Build with Nix
-nix build .#github-hydra-bridge
 nix build .#hydra-github-bridge
 nix build .#hydra-attic-bridge
 
 # Run directly
-nix run .#github-hydra-bridge
+nix run .#hydra-github-bridge
 ```
 
 ### NixOS Integration
@@ -147,18 +139,21 @@ NixOS modules are provided for easy deployment:
 
 ### Environment Variables
 
-#### github-hydra-bridge
-- `PORT`: Server port (default: 8080)
-- `KEY`: GitHub webhook secret
-- `HYDRA_HOST`: Hydra server hostname  
-- `HYDRA_DB*`: Database connection settings
-
 #### hydra-github-bridge
 - `HYDRA_HOST`: Hydra server hostname
+- `HYDRA_DB`: Hydra database hostname
+- `HYDRA_DB_USER`: Hydra database username
+- `HYDRA_DB_PASS`: Hydra database password
+- `HYDRA_USER`: Hydra username
+- `HYDRA_PASS`: Hydra password
 - `HYDRA_STATE_DIR`: Directory for state files
-- `GITHUB_APP_ID`: GitHub App ID
 - `GITHUB_USER_AGENT`: User agent for API requests
-- `HYDRA_DB*`: Database connection settings
+- `GITHUB_APP_ID`: GitHub App ID
+- `GITHUB_APP_INSTALL_IDS`: GitHub App installation IDs
+- `GITHUB_WEBHOOK_SECRET`: The secret for GitHub webhook payloads
+- `GITHUB_APP_KEY_FILE`: GitHub App private key file
+- `GITHUB_ENDPOINT_URL`: The GitHub API base URL (useful for testing)
+- `PORT`: Server port (default: 8080)
 
 #### hydra-attic-bridge  
 - `ATTIC_HOST`: Attic server URL

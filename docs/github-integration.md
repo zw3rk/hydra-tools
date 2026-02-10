@@ -133,7 +133,6 @@ Import the NixOS modules:
     outputs = inputs: {
         nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
           modules = [
-            inputs.hydraTools.nixosModules.github-hydra-bridge
             inputs.hydraTools.nixosModules.hydra-github-bridge
           ];
         };
@@ -151,21 +150,16 @@ Import the NixOS modules:
 Configure the GitHub bridges:
 
     services = {
-      github-hydra-bridge = {
-        enable = true;
-        hydraHost = "hydra.example.com";
-        hydraUser = "bridge";
-        hydraPassFile = "/path/to/secrets/hydra-tools-pass";
-        ghSecretFile = "/path/to/secrets/hydra-gh-secret"; # Use the Webhook Secret from Step 1
-        port = 8811;
-      };
-
       hydra-github-bridge.public = {
         enable = true;
         ghAppId = 123456789; # Use the App ID from Step 1
         ghAppInstallIds = "[(\"ORG_NAME\", 987654321)]"; # Use your Installation ID from Step 3
         ghAppKeyFile = "/path/to/secrets/gh-app-key";    # Path to the private key file from Step 2
+        ghSecretFile = "/path/to/secrets/hydra-gh-secret"; # Use the Webhook Secret from Step 1
         hydraHost = "hydra.example.com"; # Use the public Hydra URL
+        hydraUser = "bridge";
+        hydraPassFile = "/path/to/secrets/hydra-tools-pass";
+        port = 8811;
       };
     };
 
