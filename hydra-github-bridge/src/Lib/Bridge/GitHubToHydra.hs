@@ -332,7 +332,7 @@ hydraClientEnv host user pass = do
     Left e -> die (show e)
     Right _ -> pure ()
 
-  return $ Hydra.HydraClientEnv host user pass env
+  return $ Hydra.HydraClientEnv host' user pass env
 
 hydraClient :: HydraClientEnv -> Connection -> IO ()
 hydraClient henv@(Hydra.HydraClientEnv host _ _ env) conn =
