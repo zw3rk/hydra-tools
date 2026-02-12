@@ -1,6 +1,8 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Lib.Bridge.GitHubToHydra
   ( hydraClientEnv,
@@ -335,11 +337,11 @@ hydraClientEnv host user pass = do
   return $ Hydra.HydraClientEnv host' user pass env
 
 hydraClient :: HydraClientEnv -> Connection -> IO ()
-hydraClient henv@(Hydra.HydraClientEnv host _ _ env) conn =
+hydraClient henv@Hydra.HydraClientEnv {hceClientEnv} conn =
   -- loop forever, working down the hydra commands
   forever $
     Hydra.readCommand conn >>= \cmd -> do
-      result <- runClientM (handleCmd host cmd) env
+      result <- runClientM (handleCmd henv cmd) hceClientEnv
       case result of
         Left e | Hydra.isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
@@ -347,14 +349,14 @@ hydraClient henv@(Hydra.HydraClientEnv host _ _ env) conn =
             Left authErr -> putStrLn authErr
             Right () -> do
               -- Retry the command after successful re-authentication
-              runClientM (handleCmd host cmd) env >>= \case
+              runClientM (handleCmd henv cmd) hceClientEnv >>= \case
                 Left e' -> print e'
                 Right _ -> pure ()
         Left e -> print e
         Right _ -> pure ()
 
-handleCmd :: Text -> Command -> ClientM ()
-handleCmd host (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset) = do
+handleCmd :: HydraClientEnv -> Command -> ClientM ()
+handleCmd Hydra.HydraClientEnv {..} (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset) = do
   liftIO (putStrLn $ "Processing Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
   void $
     Hydra.mkJobset projName jobsetName jobset `on404` do
@@ -365,15 +367,16 @@ handleCmd host (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset) 
           ( Hydra.defHydraProject
               { Hydra.hpName = projName,
                 Hydra.hpDisplayname = proj,
-                Hydra.hpHomepage = "https://github.com/" <> repoName
+                Hydra.hpHomepage = "https://github.com/" <> repoName,
+                Hydra.hpOwner = hceUser
               }
           )
       Hydra.mkJobset projName jobsetName jobset
 
   liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-  void $ Hydra.push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
+  void $ Hydra.push (Just hceHost) (Just (projName <> ":" <> jobsetName)) Nothing
   return ()
-handleCmd host (Hydra.UpdateJobset repoName projName jobsetName jobset) = do
+handleCmd Hydra.HydraClientEnv {..} (Hydra.UpdateJobset repoName projName jobsetName jobset) = do
   liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue.")
   -- ensure we try to get this first, ...
   void $ Hydra.getJobset projName jobsetName
@@ -394,14 +397,14 @@ handleCmd host (Hydra.UpdateJobset repoName projName jobsetName jobset) = do
 
   -- or triggering an eval
   liftIO (putStrLn $ "Processing Update " ++ show projName ++ "/" ++ show jobsetName ++ " triggering push...")
-  void $ Hydra.push (Just host) (Just (projName <> ":" <> jobsetName)) Nothing
+  void $ Hydra.push (Just hceHost) (Just (projName <> ":" <> jobsetName)) Nothing
   return ()
 handleCmd _ (Hydra.DeleteJobset projName jobsetName) = do
   void $ Hydra.rmJobset projName jobsetName
   return ()
-handleCmd host (Hydra.EvaluateJobset projName jobsetName force) = do
+handleCmd Hydra.HydraClientEnv {..} (Hydra.EvaluateJobset projName jobsetName force) = do
   liftIO (putStrLn $ "Processing Eval " ++ show projName ++ "/" ++ show jobsetName ++ " from the queue. Triggering push...")
-  void $ Hydra.push (Just host) (Just (projName <> ":" <> jobsetName)) (Just force)
+  void $ Hydra.push (Just hceHost) (Just (projName <> ":" <> jobsetName)) (Just force)
   return ()
 handleCmd _ (Hydra.RestartBuild bid) = do
   liftIO (putStrLn $ "Processing Restart " ++ show bid ++ " from the queue. Triggering restart...")
