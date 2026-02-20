@@ -1,28 +1,16 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Main where
 
 import Control.Concurrent
-import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
 import Control.Exception
   ( SomeException,
     catch,
     displayException,
   )
 import Control.Monad (forever, replicateM_, unless, void, when)
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Char8 as BSL
-import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
-import GHC.Generics
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO
@@ -51,10 +39,10 @@ processDrvPath conn cache = do
             putStrLn $ "Attic push failed with exit code " ++ show code
             unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
             -- Slow down retries until we only do them monthly (8640 * 5 minutes is 30 days)
-            execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
+            _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
             pure True
           ExitSuccess -> do
-            execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
+            _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
             pure True
       _ -> pure False
   when more (processDrvPath conn cache)

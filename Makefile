@@ -1,12 +1,11 @@
-
 .DEFAULT_GOAL := help
 
 # Build targets
-hydra-github-bridge: ## Build hydra-github-bridge package
+hydra-github-bridge: ## Build hydra-github-bridge package (bidirectional GitHub ↔ Hydra bridge)
 	cabal build -j hydra-github-bridge
 
-github-hydra-bridge: ## Build github-hydra-bridge package
-	cabal build -j github-hydra-bridge
+hydra-attic-bridge: ## Build hydra-attic-bridge package
+	cabal build -j hydra-attic-bridge
 
 all: hydra-github-bridge hydra-attic-bridge ## Build all packages
 
