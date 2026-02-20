@@ -1,18 +1,124 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Hydra where
+module Lib.Hydra.Client
+  ( HydraClientEnv (..),
+    JobSetId,
+    EvalId,
+    BuildId,
+    Notification (..),
+    BuildStatus (..),
+    HydraLogin (..),
+    HydraPush (..),
+    HydraProject (..),
+    HydraJobset (..),
+    HydraJobsetResp (..),
+    HydraAPI,
+    defHydraProject,
+    defHydraJobset,
+    defHydraFlakeJobset,
+    mkProject,
+    mkJobset,
+    getJobset,
+    rmJobset,
+    login,
+    push,
+    restartBuild,
+    isAuthError,
+  )
+where
 
-import Data.Aeson
-import Data.Aeson.Casing
-import Data.Proxy
+import Data.Aeson (FromJSON (..), Object, ToJSON (..), genericParseJSON, genericToJSON)
+import Data.Aeson.Casing (aesonDrop, camelCase)
+import Data.Aeson.Types (Value)
 import Data.Text (Text)
-import GHC.Generics
-import Servant.API
-import Servant.Client
+import GHC.Generics (Generic)
+import Network.HTTP.Types (Status (..))
+import Servant
+import Servant.Client (ClientEnv, ClientError (..), ClientM, ResponseF (..), client)
+
+-- Hydra client environment that includes credentials for re-authentication
+data HydraClientEnv = HydraClientEnv
+  { hceHost :: Text,
+    hceUser :: Text,
+    hcePass :: Text,
+    hceClientEnv :: ClientEnv
+  }
+
+type JobSetId = Int
+
+type EvalId = Int
+
+type BuildId = Int
+
+data Notification
+  = EvalStarted JobSetId
+  | EvalAdded JobSetId EvalId
+  | EvalCached JobSetId EvalId
+  | EvalFailed JobSetId
+  | BuildQueued BuildId
+  | BuildStarted BuildId
+  | BuildFinished BuildId [BuildId]
+  deriving (Show, Eq)
+
+data BuildStatus
+  = Succeeded
+  | Failed
+  | DependencyFailed
+  | Aborted
+  | Cancelled
+  | FailedWithOutput
+  | TimedOut
+  | LogLimitExceeded
+  | OutputSizeLimitExceeded
+  | NonDeterministicBuild
+  | Other
+  deriving (Eq)
+
+instance Show BuildStatus where
+  show = \case
+    Succeeded -> "Build succeeded"
+    Failed -> "Build failed"
+    DependencyFailed -> "Build dependency failed"
+    Aborted -> "Build aborted"
+    Cancelled -> "Build cancelled"
+    FailedWithOutput -> "Build failed with output"
+    TimedOut -> "Build timed out"
+    LogLimitExceeded -> "Build log limit exceeded"
+    OutputSizeLimitExceeded -> "Build output size limit exceeded"
+    NonDeterministicBuild -> "Build is non-deterministic"
+    Other -> "Build failed due to unknown reason"
+
+instance Enum BuildStatus where
+  toEnum = \case
+    (0) -> Succeeded
+    (1) -> Failed
+    (2) -> DependencyFailed
+    (3) -> Aborted
+    (9) -> Aborted
+    (4) -> Cancelled
+    (6) -> FailedWithOutput
+    (7) -> TimedOut
+    (10) -> LogLimitExceeded
+    (11) -> OutputSizeLimitExceeded
+    (12) -> NonDeterministicBuild
+    (_) -> Other
+  fromEnum = \case
+    Succeeded -> 0
+    Failed -> 1
+    DependencyFailed -> 2
+    Aborted -> 3
+    Cancelled -> 4
+    FailedWithOutput -> 6
+    TimedOut -> 7
+    LogLimitExceeded -> 10
+    OutputSizeLimitExceeded -> 11
+    NonDeterministicBuild -> 12
+    Other -> 99
 
 data HydraLogin = HydraLogin
   { lUsername :: Text,
@@ -48,18 +154,6 @@ data HydraProject = HydraProject
   }
   deriving (Show, Eq, Generic)
 
-defHydraProject :: HydraProject
-defHydraProject =
-  HydraProject
-    { hpEnabled = True,
-      hpVisible = True,
-      hpOwner = "bridge",
-      hpName = "",
-      hpDisplayname = "",
-      hpDescription = "",
-      hpHomepage = ""
-    }
-
 instance ToJSON HydraProject where
   toJSON = genericToJSON $ aesonDrop 2 camelCase
 
@@ -91,25 +185,6 @@ data HydraJobset = HydraJobset
     -- inputs
   }
   deriving (Eq, Generic, Read, Show)
-
-defHydraJobset :: HydraJobset
-defHydraJobset =
-  HydraJobset
-    { hjEnabled = 1,
-      hjVisible = True,
-      hjKeepnr = 3,
-      hjSchedulingshares = 42,
-      hjCheckinterval = 0,
-      hjEnableemail = False,
-      hjEmailoverride = "",
-      hjType = 0,
-      hjName = "",
-      hjDescription = "",
-      hjFlake = ""
-    }
-
-defHydraFlakeJobset :: HydraJobset
-defHydraFlakeJobset = defHydraJobset {hjType = 1}
 
 instance ToJSON HydraJobset where
   toJSON = genericToJSON $ aesonDrop 2 camelCase
@@ -168,6 +243,37 @@ type HydraAPI =
       -- Responds with a redirect, just ignore that.
       :> Get '[] NoContent
 
+defHydraProject :: HydraProject
+defHydraProject =
+  HydraProject
+    { hpEnabled = True,
+      hpVisible = True,
+      hpOwner = "bridge",
+      hpName = "",
+      hpDisplayname = "",
+      hpDescription = "",
+      hpHomepage = ""
+    }
+
+defHydraJobset :: HydraJobset
+defHydraJobset =
+  HydraJobset
+    { hjEnabled = 1,
+      hjVisible = True,
+      hjKeepnr = 2,
+      hjSchedulingshares = 42,
+      hjCheckinterval = 0,
+      hjEnableemail = False,
+      hjEmailoverride = "",
+      hjType = 0,
+      hjName = "",
+      hjDescription = "",
+      hjFlake = ""
+    }
+
+defHydraFlakeJobset :: HydraJobset
+defHydraFlakeJobset = defHydraJobset {hjType = 1}
+
 mkProject :: Text -> HydraProject -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
 mkJobset :: Text -> Text -> HydraJobset -> ClientM (Union '[WithStatus 200 Object, WithStatus 201 Object])
 getJobset :: Text -> Text -> ClientM Value
@@ -177,4 +283,15 @@ push :: Maybe Text -> Maybe Text -> Maybe Bool -> ClientM Value
 restartBuild :: Int -> ClientM NoContent
 -- This will provide us with the definitions for mkProject, mkJobset, ... push,
 -- by generating a @client@ for the specified @HydraAPI@.
-mkProject :<|> mkJobset :<|> getJobset :<|> rmJobset :<|> login :<|> push :<|> restartBuild = client (Proxy @HydraAPI)
+mkProject
+  :<|> mkJobset
+  :<|> getJobset
+  :<|> rmJobset
+  :<|> login
+  :<|> push
+  :<|> restartBuild = client (Proxy @HydraAPI)
+
+-- Check if error is due to authentication failure (403 Forbidden)
+isAuthError :: ClientError -> Bool
+isAuthError (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 403}})) = True
+isAuthError _ = False
