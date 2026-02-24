@@ -19,10 +19,11 @@
     inputs.flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [
         flake/formatter.nix
+        flake/packages/fake-send-webhook
         flake/packages/hydra-tools
         flake/packages/mockoon-cli
         flake/nixosModules.nix
-        flake/tests.nix
+        flake/test
       ];
 
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
