@@ -23,7 +23,7 @@
     hydra-github-bridge.all = {
       enable = true;
       ghAppId = 12345;
-      ghAppInstallIds = "[(\"input-output-hk\", 98765)]";
+      ghAppInstallIds = "[(\"input-output-hk\", 1)]";
       ghUserAgent = "hydra-github-bridge";
       ghAppKeyFile =
         pkgs.runCommand
