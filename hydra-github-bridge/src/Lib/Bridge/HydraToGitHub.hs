@@ -87,8 +87,8 @@ import Text.Regex.TDFA ((=~))
 tshow :: (Show a) => a -> Text
 tshow = cs . show
 
-notificationWatcher :: String -> String -> Text -> Connection -> IO ()
-notificationWatcher host stateDir checkRunPrefix conn = do
+notificationWatcher :: String -> String -> Text -> Bool -> Connection -> IO ()
+notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
   _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
   _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
   _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
@@ -101,7 +101,7 @@ notificationWatcher host stateDir checkRunPrefix conn = do
   forever $ do
     putStrLn "Waiting for notification..."
     note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix note
+    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
     forM_ statuses $
       ( \(GitHub.CheckRun owner repo payload) -> do
           Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
@@ -220,8 +220,13 @@ toHydraNotification Notification {notificationChannel = chan, notificationData =
   | chan == "cached_build_finished", [_, bid] <- words (cs payload) = Hydra.BuildFinished (read bid) []
   | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
 
-whenStatusOrJob :: Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
-whenStatusOrJob status prevStepStatus job action
+-- | Filter which build notifications become GitHub check-runs.
+-- When @filterEnabled@ is 'False', every job is reported unconditionally.
+-- When 'True', only jobs whose name contains "required"/"nonrequired",
+-- failures, or builds following a failed step are reported.
+whenStatusOrJob :: Bool -> Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
+whenStatusOrJob filterEnabled status prevStepStatus job action
+  | not filterEnabled = action
   | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- ["required", "nonrequired"]] = action
   | Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
   | Just pss <- prevStepStatus, pss /= Hydra.Succeeded && maybe True (== GitHub.Success) status = action
@@ -252,8 +257,8 @@ parseGitHubFlakeURI uri
         (owner : repo : ts) -> Just (owner, repo, Text.concat ts)
         _ -> Nothing
 
-handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host stateDir checkRunPrefix e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
+handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Bool -> Hydra.Notification -> IO [GitHub.CheckRun]
+handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
   -- Evaluations
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -313,7 +318,7 @@ handleHydraNotification conn host stateDir checkRunPrefix e = (\computation -> c
     let prevStepStatus
           | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
           | otherwise = Nothing
-    whenStatusOrJob Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
+    whenStatusOrJob filterJobs Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
       pure $
         singleton $
           GitHub.CheckRun owner repo $
@@ -335,7 +340,7 @@ handleHydraNotification conn host stateDir checkRunPrefix e = (\computation -> c
     let prevStepStatus
           | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
           | otherwise = Nothing
-    whenStatusOrJob Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
+    whenStatusOrJob filterJobs Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
       pure $
         singleton $
           GitHub.CheckRun owner repo $
@@ -520,7 +525,7 @@ handleHydraNotification conn host stateDir checkRunPrefix e = (\computation -> c
       let prevStepStatus
             | length steps >= 2 = (\(_, _, statusInt) -> statusInt <&> toEnum) $ steps !! 1
             | otherwise = Nothing
-      whenStatusOrJob (Just ghCheckRunConclusion) prevStepStatus job $ do
+      whenStatusOrJob filterJobs (Just ghCheckRunConclusion) prevStepStatus job $ do
         buildTimes <- getBuildTimes bid
         let failedSteps = filter (\(_, _, statusInt) -> maybe False (/= Hydra.Succeeded) $ statusInt <&> toEnum) steps
         failedStepLogs <-

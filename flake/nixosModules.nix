@@ -116,6 +116,15 @@
                 '';
               };
 
+              filterJobs = mkOption {
+                type = types.bool;
+                default = true;
+                description = ''
+                  When true, only report required/nonrequired jobs and failures
+                  to GitHub. When false, report ALL jobs as check-runs.
+                '';
+              };
+
               port = mkOption {
                 type = types.port;
                 default = 8811;
@@ -186,6 +195,7 @@
                 }
                 // {
                   CHECK_RUN_PREFIX = iCfg.checkRunPrefix;
+                  FILTER_JOBS = lib.boolToString iCfg.filterJobs;
                 };
 
               script = ''

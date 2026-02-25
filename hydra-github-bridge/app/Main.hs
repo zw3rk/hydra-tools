@@ -101,6 +101,7 @@ main = do
       Just k  -> pure (C8.pack k)
       Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
+  filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
 
   -- Authenticate to GitHub
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
@@ -129,7 +130,7 @@ main = do
         hydraClient env conn,
       withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcher host stateDir checkRunPrefix),
+        (notificationWatcher host stateDir checkRunPrefix filterJobs),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
         run port (app (hceClientEnv env) conn (gitHubKey ghKey))
     ]
