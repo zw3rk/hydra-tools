@@ -93,7 +93,13 @@ main = do
   stateDir <- getEnv "HYDRA_STATE_DIR"
   ghEndpointUrl <- Text.pack . maybe "https://api.github.com" id <$> lookupEnv "GITHUB_ENDPOINT_URL"
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
-  ghKey <- maybe mempty C8.pack <$> lookupEnv "GITHUB_WEBHOOK_SECRET"
+  -- Webhook secret for signature verification.
+  -- Prefer GITHUB_WEBHOOK_SECRET, fall back to KEY for backwards compatibility.
+  ghKey <- do
+    v <- lookupEnv "GITHUB_WEBHOOK_SECRET"
+    case v of
+      Just k  -> pure (C8.pack k)
+      Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
 
   -- Authenticate to GitHub
