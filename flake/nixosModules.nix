@@ -108,6 +108,14 @@
                 '';
               };
 
+              checkRunPrefix = mkOption {
+                type = types.str;
+                default = "ci/hydra-build:";
+                description = ''
+                  Prefix for GitHub check-run names. Set to empty string to disable.
+                '';
+              };
+
               port = mkOption {
                 type = types.port;
                 default = 8811;
@@ -175,6 +183,9 @@
                 }
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
                   HYDRA_USER = iCfg.hydraUser;
+                }
+                // {
+                  CHECK_RUN_PREFIX = iCfg.checkRunPrefix;
                 };
 
               script = ''

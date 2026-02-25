@@ -94,6 +94,7 @@ main = do
   ghEndpointUrl <- Text.pack . maybe "https://api.github.com" id <$> lookupEnv "GITHUB_ENDPOINT_URL"
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
   ghKey <- maybe mempty C8.pack <$> lookupEnv "GITHUB_WEBHOOK_SECRET"
+  checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
 
   -- Authenticate to GitHub
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
@@ -122,7 +123,7 @@ main = do
         hydraClient env conn,
       withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcher host stateDir),
+        (notificationWatcher host stateDir checkRunPrefix),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
         run port (app (hceClientEnv env) conn (gitHubKey ghKey))
     ]

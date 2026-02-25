@@ -87,8 +87,8 @@ import Text.Regex.TDFA ((=~))
 tshow :: (Show a) => a -> Text
 tshow = cs . show
 
-notificationWatcher :: String -> String -> Connection -> IO ()
-notificationWatcher host stateDir conn = do
+notificationWatcher :: String -> String -> Text -> Connection -> IO ()
+notificationWatcher host stateDir checkRunPrefix conn = do
   _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
   _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
   _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
@@ -101,7 +101,7 @@ notificationWatcher host stateDir conn = do
   forever $ do
     putStrLn "Waiting for notification..."
     note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir note
+    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix note
     forM_ statuses $
       ( \(GitHub.CheckRun owner repo payload) -> do
           Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
@@ -252,8 +252,8 @@ parseGitHubFlakeURI uri
         (owner : repo : ts) -> Just (owner, repo, Text.concat ts)
         _ -> Nothing
 
-handleHydraNotification :: Connection -> Text -> FilePath -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
+handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Hydra.Notification -> IO [GitHub.CheckRun]
+handleHydraNotification conn host stateDir checkRunPrefix e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
   -- Evaluations
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -318,7 +318,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
         singleton $
           GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/hydra-build:" <> job,
+              { name = checkRunPrefix <> job,
                 headSha = hash,
                 detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                 externalId = Just $ tshow bid,
@@ -340,7 +340,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
         singleton $
           GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/hydra-build:" <> job,
+              { name = checkRunPrefix <> job,
                 headSha = hash,
                 detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                 externalId = Just $ tshow bid,
@@ -542,7 +542,7 @@ handleHydraNotification conn host stateDir e = (\computation -> catchJust catchJ
           singleton $
             GitHub.CheckRun owner repo $
               GitHub.CheckRunPayload
-                { name = "ci/hydra-build:" <> job,
+                { name = checkRunPrefix <> job,
                   headSha = hash,
                   detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
                   externalId = Just $ tshow bid,
