@@ -24,6 +24,8 @@
                 ./setup.nix
               ];
 
+              virtualisation.memorySize = 2048;
+
               environment = {
                 systemPackages = with pkgs; [
                   # Sending fake GitHub webhook requests
