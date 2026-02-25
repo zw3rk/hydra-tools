@@ -35,7 +35,7 @@
 
                 variables = {
                   # Required by `fake-send-webhook` in the test script
-                  WEBHOOK_SECRET = "github-token";
+                  WEBHOOK_SECRET = "secret-token";
                 };
               };
             };
