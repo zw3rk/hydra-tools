@@ -17,6 +17,7 @@ common common
                     , aeson-schemas
                     , aeson-casing
                     , async
+                    , containers
                     , human-readable-duration
                     , postgresql-simple
                     , bytestring
@@ -41,6 +42,7 @@ common common
                     , servant-client
                     , servant-github-webhook
                     , stm
+                    , wai
                     , warp
 
 library
@@ -56,6 +58,9 @@ library
                       , Lib.GitHub
                       , Lib.GitHub.Client
                       , Lib.GitHub.WebHookServer
+                      , Lib.SSE
+                      , Lib.SSE.StatusCache
+                      , Lib.SSE.Server
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
@@ -64,7 +69,7 @@ executable hydra-github-bridge
     import:           common
     ghc-options:      -threaded -rtsopts
     hs-source-dirs:   app, src
-    other-modules:      Lib 
+    other-modules:      Lib
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
@@ -74,6 +79,9 @@ executable hydra-github-bridge
                       , Lib.Hydra
                       , Lib.Hydra.Client
                       , Lib.Hydra.DB
+                      , Lib.SSE
+                      , Lib.SSE.StatusCache
+                      , Lib.SSE.Server
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text

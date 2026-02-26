@@ -125,6 +125,24 @@
                 '';
               };
 
+              enableSse = mkOption {
+                type = types.bool;
+                default = true;
+                description = ''
+                  Enable the SSE (Server-Sent Events) endpoint for real-time
+                  build status streaming. Clients can connect to
+                  GET /status/:owner/:repo/:sha/events for live updates.
+                '';
+              };
+
+              ssePort = mkOption {
+                type = types.port;
+                default = 8812;
+                description = ''
+                  The port for the SSE status endpoint.
+                '';
+              };
+
               port = mkOption {
                 type = types.port;
                 default = 8811;
@@ -196,6 +214,8 @@
                 // {
                   CHECK_RUN_PREFIX = iCfg.checkRunPrefix;
                   FILTER_JOBS = lib.boolToString iCfg.filterJobs;
+                  SSE_ENABLED = lib.boolToString iCfg.enableSse;
+                  SSE_PORT = toString iCfg.ssePort;
                 };
 
               script = ''
