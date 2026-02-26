@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -5,7 +6,9 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Lib.Bridge.GitHubToHydra
-  ( hydraClientEnv,
+  ( GitHubToHydraEnv (..),
+    GitHubToHydraT (..),
+    hydraClientEnv,
     app,
     singleEndpoint,
     pushHook,
@@ -26,7 +29,9 @@ where
 import Control.Concurrent.STM (newTVarIO)
 import Control.Monad (forM_, forever, void)
 import Control.Monad.Except (MonadError (..))
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.Reader (ReaderT (..), asks)
+import Control.Monad.Reader.Class (MonadReader)
 import Data.Aeson qualified as Aeson
 import Data.Char (isNumber)
 import Data.Maybe (fromJust)
@@ -34,8 +39,27 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
-import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
-import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
+import GitHub.Data.Webhooks.Events
+  ( CheckRunEvent (..),
+    CheckRunEventAction (..),
+    CheckSuiteEvent (..),
+    CheckSuiteEventAction (..),
+    IssueCommentEvent (..),
+    PullRequestEvent (..),
+    PullRequestEventAction (..),
+    PushEvent (..),
+  )
+import GitHub.Data.Webhooks.Payload
+  ( HookCheckRun (..),
+    HookCheckSuite (..),
+    HookChecksPullRequest (..),
+    HookChecksPullRequestTarget (..),
+    HookIssueComment (..),
+    HookPullRequest (..),
+    HookRepository (..),
+    HookUser (..),
+    PullRequestTarget (..),
+  )
 import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
 import Lib.Hydra qualified as Hydra
@@ -43,29 +67,58 @@ import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (Status (..))
 import Network.URI (parseURI)
-import Servant (Application, Context (..), Handler, Server, (:<|>) (..))
-import Servant.Client (BaseUrl (..), ClientEnv (..), ClientError (..), ClientM, ResponseF (..), Scheme (..), mkClientEnv, parseBaseUrl, runClientM, showBaseUrl)
+import Servant
+  ( Application,
+    Context (..),
+    Handler,
+    HasServer (..),
+    (:<|>) (..),
+  )
+import Servant qualified
+import Servant.Client (ClientEnv, ClientM)
+import Servant.Client qualified as Servant
 import Servant.GitHub.Webhook (RepoWebhookEvent)
-import Servant.Server (serveWithContext)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-app :: ClientEnv -> Connection -> GitHubKey -> Application
-app env conn key =
-  serveWithContext
+data GitHubToHydraEnv = GitHubToHydraEnv
+  { gthEnvHydraClient :: ClientEnv,
+    gthEnvGitHubKey :: GitHubKey
+  }
+
+newtype GitHubToHydraT m a = GitHubToHydraT
+  {unGitHubToHydraT :: ReaderT GitHubToHydraEnv m a}
+  deriving
+    ( Functor,
+      Applicative,
+      Monad,
+      MonadIO,
+      MonadReader GitHubToHydraEnv,
+      MonadError e
+    )
+
+runGitHubToHydraT :: GitHubToHydraEnv -> GitHubToHydraT m a -> m a
+runGitHubToHydraT env (GitHubToHydraT action) = runReaderT action env
+
+app :: GitHubToHydraEnv -> Connection -> Application
+app env@GitHubToHydraEnv {gthEnvGitHubKey} conn =
+  Servant.serveWithContextT
     (Proxy :: Proxy SingleHookEndpointAPI)
-    (key :. EmptyContext)
-    (singleEndpoint env conn)
+    (gthEnvGitHubKey :. EmptyContext)
+    (runGitHubToHydraT env)
+    (singleEndpoint conn)
 
-singleEndpoint :: ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint env conn =
-  (pushHook conn)
+singleEndpoint ::
+  Connection ->
+  ServerT SingleHookEndpointAPI (GitHubToHydraT Handler)
+singleEndpoint conn =
+  pushHook conn
     :<|> issueCommentHook
-    :<|> (pullRequestHook conn)
-    :<|> (checkSuiteHook env conn)
-    :<|> (checkRunHook conn)
+    :<|> pullRequestHook conn
+    :<|> checkSuiteHook conn
+    :<|> checkRunHook conn
 
-pushHook :: Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook :: Connection -> RepoWebhookEvent -> ((), PushEvent) -> GitHubToHydraT Handler ()
 pushHook conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
     Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
@@ -139,12 +192,19 @@ parseMergeQueueRef ref = do
 escapeHydraName :: Text -> Text
 escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
 
-issueCommentHook :: RepoWebhookEvent -> ((), IssueCommentEvent) -> Handler ()
+issueCommentHook ::
+  RepoWebhookEvent ->
+  ((), IssueCommentEvent) ->
+  GitHubToHydraT Handler ()
 issueCommentHook _ (_, ev) = liftIO $ do
   putStrLn "An issue comment was posted:"
   print $ (whIssueCommentBody . evIssueCommentPayload) ev
 
-pullRequestHook :: Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook ::
+  Connection ->
+  RepoWebhookEvent ->
+  ((), PullRequestEvent) ->
+  GitHubToHydraT Handler ()
 pullRequestHook
   conn
   _
@@ -255,31 +315,42 @@ pullRequestHook conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClo
 pullRequestHook _ _ (_, ev) =
   liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
-checkSuiteHook :: ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
-  let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
-      repoName = whRepoFullName $ evCheckSuiteRepository ev
-      projName = escapeHydraName repoName
+checkSuiteHook ::
+  Connection ->
+  RepoWebhookEvent ->
+  ((), CheckSuiteEvent) ->
+  GitHubToHydraT Handler ()
+checkSuiteHook conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = do
+  clientEnv <- asks gthEnvHydraClient
 
-  forM_ prs $ \pr -> do
-    let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+  liftIO $ do
+    let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
+        repoName = whRepoFullName $ evCheckSuiteRepository ev
+        projName = escapeHydraName repoName
 
-    jobset <-
-      (flip runClientM env $ Hydra.getJobset projName jobsetName)
-        >>= either (die . show) return
-        >>= \response -> case Aeson.fromJSON response of
-          Aeson.Error e -> die $ show e
-          Aeson.Success v -> return v
+    forM_ prs $ \pr -> do
+      let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-    putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-    Hydra.writeCommand conn $
-      Hydra.UpdateJobset repoName projName jobsetName $
-        jobset
-          { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
-          }
-checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
+      jobset <-
+        (flip Servant.runClientM clientEnv $ Hydra.getJobset projName jobsetName)
+          >>= either (die . show) return
+          >>= \response -> case Aeson.fromJSON response of
+            Aeson.Error e -> die $ show e
+            Aeson.Success v -> return v
 
-checkRunHook :: Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
+      putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+      Hydra.writeCommand conn $
+        Hydra.UpdateJobset repoName projName jobsetName $
+          jobset
+            { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
+            }
+checkSuiteHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
+
+checkRunHook ::
+  Connection ->
+  RepoWebhookEvent ->
+  ((), CheckRunEvent) ->
+  GitHubToHydraT Handler ()
 checkRunHook conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
   let checkRun = evCheckRunCheckRun ev
       checkRunName = whCheckRunName checkRun
@@ -318,19 +389,19 @@ hydraClientEnv host user pass = do
   hydraUrl <-
     case parseURI hostStr of
       -- It's a valid URI, use servant's parser
-      Just _ -> parseBaseUrl hostStr
+      Just _ -> Servant.parseBaseUrl hostStr
       -- Otherwise, we'll just assume it's a bare host
-      _ -> pure (BaseUrl Https hostStr 443 "")
+      _ -> pure (Servant.BaseUrl Servant.Https hostStr 443 "")
 
   let env =
-        (mkClientEnv mgr hydraUrl)
-          { cookieJar = Just jar
+        (Servant.mkClientEnv mgr hydraUrl)
+          { Servant.cookieJar = Just jar
           }
       -- The base url will be passed around in the origin header
-      host' = Text.pack (showBaseUrl hydraUrl)
+      host' = Text.pack (Servant.showBaseUrl hydraUrl)
 
   -- login first
-  runClientM (Hydra.login (Just host') (Hydra.HydraLogin user pass)) env >>= \case
+  Servant.runClientM (Hydra.login (Just host') (Hydra.HydraLogin user pass)) env >>= \case
     Left e -> die (show e)
     Right _ -> pure ()
 
@@ -341,7 +412,7 @@ hydraClient henv@Hydra.HydraClientEnv {hceClientEnv} conn =
   -- loop forever, working down the hydra commands
   forever $
     Hydra.readCommand conn >>= \cmd -> do
-      result <- runClientM (handleCmd henv cmd) hceClientEnv
+      result <- Servant.runClientM (handleCmd henv cmd) hceClientEnv
       case result of
         Left e | Hydra.isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
@@ -349,7 +420,7 @@ hydraClient henv@Hydra.HydraClientEnv {hceClientEnv} conn =
             Left authErr -> putStrLn authErr
             Right () -> do
               -- Retry the command after successful re-authentication
-              runClientM (handleCmd henv cmd) hceClientEnv >>= \case
+              Servant.runClientM (handleCmd henv cmd) hceClientEnv >>= \case
                 Left e' -> print e'
                 Right _ -> pure ()
         Left e -> print e
@@ -415,7 +486,7 @@ handleCmd _ (Hydra.RestartBuild bid) = do
 on404 :: ClientM a -> ClientM a -> ClientM a
 on404 a b = a `catchError` handle
   where
-    handle (FailureResponse _ (Response {responseStatusCode = Status {statusCode = 404}})) = b
+    handle (Servant.FailureResponse _ (Servant.Response {responseStatusCode = Status {statusCode = 404}})) = b
     handle e = throwError e
 
 splitRepo :: Text -> (Text, Text)
@@ -427,7 +498,7 @@ splitRepo repo =
 -- Re-authenticate with Hydra when session expires
 reAuthenticate :: HydraClientEnv -> IO (Either String ())
 reAuthenticate (Hydra.HydraClientEnv host user pass env) = do
-  result <- runClientM (Hydra.login (Just host) (Hydra.HydraLogin user pass)) env
+  result <- Servant.runClientM (Hydra.login (Just host) (Hydra.HydraLogin user pass)) env
   case result of
     Left e -> return $ Left ("Re-authentication failed: " ++ show e)
     Right _ -> return $ Right ()

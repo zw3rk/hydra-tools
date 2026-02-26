@@ -13,7 +13,7 @@ import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple
-import Lib.Bridge.GitHubToHydra (app, hydraClient, hydraClientEnv)
+import Lib.Bridge.GitHubToHydra (app, hydraClient, hydraClientEnv, GitHubToHydraEnv (..))
 import Lib.Bridge.HydraToGitHub
   ( HydraToGitHubEnv (..),
     fetchGitHubTokens,
@@ -61,6 +61,7 @@ main = do
 
   -- Start the app loop
   let numWorkers = 10 -- default number of workers
+
       hydraToGitHubEnv =
         HydraToGitHubEnv
           { htgEnvHydraHost = host,
@@ -73,6 +74,12 @@ main = do
             htgEnvGhTokens = ghTokensRef
           }
 
+      gitHubToHydraEnv =
+        GitHubToHydraEnv
+          { gthEnvHydraClient = hceClientEnv env,
+            gthEnvGitHubKey = gitHubKey ghKey
+          }
+
   Async.mapConcurrently_
     id
     [ Async.replicateConcurrently_
@@ -81,11 +88,13 @@ main = do
             (ConnectInfo db 5432 db_user db_pass "hydra")
             (runHydraToGitHubT hydraToGitHubEnv . statusHandlers)
         ),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-        hydraClient env conn,
+      withConnect
+        (ConnectInfo db 5432 db_user db_pass "hydra")
+        (hydraClient env),
       withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (runHydraToGitHubT hydraToGitHubEnv . notificationWatcher),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app (hceClientEnv env) conn (gitHubKey ghKey))
+      withConnect 
+        (ConnectInfo db 5432 db_user db_pass "hydra")
+        (run port . app gitHubToHydraEnv)
     ]
