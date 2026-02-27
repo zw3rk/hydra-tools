@@ -45,10 +45,12 @@ processDrvPath conn cache = do
       (Only maxRetries)
     case result of
       [(rowId, drvPath) :: (Int, String)] -> do
-        -- Check that the store path actually exists locally before
-        -- shelling out to attic.  Remote-built outputs may not have
-        -- been fetched back to the Hydra server.
-        (probeExit, _, _) <- readCreateProcessWithExitCode (shell $ "nix path-info " ++ drvPath ++ " >/dev/null 2>&1") ""
+        -- Check that the store path actually exists in the local store
+        -- before shelling out to attic.  Remote-built outputs may not
+        -- have been fetched back to the Hydra server.  We use --offline
+        -- to prevent nix from consulting substituters — we only care
+        -- whether the path physically exists on this machine.
+        (probeExit, _, _) <- readCreateProcessWithExitCode (shell $ "nix path-info --offline " ++ drvPath ++ " >/dev/null 2>&1") ""
         case probeExit of
           ExitFailure _ -> do
             -- Path doesn't exist locally — backoff so we retry later
