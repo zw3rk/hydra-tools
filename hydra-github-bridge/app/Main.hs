@@ -77,7 +77,8 @@ main = do
       gitHubToHydraEnv =
         GitHubToHydraEnv
           { gthEnvHydraClient = hceClientEnv env,
-            gthEnvGitHubKey = gitHubKey ghKey
+            gthEnvGitHubKey = gitHubKey ghKey,
+            gthEnvGhAppInstallIds = ghAppInstallIds
           }
 
   Async.mapConcurrently_
