@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
@@ -26,24 +27,49 @@ import System.Process
   )
 import Text.Read (readMaybe)
 
+-- | Maximum number of retries before permanently discarding an entry.
+-- At 1.5^20 * 5 min ≈ 16 hours for the last retry.  Entries beyond
+-- this threshold are dead weight that will never succeed (the store
+-- path was never fetched back from the remote builder, or the
+-- derivation is genuinely broken).
+maxRetries :: Int
+maxRetries = 20
+
 processDrvPath :: Connection -> String -> IO ()
 processDrvPath conn cache = do
   more <- withTransaction conn $ do
-    result <- query_ conn "SELECT drvpath FROM DrvpathsToUpload WHERE last < NOW() FOR UPDATE SKIP LOCKED LIMIT 1;"
+    -- Select by primary key so that DELETE/UPDATE below only touches
+    -- one row, eliminating deadlocks from duplicate drvpath entries.
+    result <- query conn
+      "SELECT id, drvpath FROM DrvpathsToUpload WHERE last < NOW() AND tries < ? FOR UPDATE SKIP LOCKED LIMIT 1;"
+      (Only maxRetries)
     case result of
-      [Only drvPath] -> do
-        (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
-        case exitCode of
-          ExitFailure code -> do
-            putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
-            putStrLn $ "Attic push failed with exit code " ++ show code
-            unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
-            -- Slow down retries until we only do them monthly (8640 * 5 minutes is 30 days)
-            _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE drvpath = ?;" (Only drvPath)
+      [(rowId, drvPath) :: (Int, String)] -> do
+        -- Check that the store path actually exists locally before
+        -- shelling out to attic.  Remote-built outputs may not have
+        -- been fetched back to the Hydra server.
+        (probeExit, _, _) <- readCreateProcessWithExitCode (shell $ "nix path-info " ++ drvPath ++ " >/dev/null 2>&1") ""
+        case probeExit of
+          ExitFailure _ -> do
+            -- Path doesn't exist locally — backoff so we retry later
+            -- (the queue-runner may still be uploading it from a
+            -- remote builder).
+            putStrLn $ "Path not valid locally, deferring: " ++ drvPath
+            _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + interval '2 minutes', tries = tries + 1 WHERE id = ?;" (Only rowId)
             pure True
           ExitSuccess -> do
-            _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE drvpath = ?;" (Only drvPath)
-            pure True
+            (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
+            case exitCode of
+              ExitFailure code -> do
+                putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
+                putStrLn $ "Attic push failed with exit code " ++ show code
+                unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
+                -- Exponential backoff: 5 min * 1.5^tries, capped at 30 days.
+                _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
+                pure True
+              ExitSuccess -> do
+                _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE id = ?;" (Only rowId)
+                pure True
       _ -> pure False
   when more (processDrvPath conn cache)
 
@@ -56,7 +82,6 @@ workerLoop wakeChan connectInfo cache =
       catch (processDrvPath conn cache) $ \err ->
         putStrLn $ "Worker encountered an error: " ++ displayException (err :: SomeException)
 
--- main ()
 main :: IO ()
 main = do
   hSetBuffering stdin LineBuffering
