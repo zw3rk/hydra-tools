@@ -138,7 +138,13 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
                     "JOIN github_status_payload p ON g.id = p.status_id",
                     "WHERE p.id = g.mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
                     "ORDER BY",
-                    "  CASE WHEN g.name = 'ci/eval' THEN 0 ELSE 1 END,", -- Prioritize 'ci/eval'
+                    -- Prioritize evaluation and aggregate check-runs so
+                    -- that downstream consumers (e.g. wait-for-hydra)
+                    -- don't have to wait for hundreds of per-build
+                    -- check-runs to be posted first.
+                    "  CASE WHEN g.name = 'ci/eval' THEN 0",
+                    "       WHEN g.name LIKE '%required' THEN 1",
+                    "       ELSE 2 END,",
                     "  p.id ASC",
                     "LIMIT 1",
                     "FOR UPDATE SKIP LOCKED"
