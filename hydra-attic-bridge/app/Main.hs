@@ -114,7 +114,10 @@ main = do
   let workerCount =
         case workersEnv >>= readMaybe of
           Just n | n > 0 -> n
-          _ -> 1
+          -- Default to 4 workers: peer-fetch adds network I/O per item,
+          -- so parallelism helps keep throughput up while waiting on
+          -- nix-store --realise and attic push.
+          _ -> 4
 
   (exitCode, _, errOutput) <-
     readCreateProcessWithExitCode
