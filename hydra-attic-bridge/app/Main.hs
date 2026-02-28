@@ -35,6 +35,23 @@ import Text.Read (readMaybe)
 maxRetries :: Int
 maxRetries = 20
 
+-- | Push a store path to attic.  On success the row is deleted;
+-- on failure an exponential backoff is applied.
+pushToAttic :: Connection -> String -> Int -> String -> IO Bool
+pushToAttic conn cache rowId drvPath = do
+  (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
+  case exitCode of
+    ExitFailure code -> do
+      putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
+      putStrLn $ "Attic push failed with exit code " ++ show code
+      unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
+      -- Exponential backoff: 5 min * 1.5^tries, capped at 30 days.
+      _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
+      pure True
+    ExitSuccess -> do
+      _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE id = ?;" (Only rowId)
+      pure True
+
 processDrvPath :: Connection -> String -> IO ()
 processDrvPath conn cache = do
   more <- withTransaction conn $ do
@@ -45,33 +62,30 @@ processDrvPath conn cache = do
       (Only maxRetries)
     case result of
       [(rowId, drvPath) :: (Int, String)] -> do
-        -- Check that the store path actually exists in the local store
-        -- before shelling out to attic.  Remote-built outputs may not
-        -- have been fetched back to the Hydra server.  We use --offline
-        -- to prevent nix from consulting substituters — we only care
-        -- whether the path physically exists on this machine.
+        -- Fast local check: is the store path already in our store?
+        -- Uses --offline to skip substituters for a quick probe.
         (probeExit, _, _) <- readCreateProcessWithExitCode (shell $ "nix path-info --offline " ++ drvPath ++ " >/dev/null 2>&1") ""
         case probeExit of
           ExitFailure _ -> do
-            -- Path doesn't exist locally — backoff so we retry later
-            -- (the queue-runner may still be uploading it from a
-            -- remote builder).
-            putStrLn $ "Path not valid locally, deferring: " ++ drvPath
-            _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + interval '2 minutes', tries = tries + 1 WHERE id = ?;" (Only rowId)
-            pure True
-          ExitSuccess -> do
-            (exitCode, _, errOutput) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ drvPath) ""
-            case exitCode of
-              ExitFailure code -> do
-                putStrLn $ "Ran: attic push " ++ cache ++ " " ++ drvPath
-                putStrLn $ "Attic push failed with exit code " ++ show code
-                unless (null errOutput) $ putStrLn $ "Error output:\n" ++ errOutput
-                -- Exponential backoff: 5 min * 1.5^tries, capped at 30 days.
-                _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '5 minutes' * least(8640, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
-                pure True
+            -- Path not in local store.  Try fetching from LAN peers
+            -- via peernix / configured substituters before giving up.
+            -- nix-store --realise checks all configured substituters
+            -- and downloads if found — it does NOT rebuild.
+            putStrLn $ "Path not local, fetching from peers: " ++ drvPath
+            (fetchExit, _, fetchErr) <- readCreateProcessWithExitCode (shell $ "nix-store --realise " ++ drvPath ++ " >/dev/null 2>&1") ""
+            case fetchExit of
               ExitSuccess -> do
-                _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE id = ?;" (Only rowId)
+                putStrLn $ "Fetched from peer: " ++ drvPath
+                pushToAttic conn cache rowId drvPath
+              ExitFailure _ -> do
+                -- Path truly unavailable anywhere on the network.
+                -- Use a longer backoff since these are unlikely to
+                -- appear soon (no point hammering every 2 minutes).
+                putStrLn $ "Path not available on any peer, deferring: " ++ drvPath
+                unless (null fetchErr) $ putStrLn $ "Fetch error: " ++ fetchErr
+                _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + interval '10 minutes', tries = tries + 1 WHERE id = ?;" (Only rowId)
                 pure True
+          ExitSuccess -> pushToAttic conn cache rowId drvPath
       _ -> pure False
   when more (processDrvPath conn cache)
 
