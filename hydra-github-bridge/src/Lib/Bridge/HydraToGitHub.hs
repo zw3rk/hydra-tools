@@ -127,33 +127,30 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
             conn
             ( fromString $
                 unwords
-                  [ "WITH AllStatus AS (",
-                    "  SELECT s.id, MAX(p.id) AS mostRecentPaylodID, s.owner, s.repo, s.headSha, s.name",
-                    "  FROM github_status s",
-                    "  JOIN github_status_payload p ON s.id = p.status_id",
-                    "  GROUP BY s.id, s.owner, s.repo, s.headSha, s.name",
-                    ")",
-                    "SELECT p.id, g.owner, g.repo, p.payload",
-                    "FROM AllStatus g",
-                    "JOIN github_status_payload p ON g.id = p.status_id",
-                    "WHERE p.id = g.mostRecentPaylodID AND p.sent IS NULL AND p.tries < 5",
+                  [ -- Only scan unsent rows (typically ~40k) instead of
+                    -- the full table (1.2M+).  The NOT EXISTS subquery
+                    -- ensures we still pick only the most-recent unsent
+                    -- payload per status, using the partial index
+                    -- idx_github_status_payload_unsent.
+                    "SELECT p.id, s.owner, s.repo, p.payload",
+                    "FROM github_status_payload p",
+                    "JOIN github_status s ON s.id = p.status_id",
+                    "WHERE p.sent IS NULL AND p.tries < 5",
+                    "  AND NOT EXISTS (",
+                    "    SELECT 1 FROM github_status_payload p2",
+                    "    WHERE p2.status_id = p.status_id AND p2.id > p.id AND p2.sent IS NULL",
+                    "  )",
                     "ORDER BY",
                     -- Prioritize evaluation and aggregate check-runs so
                     -- that downstream consumers (e.g. wait-for-hydra)
                     -- don't have to wait for hundreds of per-build
                     -- check-runs to be posted first.
-                    "  CASE WHEN g.name = 'ci/eval' THEN 0",
-                    "       WHEN g.name LIKE '%required' THEN 1",
+                    "  CASE WHEN s.name = 'ci/eval' THEN 0",
+                    "       WHEN s.name LIKE '%required' THEN 1",
                     "       ELSE 2 END,",
                     "  p.id ASC",
                     "LIMIT 1",
-                    "FOR UPDATE SKIP LOCKED"
-                    -- "SELECT p.id, g.owner, g.repo, p.payload"
-                    --                              , "FROM github_status_payload p"
-                    --                              , "JOIN github_status g ON g.id = p.status_id"
-                    --                              , "WHERE p.sent IS NULL AND p.tries < 5"
-                    --                              , "ORDER BY p.created ASC"
-                    --                              , "FOR UPDATE OF p, g SKIP LOCKED"
+                    "FOR UPDATE OF p SKIP LOCKED"
                   ]
             )
         -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are

@@ -9,6 +9,7 @@
 
 module Main where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Monad
 import Data.Aeson (toJSON)
@@ -174,6 +175,18 @@ main = do
   let numWorkers = 10
       getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
 
+  -- Create partial index for the optimized unsent-payload query.
+  -- CONCURRENTLY cannot run inside a transaction, so we use a
+  -- dedicated connection with autocommit.
+  withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \migConn -> do
+    putStrLn "Ensuring partial index idx_github_status_payload_unsent exists..."
+    _ <- execute_ migConn
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
+      \idx_github_status_payload_unsent \
+      \ON github_status_payload (status_id, id DESC) \
+      \WHERE sent IS NULL AND tries < 5"
+    putStrLn "Index ready."
+
   Async.mapConcurrently_
     id $
     [ Async.replicateConcurrently_
@@ -189,6 +202,30 @@ main = do
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app (hceClientEnv env) conn (gitHubKey ghKey))
+        run port (app (hceClientEnv env) conn (gitHubKey ghKey)),
+      -- Periodically prune stale notifications for old commits that
+      -- have already been superseded by newer evaluations.  Only marks
+      -- a payload as sent when a later payload for the same
+      -- (owner, repo, name) has already been successfully delivered.
+      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+        forever $ do
+          threadDelay (5 * 60 * 1000000) -- 5 minutes
+          pruned <- execute_ conn
+            "UPDATE github_status_payload SET sent = NOW() \
+            \WHERE id IN ( \
+            \  SELECT p.id \
+            \  FROM github_status_payload p \
+            \  JOIN github_status s ON s.id = p.status_id \
+            \  WHERE p.sent IS NULL AND p.tries < 5 \
+            \    AND EXISTS ( \
+            \      SELECT 1 \
+            \      FROM github_status_payload p2 \
+            \      JOIN github_status s2 ON s2.id = p2.status_id \
+            \      WHERE s2.owner = s.owner AND s2.repo = s.repo AND s2.name = s.name \
+            \        AND p2.sent IS NOT NULL AND p2.id > p.id \
+            \    ) \
+            \)"
+          when (pruned > 0) $
+            putStrLn $ "Pruned " ++ show pruned ++ " stale notification(s)"
     ]
     ++ [ runSSEServer cache ssePort sseTtl | sseEnabled ]
