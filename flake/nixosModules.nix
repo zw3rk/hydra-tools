@@ -292,6 +292,9 @@
           after = ["postgresql.service"];
           partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
 
+          # nix is needed for the local store probe (nix path-info --offline).
+          path = [ pkgs.nix ];
+
           startLimitIntervalSec = 0;
 
           serviceConfig =
