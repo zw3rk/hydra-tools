@@ -1,6 +1,6 @@
+cabal-version:      3.0
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
-cabal-version:      3.0
 name:               hydra-web
 version:            0.1.0.0
 synopsis:           Haskell frontend for Hydra CI (replaces Go hydra-web)
