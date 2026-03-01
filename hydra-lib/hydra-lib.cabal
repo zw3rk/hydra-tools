@@ -1,0 +1,49 @@
+-- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- SPDX-License-Identifier: Apache-2.0
+cabal-version:      3.0
+name:               hydra-lib
+version:            0.1.0.0
+synopsis:           Shared types and utilities for hydra-tools components
+license:            Apache-2.0
+author:             Moritz Angermann
+maintainer:         moritz@zw3rk.com
+category:           Network
+build-type:         Simple
+
+library
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror
+    hs-source-dirs:   src
+
+    exposed-modules:
+        HydraLib.Hydra.Types
+      , HydraLib.Hydra.Client
+      , HydraLib.GitHub.Types
+      , HydraLib.GitHub.Client
+      , HydraLib.SSE.StatusCache
+      , HydraLib.Data.Duration
+      , HydraLib.Data.List
+      , HydraLib.Data.Text
+
+    build-depends:
+        base >= 4.16 && < 5
+      , aeson
+      , aeson-casing
+      , async
+      , bytestring
+      , containers
+      , crypton
+      , crypton-x509
+      , crypton-x509-store
+      , github-rest >= 1.2
+      , http-client
+      , http-client-tls
+      , http-types
+      , human-readable-duration
+      , mtl
+      , servant
+      , servant-client
+      , stm
+      , string-conversions
+      , text
+      , time

@@ -1,0 +1,156 @@
+/* hydra-web — Minimal CSS for Pico CSS compatibility.
+ * Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * This CSS works with Pico CSS (https://picocss.com) as a base.
+ * Include Pico CSS via CDN or vendor it alongside this file.
+ * These are supplemental styles for Hydra-specific UI elements.
+ */
+
+/* ── Status colors ─────────────────────────── */
+.status-succeeded { color: #2e7d32; }
+.status-failed    { color: #c62828; }
+.status-queued    { color: #f57f17; }
+.status-aborted   { color: #e65100; }
+.status-unknown   { color: #757575; }
+
+/* ── Tables ────────────────────────────────── */
+table { width: 100%; }
+
+th.num, td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+tr.disabled td { opacity: 0.5; }
+tr.hidden-jobset td { opacity: 0.7; }
+
+/* ── Navigation ────────────────────────────── */
+nav ul {
+  list-style: none;
+  display: flex;
+  gap: 1rem;
+  padding: 0;
+  margin: 0;
+  align-items: center;
+}
+
+nav {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--pico-muted-border-color, #ddd);
+  margin-bottom: 1rem;
+}
+
+/* ── Badges / Tags ─────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 0.15em 0.5em;
+  border-radius: 0.25rem;
+  background: var(--pico-muted-color, #e0e0e0);
+  font-size: 0.85em;
+  margin: 0.1em;
+}
+
+.disabled-badge {
+  display: inline-block;
+  padding: 0.15em 0.4em;
+  border-radius: 0.25rem;
+  background: #bdbdbd;
+  color: #fff;
+  font-size: 0.75em;
+}
+
+/* ── Eval info ─────────────────────────────── */
+dl.eval-info, dl.build-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+}
+
+dl.eval-info dt, dl.build-summary dt {
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ── Error box ─────────────────────────────── */
+.error-box {
+  border-left: 4px solid #c62828;
+  background: #ffebee;
+  padding: 0.5rem 1rem;
+  margin: 1rem 0;
+}
+
+.error-box header {
+  font-weight: 700;
+  color: #c62828;
+}
+
+.error-box pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.85em;
+  max-height: 20rem;
+  overflow: auto;
+}
+
+/* ── Tab buttons ───────────────────────────── */
+[role="tablist"] {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+[role="tablist"] button {
+  padding: 0.4em 0.8em;
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 0.25rem;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+[role="tablist"] button:hover,
+[role="tablist"] button.htmx-request {
+  background: var(--pico-primary-background, #e3f2fd);
+}
+
+/* ── Flash message ─────────────────────────── */
+.flash {
+  padding: 0.75rem 1rem;
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Pager ─────────────────────────────────── */
+.pager {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+
+/* ── Small external link indicator ─────────── */
+.small.external {
+  font-size: 0.8em;
+  text-decoration: none;
+  margin-left: 0.25em;
+}
+
+/* ── Code blocks ───────────────────────────── */
+code {
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+/* ── Footer ────────────────────────────────── */
+footer {
+  margin-top: 2rem;
+  padding: 1rem;
+  text-align: center;
+  border-top: 1px solid var(--pico-muted-border-color, #ddd);
+}

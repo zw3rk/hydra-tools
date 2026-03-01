@@ -54,6 +54,7 @@ in {
     packages = {
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
       hydra-attic-bridge = haskellPkgSet'.getComponent "hydra-attic-bridge:exe:hydra-attic-bridge";
+      hydra-web = haskellPkgSet'.getComponent "hydra-web:exe:hydra-web";
     };
   };
 

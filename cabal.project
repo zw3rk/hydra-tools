@@ -2,8 +2,10 @@
 index-state: 2025-12-18T00:21:27Z
 
 packages:
+  hydra-lib
   hydra-github-bridge
   hydra-attic-bridge
+  hydra-web
 
 tests: True
 
