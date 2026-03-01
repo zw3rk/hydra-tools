@@ -122,6 +122,7 @@ buildListTable bp builds = table_ $ do
     th_ ""; th_ "Job"; th_ "System"; th_ "Nix name"
   tbody_ $ mapM_ renderBuildRow builds
   where
+    renderBuildRow :: Build -> Html ()
     renderBuildRow b = tr_ $ do
       td_ $ statusIcon (buildStatus b)
       td_ $ a_ [href_ (buildURL bp (buildId b))] $ toHtml (buildJob b)

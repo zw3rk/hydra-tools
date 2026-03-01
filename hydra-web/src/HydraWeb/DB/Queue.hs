@@ -19,7 +19,6 @@ module HydraWeb.DB.Queue
   ) where
 
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))

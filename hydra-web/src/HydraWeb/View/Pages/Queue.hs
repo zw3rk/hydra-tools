@@ -37,6 +37,7 @@ queuePage bp builds total = do
         th_ "ID"; th_ "Job"; th_ "System"; th_ "Priority"; th_ "Queued"
       tbody_ $ mapM_ renderQueuedBuild builds
   where
+    renderQueuedBuild :: Build -> Html ()
     renderQueuedBuild b = tr_ $ do
       td_ $ a_ [href_ (buildURL bp (buildId b))] $ toHtml ("#" <> showT (buildId b))
       td_ $ do
@@ -69,6 +70,7 @@ queueSummaryPage bp summary systems total = do
       td_ [class_ "num"] $ toHtml (showT (sqCount s))
       ) systems
   where
+    renderSummaryRow :: QueueSummary -> Html ()
     renderSummaryRow s = tr_ $ do
       td_ $ a_ [href_ (jobsetURL bp (qsProject s) (qsJobset s))]
         $ toHtml (qsProject s <> ":" <> qsJobset s)
@@ -88,6 +90,7 @@ machinesPage bp steps = do
         th_ "Job"; th_ "Running"
       tbody_ $ mapM_ renderActiveStep steps
   where
+    renderActiveStep :: ActiveStep -> Html ()
     renderActiveStep s = tr_ $ do
       td_ $ toHtml (stripSSH (asMachine s))
       td_ $ a_ [href_ (buildURL bp (asBuild s))] $ toHtml ("#" <> showT (asBuild s))
@@ -122,6 +125,7 @@ stepsPage bp steps page perPage = do
   " "
   a_ [href_ ("?page=" <> showT (page + 1))] "Next \xBB"
   where
+    renderRecentStep :: BuildStep -> Html ()
     renderRecentStep s = tr_ $ do
       td_ $ a_ [href_ (buildURL bp (stepBuild s))] $ toHtml ("#" <> showT (stepBuild s))
       td_ $ toHtml (showT (stepNr s))
