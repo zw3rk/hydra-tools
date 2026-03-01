@@ -4,6 +4,7 @@
 -- | Database queries for projects and jobsets.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Projects
   ( visibleProjects

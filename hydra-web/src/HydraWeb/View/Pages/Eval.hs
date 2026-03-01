@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Evaluation page HTML (eval info + inputs + build diff tabs).
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Eval

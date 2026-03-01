@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Jobset page HTML (jobset info + paginated evaluations).
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Jobset

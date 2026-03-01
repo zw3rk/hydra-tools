@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Project page HTML (jobset listing with build counts).
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Project

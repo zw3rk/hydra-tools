@@ -11,7 +11,6 @@ module HydraWeb.Handlers.Build
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
-import Data.Text (Text)
 import Lucid
 import Servant (err404)
 

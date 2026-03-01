@@ -4,6 +4,7 @@
 -- | Database queries for evaluations and eval inputs.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Evals
   ( getEval

@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Queue, queue-summary, machines, and steps page HTML.
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Queue

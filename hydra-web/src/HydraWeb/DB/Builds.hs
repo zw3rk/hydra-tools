@@ -4,6 +4,7 @@
 -- | Database queries for builds, build steps, outputs, products, metrics, and inputs.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Builds
   ( getBuild

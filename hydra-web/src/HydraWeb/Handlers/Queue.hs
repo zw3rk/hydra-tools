@@ -13,7 +13,6 @@ module HydraWeb.Handlers.Queue
 
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import Data.Text (Text)
 import Lucid
 
 import HydraWeb.Types (AppM, App (..))

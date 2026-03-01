@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Overview page HTML (project listing + news).
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Overview

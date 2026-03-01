@@ -4,6 +4,7 @@
 -- | Database queries for cross-entity search.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Search
   ( SearchResults (..)
