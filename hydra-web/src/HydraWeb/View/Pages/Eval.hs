@@ -149,6 +149,7 @@ latestEvalsPage bp evals total page perPage = do
     tbody_ $ mapM_ renderLatestEval evals
   pager total page perPage
   where
+    renderLatestEval :: EvalInfo -> Html ()
     renderLatestEval ei = do
       let eval = eiEval ei
       tr_ $ do

@@ -12,11 +12,13 @@ module HydraWeb.Types
   , runAppM
   ) where
 
+import Control.Monad.Error.Class (MonadError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
 import Data.Pool (Pool)
 import Database.PostgreSQL.Simple (Connection)
 import Servant (Handler)
+import Servant.Server (ServerError)
 
 import HydraWeb.Config (Config)
 
@@ -30,7 +32,8 @@ data App = App
 -- | Handler monad: ReaderT App over Servant's Handler.
 -- Use 'asks' to access App fields, 'liftIO' for IO actions.
 newtype AppM a = AppM { unAppM :: ReaderT App Handler a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader App)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader App,
+            MonadError ServerError)
 
 -- | Natural transformation from AppM to Handler for 'hoistServer'.
 runAppM :: App -> AppM a -> Handler a

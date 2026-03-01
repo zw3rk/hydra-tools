@@ -21,7 +21,6 @@ import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
 import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
 import HydraWeb.View.Components
 import HydraWeb.View.HTMX (hxGet_, hxTrigger_, hxSwap_, hxTarget_)
-import HydraWeb.View.Pager (pager)
 
 -- | Render the full queue list page.
 queuePage :: Text -> [Build] -> Int -> Html ()
@@ -110,7 +109,7 @@ machinesPage bp steps = do
 
 -- | Render the recent build steps page.
 stepsPage :: Text -> [BuildStep] -> Int -> Int -> Html ()
-stepsPage bp steps page perPage = do
+stepsPage bp steps page _perPage = do
   h1_ "Latest Build Steps"
   table_ $ do
     thead_ $ tr_ $ do

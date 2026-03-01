@@ -17,7 +17,7 @@ import Lucid
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Search (SearchResults, search)
+import HydraWeb.DB.Search (search)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Search (searchPage)
