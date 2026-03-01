@@ -43,6 +43,7 @@ library
       , mtl
       , servant
       , servant-client
+      , servant-server
       , stm
       , string-conversions
       , text

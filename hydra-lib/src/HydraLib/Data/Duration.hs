@@ -8,7 +8,7 @@ module HydraLib.Data.Duration
   ( humanReadableDuration
   ) where
 
-import Data.Duration as Duration
+import qualified Data.Duration as Duration
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import qualified Data.Text as Text
