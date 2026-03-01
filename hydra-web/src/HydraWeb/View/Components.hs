@@ -18,7 +18,9 @@ module HydraWeb.View.Components
   , humanBytes
   , shortDrv
   , shortPath
+  , shortRev
   , truncateText
+  , showT
 
     -- * URL builders
   , projectURL
@@ -35,14 +37,14 @@ import Lucid
 
 -- | Status icon character for a build status code.
 statusIcon :: Maybe Int -> Html ()
-statusIcon Nothing  = span_ [class_ "status-icon queued"]  "⏳"
-statusIcon (Just 0) = span_ [class_ "status-icon success"] "✓"
-statusIcon (Just 1) = span_ [class_ "status-icon failed"]  "✗"
-statusIcon (Just 2) = span_ [class_ "status-icon depfail"] "⚠"
-statusIcon (Just 3) = span_ [class_ "status-icon aborted"] "⊘"
-statusIcon (Just 4) = span_ [class_ "status-icon cancelled"] "⊘"
-statusIcon (Just 6) = span_ [class_ "status-icon failed"]  "✗"
-statusIcon (Just 7) = span_ [class_ "status-icon timedout"] "⏱"
+statusIcon Nothing  = span_ [class_ "status-icon queued"]  "\x23F3"
+statusIcon (Just 0) = span_ [class_ "status-icon success"] "\x2713"
+statusIcon (Just 1) = span_ [class_ "status-icon failed"]  "\x2717"
+statusIcon (Just 2) = span_ [class_ "status-icon depfail"] "\x26A0"
+statusIcon (Just 3) = span_ [class_ "status-icon aborted"] "\x2298"
+statusIcon (Just 4) = span_ [class_ "status-icon cancelled"] "\x2298"
+statusIcon (Just 6) = span_ [class_ "status-icon failed"]  "\x2717"
+statusIcon (Just 7) = span_ [class_ "status-icon timedout"] "\x23F1"
 statusIcon _        = span_ [class_ "status-icon unknown"] "?"
 
 -- | CSS class for a build status code.
@@ -112,11 +114,19 @@ shortDrv p = case Text.breakOn "-" (Text.takeWhileEnd (/= '/') p) of
 shortPath :: Text -> Text
 shortPath = shortDrv
 
+-- | Shorten a revision hash to first 12 characters.
+shortRev :: Text -> Text
+shortRev = Text.take 12
+
 -- | Truncate text to a maximum length, appending "..." if truncated.
 truncateText :: Int -> Text -> Text
 truncateText n t
   | Text.length t <= n = t
   | otherwise = Text.take (n - 3) t <> "..."
+
+-- | Show an Int as Text.
+showT :: Int -> Text
+showT = Text.pack . show
 
 -- | Build a project URL.
 projectURL :: Text -> Text -> Text
@@ -133,6 +143,3 @@ buildURL basePath bid = basePath <> "/build/" <> showT bid
 -- | Build an eval URL.
 evalURL :: Text -> Int -> Text
 evalURL basePath eid = basePath <> "/eval/" <> showT eid
-
-showT :: Int -> Text
-showT = Text.pack . show

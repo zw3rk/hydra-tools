@@ -46,14 +46,32 @@ library
       , HydraWeb.DB.Pool
       , HydraWeb.DB.Projects
       , HydraWeb.DB.Builds
+      , HydraWeb.DB.Evals
       , HydraWeb.DB.Queue
+      , HydraWeb.DB.Search
       , HydraWeb.Models.Project
       , HydraWeb.Models.Build
+      , HydraWeb.Models.Eval
       , HydraWeb.Models.Queue
       , HydraWeb.Handlers.Overview
+      , HydraWeb.Handlers.Project
+      , HydraWeb.Handlers.Jobset
+      , HydraWeb.Handlers.Eval
+      , HydraWeb.Handlers.Build
+      , HydraWeb.Handlers.Queue
+      , HydraWeb.Handlers.Search
       , HydraWeb.View.Layout
       , HydraWeb.View.Components
       , HydraWeb.View.HTMX
+      , HydraWeb.View.Pager
+      , HydraWeb.View.BuildDiff
+      , HydraWeb.View.Pages.Overview
+      , HydraWeb.View.Pages.Project
+      , HydraWeb.View.Pages.Jobset
+      , HydraWeb.View.Pages.Eval
+      , HydraWeb.View.Pages.Build
+      , HydraWeb.View.Pages.Queue
+      , HydraWeb.View.Pages.Search
 
 executable hydra-web
     import: common
