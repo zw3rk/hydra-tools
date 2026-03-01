@@ -11,8 +11,6 @@ module HydraWeb.Server
   ( mkApp
   ) where
 
-import Data.Proxy (Proxy (..))
-import Network.Wai (Application)
 import Servant
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (ssMaxAge, MaxAge(..))

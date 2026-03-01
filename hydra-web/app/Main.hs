@@ -10,8 +10,7 @@ module Main (main) where
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
-import Network.Wai.Handler.Warp (run, defaultSettings, setPort, setHost, runSettings)
-import Data.Streaming.Network (HostPreference)
+import Network.Wai.Handler.Warp (defaultSettings, setPort, setHost, runSettings)
 import Data.String (fromString)
 import System.IO (hFlush, stdout)
 
