@@ -15,6 +15,8 @@ import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection, query, execute_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
+
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Models.Build (Build (..))
 
@@ -115,18 +117,12 @@ scanSearchJobset (n, jid, p, d, e, h, t, f) =
          Nothing Nothing Nothing Nothing
          e 0 h "" 0 0 0 Nothing Nothing t f 0 0 0 0
 
--- | Scan a build list row (17 columns).
-scanBuildRow :: ( Int, Int, Int, Int, Text,
-                  Maybe Text, Text, Int, Int,
-                  Maybe Int, Maybe Int, Maybe Int, Maybe Int,
-                  Text, Maybe Int,
-                  Text, Text )
+-- | Scan a build list row (17 columns) using nested tuples via (:.).
+scanBuildRow :: ( (Int, Int, Int, Int, Text, Maybe Text, Text, Int, Int)
+                :. (Maybe Int, Maybe Int, Maybe Int, Maybe Int, Text, Maybe Int, Text, Text) )
              -> Build
-scanBuildRow ( bid, finished, ts, jobsetId, job,
-               nixName, sys, prio, gprio,
-               start, stop, cached, status,
-               drv, isCurrent,
-               proj, js ) =
+scanBuildRow ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
+             :. (start, stop, cached, status, drv, isCurrent, proj, js) ) =
   Build bid finished ts jobsetId job nixName sys prio gprio
         start stop cached status drv isCurrent
         proj js

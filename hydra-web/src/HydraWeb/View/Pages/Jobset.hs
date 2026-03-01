@@ -10,7 +10,6 @@ module HydraWeb.View.Pages.Jobset
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Lucid
 
 import HydraWeb.Models.Project (Jobset (..), hasErrorMsg)

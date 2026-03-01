@@ -14,7 +14,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection)
 import Lucid
 import Servant (err404)
@@ -26,10 +25,11 @@ import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
 import HydraWeb.DB.Builds (buildsByEval)
 import HydraWeb.DB.Queue (navCounts)
-import HydraWeb.Models.Eval (JobsetEval (..), EvaluationError, JobsetEvalInput)
+import HydraWeb.Models.Eval (JobsetEval (..))
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
 import HydraWeb.View.BuildDiff (BuildDiff, computeBuildDiff)
+import HydraWeb.View.Components (showT)
 
 -- | Load the build diff for an eval (current builds vs previous eval's builds).
 loadBuildDiff :: Connection -> JobsetEval -> IO BuildDiff
@@ -101,6 +101,3 @@ latestEvalsHandler mPage = do
         , pdCounts   = counts
         }
   pure $ pageLayout pd $ latestEvalsPage bp evals total page perPage
-
-showT :: Int -> Text
-showT = Text.pack . show

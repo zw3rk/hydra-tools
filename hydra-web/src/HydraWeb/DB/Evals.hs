@@ -18,9 +18,10 @@ module HydraWeb.DB.Evals
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Database.PostgreSQL.Simple (Connection, query)
+import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Eval
 
@@ -133,9 +134,9 @@ latestEvals conn offset limit = do
 -- | Total count of evals with new builds (for pagination on /evals).
 latestEvalsCount :: Connection -> IO Int
 latestEvalsCount conn = do
-  [Only n] <- query conn [sql|
+  [Only n] <- query_ conn [sql|
     SELECT count(*) FROM jobsetevals WHERE hasnewbuilds = 1
-  |] ()
+  |]
   pure n
 
 -- | Compute stats and diff for a single eval (used in jobsetEvals).
@@ -213,18 +214,12 @@ computeChangedInputs current prev =
               || jeiUri input /= jeiUri p
               || jeiDependency input /= jeiDependency p
 
--- | Scan a jobset eval row (15 columns).
-scanEvalRow :: ( Int, Int, Maybe Int,
-                 Int, Int, Int,
-                 Int, Text, Maybe Int, Maybe Int,
-                 Maybe Text, Maybe Text, Maybe Text,
-                 Text, Text )
+-- | Scan a jobset eval row (15 columns) using nested tuples via (:.).
+scanEvalRow :: ( (Int, Int, Maybe Int, Int, Int, Int, Int, Text)
+               :. (Maybe Int, Maybe Int, Maybe Text, Maybe Text, Maybe Text, Text, Text) )
             -> JobsetEval
-scanEvalRow ( eid, jsId, errId,
-              ts, checkout, evalTime,
-              hasNew, hash, nrBuilds, nrSucc,
-              flake, nixInput, nixPath,
-              proj, js ) =
+scanEvalRow ( (eid, jsId, errId, ts, checkout, evalTime, hasNew, hash)
+            :. (nrBuilds, nrSucc, flake, nixInput, nixPath, proj, js) ) =
   JobsetEval eid jsId errId ts checkout evalTime
              hasNew hash nrBuilds nrSucc
              flake nixInput nixPath proj js

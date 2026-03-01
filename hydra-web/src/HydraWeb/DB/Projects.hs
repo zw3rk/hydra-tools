@@ -17,6 +17,7 @@ import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 
@@ -111,21 +112,15 @@ jobsetOverview conn project = do
   pure $ map scanJobsetRow rows
 
 -- | Scan a full jobset row (25 columns) into a Jobset value.
-scanJobsetRow :: ( Text, Int, Text, Maybe Text,
-                   Maybe Text, Maybe Text,
-                   Maybe Text, Maybe Int, Maybe Int, Maybe Int,
-                   Int, Int, Int, Text,
-                   Int, Int, Int,
-                   Maybe Text, Maybe Int, Int, Maybe Text,
-                   Int, Int, Int, Int )
+-- Uses nested tuples via (:.) to work around postgresql-simple's
+-- FromRow instance limit of ~10 elements per tuple.
+scanJobsetRow :: ( (Text, Int, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Text, Maybe Int, Maybe Int)
+                 :. (Maybe Int, Int, Int, Int, Text, Int, Int, Int)
+                 :. (Maybe Text, Maybe Int, Int, Maybe Text, Int, Int, Int, Int) )
               -> Jobset
-scanJobsetRow ( name, jid, proj, desc,
-                nixExprInput, nixExprPath,
-                errMsg, errTime, lastChecked, triggerTime,
-                enabled, enableEmail, hidden, emailOverride,
-                keepNr, checkInterval, schedulingShares,
-                fetchErrMsg, startTime, typ, flake,
-                nrScheduled, nrFailed, nrSucceeded, nrTotal ) =
+scanJobsetRow ( (name, jid, proj, desc, nixExprInput, nixExprPath, errMsg, errTime, lastChecked)
+              :. (triggerTime, enabled, enableEmail, hidden, emailOverride, keepNr, checkInterval, schedulingShares)
+              :. (fetchErrMsg, startTime, typ, flake, nrScheduled, nrFailed, nrSucceeded, nrTotal) ) =
   Jobset name jid proj desc nixExprInput nixExprPath
          errMsg errTime lastChecked triggerTime
          enabled enableEmail hidden emailOverride

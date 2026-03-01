@@ -23,28 +23,25 @@ import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Build
 
--- | Scan a "list" build row (17 columns: the common join columns).
--- Extended fields (description, license, etc.) are set to defaults.
-scanBuildListRow :: ( Int, Int, Int, Int, Text,
-                      Maybe Text, Text, Int, Int,
-                      Maybe Int, Maybe Int, Maybe Int, Maybe Int,
-                      Text, Maybe Int,
-                      Text, Text )
+-- | Scan a "list" build row (17 columns via nested tuples).
+-- postgresql-simple only has FromRow for tuples up to ~10 elements,
+-- so we split into nested tuples using :. .
+scanBuildListRow :: ( (Int, Int, Int, Int, Text, Maybe Text, Text, Int, Int)
+                    :. (Maybe Int, Maybe Int, Maybe Int, Maybe Int, Text, Maybe Int, Text, Text) )
                  -> Build
-scanBuildListRow ( bid, finished, ts, jobsetId, job,
-                   nixName, sys, prio, gprio,
-                   start, stop, cached, status,
-                   drv, isCurrent,
-                   proj, js ) =
+scanBuildListRow ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
+                 :. (start, stop, cached, status, drv, isCurrent, proj, js) ) =
   Build bid finished ts jobsetId job nixName sys prio gprio
         start stop cached status drv isCurrent
         proj js
         Nothing Nothing Nothing Nothing Nothing Nothing Nothing 0
 
 -- | Fetch a single build by ID with all fields (including extended).
+-- Uses nested tuples to work around FromRow size limits.
 getBuild :: Connection -> Int -> IO (Maybe Build)
 getBuild conn buildId' = do
   rows <- query conn [sql|
@@ -61,13 +58,10 @@ getBuild conn buildId' = do
   |] (Only buildId')
   case rows of
     [] -> pure Nothing
-    ((bid, finished, ts, jobsetId, job,
-      nixName, sys, prio, gprio,
-      start, stop, cached, status,
-      drv, isCurrent,
-      proj, js,
-      desc, lic, hp, maint,
-      sz, closure, release, keep):_) ->
+    (( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
+     :. (start, stop, cached, status, drv, isCurrent, proj, js)
+     :. (desc, lic, hp, maint, sz, closure, release, keep)
+     ):_) ->
       pure $ Just Build
         { buildId = bid, buildFinished = finished, buildTimestamp = ts
         , buildJobsetId = jobsetId, buildJob = job, buildNixName = nixName
@@ -88,7 +82,7 @@ getBuildOutputs conn buildId' = do
   rows <- query conn [sql|
     SELECT name, path FROM buildoutputs WHERE build = ? ORDER BY name
   |] (Only buildId')
-  pure $ map (\(n, p) -> BuildOutput n p) rows
+  pure [BuildOutput n p | (n, p) <- rows]
 
 -- | Fetch products for a build, ordered by productnr.
 getBuildProducts :: Connection -> Int -> IO [BuildProduct]
@@ -97,7 +91,7 @@ getBuildProducts conn buildId' = do
     SELECT productnr, type, subtype, filesize, sha256hash, path, name, defaultpath
     FROM buildproducts WHERE build = ? ORDER BY productnr
   |] (Only buildId')
-  pure $ map (\(nr, t, st, fs, sha, p, n, dp) -> BuildProduct nr t st fs sha p n dp) rows
+  pure [BuildProduct nr t st fs sha p n dp | (nr, t, st, fs, sha, p, n, dp) <- rows]
 
 -- | Fetch steps for a build, ordered by stepnr DESC.
 getBuildSteps :: Connection -> Int -> IO [BuildStep]
@@ -118,7 +112,7 @@ getBuildMetrics conn buildId' = do
   rows <- query conn [sql|
     SELECT name, unit, value FROM buildmetrics WHERE build = ? ORDER BY name
   |] (Only buildId')
-  pure $ map (\(n, u, v) -> BuildMetric n u v) rows
+  pure [BuildMetric n u v | (n, u, v) <- rows]
 
 -- | Fetch inputs for a build, ordered by name.
 getBuildInputs :: Connection -> Int -> IO [BuildInput]
@@ -128,7 +122,8 @@ getBuildInputs conn buildId' = do
            dependency, path, sha256hash
     FROM buildinputs WHERE build = ? ORDER BY name
   |] (Only buildId')
-  pure $ map (\(i, n, t, u, r, v, e, d, p, s) -> BuildInput i n t u r v e d p s) rows
+  pure [BuildInput i n t u r v e d p s |
+        ((i, n, t, u, r) :. (v, e, d, p, s)) <- rows]
 
 -- | Fetch evaluation IDs that contain a build, ordered DESC.
 getBuildEvals :: Connection -> Int -> IO [Int]
@@ -136,7 +131,7 @@ getBuildEvals conn buildId' = do
   rows <- query conn [sql|
     SELECT eval FROM jobsetevalmembers WHERE build = ? ORDER BY eval DESC
   |] (Only buildId')
-  pure $ map (\(Only eid) -> eid) rows
+  pure [eid | Only eid <- rows]
 
 -- | Fetch constituent builds of an aggregate build.
 getConstituents :: Connection -> Int -> IO [Build]
@@ -237,12 +232,11 @@ latestBuildForJob conn project jobset job mSystem = do
     []    -> pure Nothing
     (r:_) -> pure $ Just (scanBuildListRow r)
 
--- | Scan a BuildStep row.
-scanStepRow :: ( Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text,
-                 Maybe Int, Maybe Int, Text, Maybe Text,
-                 Maybe Int, Maybe Int, Maybe Int, Maybe Bool )
+-- | Scan a BuildStep row using nested tuples.
+scanStepRow :: ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
+               :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool) )
             -> BuildStep
-scanStepRow (b, nr, t, drv, busy, st, err, start, stop, machine, sys,
-             prop, overhead, times, nondet) =
+scanStepRow ( (b, nr, t, drv, busy, st, err)
+            :. (start, stop, machine, sys, prop, overhead, times, nondet) ) =
   BuildStep b nr t drv busy st err start stop machine sys
             prop overhead times nondet

@@ -4,6 +4,7 @@
 -- | Database queries for queue status, running builds, and navigation counts.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module HydraWeb.DB.Queue
   ( queueCount
@@ -21,6 +22,7 @@ import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Queue
 import HydraWeb.Models.Build (BuildStep (..))
@@ -126,8 +128,8 @@ recentSteps conn offset limit = do
   |] (limit, offset)
   pure $ map scanStepRow rows
   where
-    scanStepRow (b, nr, t, drv, busy, st, err, start, stop, machine, sys,
-                 prop, overhead, times, nondet) =
+    scanStepRow ( (b, nr, t, drv, busy, st, err)
+                :. (start, stop, machine, sys, prop, overhead, times, nondet) ) =
       BuildStep b nr t drv busy st err start stop machine sys
                 prop overhead times nondet
 

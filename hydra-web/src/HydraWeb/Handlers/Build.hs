@@ -12,7 +12,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Lucid
 import Servant (err404)
 
@@ -23,6 +22,7 @@ import HydraWeb.DB.Builds
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildPage)
+import HydraWeb.View.Components (showT)
 
 -- | Render the build detail page with steps, outputs, products, etc.
 buildHandler :: Int -> AppM (Html ())
@@ -55,6 +55,3 @@ buildHandler bid = do
             }
       pure $ pageLayout pd $
         buildPage bp build steps outputs products metrics inputs evalIDs constits
-
-showT :: Int -> Text
-showT = Text.pack . show

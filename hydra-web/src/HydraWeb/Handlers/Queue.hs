@@ -14,7 +14,6 @@ module HydraWeb.Handlers.Queue
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Lucid
 
 import HydraWeb.Types (AppM, App (..))
@@ -24,6 +23,7 @@ import HydraWeb.DB.Builds (queuedBuilds)
 import HydraWeb.DB.Queue
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Queue (queuePage, queueSummaryPage, machinesPage, stepsPage)
+import HydraWeb.View.Components (showT)
 
 -- | Render the full queue list page (GET /queue).
 queueHandler :: AppM (Html ())
@@ -94,6 +94,3 @@ stepsHandler mPage = do
         , pdCounts   = counts
         }
   pure $ pageLayout pd $ stepsPage bp steps page perPage
-
-showT :: Int -> Text
-showT = Text.pack . show

@@ -16,7 +16,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Lucid
 
-import HydraWeb.Models.Build (Build (..), BuildStep (..))
+import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
 import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
 import HydraWeb.View.Components
 import HydraWeb.View.HTMX (hxGet_, hxTrigger_, hxSwap_, hxTarget_)
