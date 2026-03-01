@@ -11,23 +11,21 @@ module HydraWeb.DB.Pool
   ) where
 
 import Data.ByteString.Char8 (pack)
-import Data.Pool (Pool)
-import qualified Data.Pool as Pool
+import Data.Pool (Pool, newPool, defaultPoolConfig, withResource)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection, connectPostgreSQL, close)
 
 -- | Create a connection pool from a PostgreSQL connection string.
--- Pool configuration: 2 stripes, 300s idle timeout, 20 max connections.
+-- Pool parameters: 300s idle timeout, 20 max connections.
 createPool :: Text -> IO (Pool Connection)
 createPool connStr =
-  Pool.newPool Pool.defaultPoolConfig
-    { Pool.newResource    = connectPostgreSQL (pack $ Text.unpack connStr)
-    , Pool.freeResource   = close
-    , Pool.poolCacheTTL   = 300  -- 5 minutes idle timeout
-    , Pool.poolMaxResources = 20
-    }
+  newPool $ defaultPoolConfig
+    (connectPostgreSQL (pack $ Text.unpack connStr))  -- create
+    close                                              -- destroy
+    300                                                -- idle timeout (seconds)
+    20                                                 -- max connections
 
 -- | Run an action with a connection from the pool.
 withConn :: Pool Connection -> (Connection -> IO a) -> IO a
-withConn = Pool.withResource
+withConn = withResource

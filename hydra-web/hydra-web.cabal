@@ -21,6 +21,7 @@ common common
       , containers
       , http-types
       , lucid
+      , mtl
       , postgresql-simple
       , resource-pool
       , servant
