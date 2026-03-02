@@ -9,11 +9,12 @@
 
 module HydraWeb.API
   ( HydraWebAPI
+  , JSONAPI
+  , JobAPI
   , StaticAPI
   , FullAPI
   ) where
 
-import Data.Aeson (Value)
 import Data.Text (Text)
 import Lucid (Html)
 import Servant

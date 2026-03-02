@@ -10,6 +10,8 @@ module HydraWeb.Handlers.Job
   , jobLatestFinishedHandler
   , jobLatestForSystemHandler
   , jobShieldHandler
+    -- * Response types (re-exported for API.hs route declarations)
+  , ShieldBadge
   ) where
 
 import Control.Monad.IO.Class (liftIO)

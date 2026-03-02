@@ -10,6 +10,9 @@ module HydraWeb.Handlers.API
   , apiNrQueueHandler
   , apiLatestBuildsHandler
   , apiQueueHandler
+    -- * API response types (re-exported for API.hs route declarations)
+  , APIJobset
+  , APIBuild
   ) where
 
 import Control.Monad.IO.Class (liftIO)
