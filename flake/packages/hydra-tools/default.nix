@@ -36,9 +36,12 @@
 
               inputsFrom = [config.treefmt.build.devShell];
 
-              buildInputs = [
-                (withSystem system ({config, ...}: config.packages.mockoon-cli))
-              ];
+              buildInputs = withSystem system ({config, ...}: [
+                config.packages.mockoon-cli
+                config.packages.fake-send-webhook
+                final.mockoon
+                final.gh
+              ]);
             };
           };
         })
