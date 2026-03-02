@@ -15,7 +15,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import Lucid (Html)
 import Servant (err302, err400, err500, ServerError (..))
@@ -24,18 +23,11 @@ import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..), GitHubConfig (..))
 import HydraWeb.Auth.GitHub
   (generateOAuthState, authorizeURL, exchangeCode, fetchGitHubUser, GitHubUser (..))
-import HydraWeb.Auth.Session (createSessionForUser, clearSession, sessionCookieName)
-import HydraWeb.Auth.Encrypt (Encryptor, encrypt)
+import HydraWeb.Auth.Session (createSessionForUser, sessionCookieName)
+import HydraWeb.Auth.Encrypt (encrypt)
 import HydraWeb.DB.Auth (upsertGFUser, upsertGitHubToken)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.View.Pages.Login (loginPage)
-
--- | Throw a 302 redirect to the given URL.
-redirect302 :: Text -> AppM a
-redirect302 url = throwError err302
-  { errHeaders = [("Location", TE.encodeUtf8 url)]
-  , errBody    = ""
-  }
 
 -- | GET /login — render the login page.
 handleLogin :: AppM (Html ())
