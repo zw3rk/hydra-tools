@@ -11,6 +11,7 @@ module HydraWeb.API
   ( HydraWebAPI
   , JSONAPI
   , JobAPI
+  , SSEAPI
   , StaticAPI
   , FullAPI
   ) where
@@ -51,6 +52,8 @@ type HydraWebAPI =
   :<|> "evals" :> QueryParam "page" Int :> Get '[HTML] (Html ())
   -- GET /search?query=...
   :<|> "search" :> QueryParam "query" Text :> Get '[HTML] (Html ())
+  -- GET /bridges
+  :<|> "bridges" :> Get '[HTML] (Html ())
   -- GET /robots.txt
   :<|> "robots.txt" :> Get '[PlainText] Text
 
@@ -77,8 +80,12 @@ type JobAPI =
     :<|> "shield"          :> Get '[JSON] ShieldBadge
     )
 
+-- | SSE stream endpoint (Raw WAI app for long-lived connections).
+type SSEAPI = "bridges" :> "stream" :> Raw
+
 -- | Static file serving API.
 type StaticAPI = "static" :> Raw
 
 -- | Full API combining all route groups and static files.
-type FullAPI = HydraWebAPI :<|> JSONAPI :<|> JobAPI :<|> StaticAPI
+-- Note: SSEAPI must come before StaticAPI since both are Raw.
+type FullAPI = HydraWebAPI :<|> JSONAPI :<|> JobAPI :<|> SSEAPI :<|> StaticAPI

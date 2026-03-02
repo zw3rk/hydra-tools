@@ -11,12 +11,13 @@ module HydraWeb.Server
   ( mkApp
   ) where
 
+import Data.Tagged (Tagged (..))
 import Data.Text (Text)
 import Servant
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (ssMaxAge, MaxAge(..))
 
-import HydraWeb.API (HydraWebAPI, JSONAPI, JobAPI, StaticAPI, FullAPI)
+import HydraWeb.API (HydraWebAPI, JSONAPI, JobAPI, SSEAPI, StaticAPI, FullAPI)
 import HydraWeb.Config (Config (..))
 import HydraWeb.Types (App (..), AppM, runAppM)
 import HydraWeb.Handlers.Overview (overviewHandler)
@@ -26,6 +27,7 @@ import HydraWeb.Handlers.Eval (evalHandler, evalTabHandler, latestEvalsHandler)
 import HydraWeb.Handlers.Build (buildHandler)
 import HydraWeb.Handlers.Queue (queueHandler, queueSummaryHandler, machinesHandler, stepsHandler)
 import HydraWeb.Handlers.Search (searchHandler)
+import HydraWeb.Handlers.Bridges (bridgesHandler, bridgesStreamApp)
 import HydraWeb.Handlers.API (apiJobsetsHandler, apiNrQueueHandler, apiLatestBuildsHandler, apiQueueHandler)
 import HydraWeb.Handlers.Job (jobLatestHandler, jobLatestFinishedHandler, jobLatestForSystemHandler, jobShieldHandler)
 
@@ -38,6 +40,7 @@ server :: App -> Server FullAPI
 server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> hoistServer (Proxy @JSONAPI) (runAppM app) jsonServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
+        :<|> Tagged (bridgesStreamApp app)
         :<|> staticServer (cfgStaticDir $ appConfig app)
 
 -- | HTML page handlers, wired in the same order as HydraWebAPI.
@@ -54,6 +57,7 @@ htmlServer = overviewHandler
         :<|> stepsHandler
         :<|> latestEvalsHandler
         :<|> searchHandler
+        :<|> bridgesHandler
         :<|> robotsHandler
 
 -- | JSON API handlers, wired in the same order as JSONAPI.

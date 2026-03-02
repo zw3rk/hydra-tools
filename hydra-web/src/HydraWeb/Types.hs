@@ -21,12 +21,14 @@ import Servant (Handler)
 import Servant.Server (ServerError)
 
 import HydraWeb.Config (Config)
+import HydraWeb.SSE.Hub (Hub)
 
 -- | Shared application context, threaded through all handlers via ReaderT.
 -- No global mutable state: everything is in this record.
 data App = App
   { appPool   :: !(Pool Connection)  -- ^ Database connection pool
   , appConfig :: !Config             -- ^ Environment-based configuration
+  , appSSEHub :: !(Maybe Hub)        -- ^ SSE broadcast hub (Nothing if SSE disabled)
   }
 
 -- | Handler monad: ReaderT App over Servant's Handler.

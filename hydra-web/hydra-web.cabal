@@ -17,6 +17,7 @@ common common
         base >= 4.16 && < 5
       , hydra-lib
       , aeson
+      , async
       , bytestring
       , containers
       , http-types
@@ -28,6 +29,7 @@ common common
       , servant-lucid
       , servant-server
       , stm
+      , tagged
       , text
       , time
       , wai
@@ -62,8 +64,14 @@ library
       , HydraWeb.Handlers.Search
       , HydraWeb.Handlers.API
       , HydraWeb.Handlers.Job
+      , HydraWeb.Handlers.Bridges
+      , HydraWeb.Models.Bridge
+      , HydraWeb.DB.Bridges
+      , HydraWeb.SSE.Hub
+      , HydraWeb.SSE.Listener
       , HydraWeb.View.Layout
       , HydraWeb.View.Render
+      , HydraWeb.View.Pages.Bridges
       , HydraWeb.View.Components
       , HydraWeb.View.HTMX
       , HydraWeb.View.Pager
