@@ -13,7 +13,9 @@ module HydraWeb.Auth.Encrypt
   ) where
 
 import Crypto.Cipher.AES (AES256)
-import Crypto.Cipher.Types (cipherInit, AuthTag (..), AEADMode (..))
+import Crypto.Cipher.Types
+  (cipherInit, AuthTag (..), AEADMode (..),
+   AEAD, aeadInit, aeadSimpleEncrypt, aeadSimpleDecrypt)
 import Crypto.Error (CryptoFailable (..))
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray (convert)
@@ -44,7 +46,7 @@ encrypt (Encryptor cipher) plaintext = do
   case aeadInit AEAD_GCM cipher nonce of
     CryptoFailed _   -> error "AES-GCM init failed"
     CryptoPassed aead -> do
-      let (out, tag) = aeadSimpleEncrypt aead BS.empty plaintext 16
+      let (out, tag) = aeadSimpleEncrypt (aead :: AEAD AES256) BS.empty plaintext 16
       pure $ nonce <> out <> convert (tag :: AuthTag)
 
 -- | Decrypt AES-256-GCM ciphertext. Expects: nonce (12) || ciphertext || tag (16).
@@ -59,31 +61,17 @@ decrypt (Encryptor cipher) combined
     in case aeadInit AEAD_GCM cipher nonce of
          CryptoFailed _ -> Nothing
          CryptoPassed aead ->
-           aeadSimpleDecrypt aead BS.empty ct tag
+           aeadSimpleDecrypt (aead :: AEAD AES256) BS.empty ct tag
 
 -- | Decode hex-encoded bytes.
 hexDecode :: ByteString -> ByteString
 hexDecode = BS.pack . go . BS.unpack
   where
     go []       = []
-    go [_]      = [] -- odd length, ignore trailing nibble
+    go [_]      = []
     go (a:b:xs) = (hexNibble a * 16 + hexNibble b) : go xs
     hexNibble w
-      | w >= 0x30 && w <= 0x39 = w - 0x30       -- '0'-'9'
-      | w >= 0x41 && w <= 0x46 = w - 0x41 + 10  -- 'A'-'F'
-      | w >= 0x61 && w <= 0x66 = w - 0x61 + 10  -- 'a'-'f'
+      | w >= 0x30 && w <= 0x39 = w - 0x30
+      | w >= 0x41 && w <= 0x46 = w - 0x41 + 10
+      | w >= 0x61 && w <= 0x66 = w - 0x61 + 10
       | otherwise              = 0
-
--- | AEAD init helper — using crypton's API.
-aeadInit :: AEADMode -> AES256 -> ByteString -> CryptoFailable (Crypto.Cipher.Types.AEAD AES256)
-aeadInit = Crypto.Cipher.Types.aeadInit
-
--- | Simple AEAD encrypt.
-aeadSimpleEncrypt :: Crypto.Cipher.Types.AEAD AES256 -> ByteString -> ByteString -> Int
-                  -> (ByteString, AuthTag)
-aeadSimpleEncrypt = Crypto.Cipher.Types.aeadSimpleEncrypt
-
--- | Simple AEAD decrypt.
-aeadSimpleDecrypt :: Crypto.Cipher.Types.AEAD AES256 -> ByteString -> ByteString -> AuthTag
-                  -> Maybe ByteString
-aeadSimpleDecrypt = Crypto.Cipher.Types.aeadSimpleDecrypt
