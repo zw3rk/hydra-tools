@@ -19,7 +19,6 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Pool (Pool)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Connection, connectPostgreSQL, close, execute_)
 import Database.PostgreSQL.Simple.Notification (getNotification)
@@ -28,7 +27,6 @@ import System.Timeout (timeout)
 
 import HydraWeb.DB.Bridges (bridgeFullStatus)
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.Models.Bridge (BridgeStatus (..))
 import HydraWeb.SSE.Hub (Hub, broadcast)
 import HydraWeb.View.Pages.Bridges (renderBridgesContentBS)
 
