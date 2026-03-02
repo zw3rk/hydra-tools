@@ -12,12 +12,11 @@ module HydraWeb.Handlers.Proxy
   ) where
 
 import Control.Exception (SomeException, try)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text.Encoding as TE
+import qualified Data.Text as Text
 import qualified Network.HTTP.Client as HC
-import Network.HTTP.Types (status502, hContentType, hAuthorization)
+import Network.HTTP.Types (status502, hContentType, hAuthorization, Header, HeaderName)
 import qualified Network.Wai as Wai
 
 import HydraWeb.Types (App (..))
@@ -30,7 +29,7 @@ proxyToBackend :: App -> Wai.Application
 proxyToBackend app waiReq respond = do
   let cfg     = appConfig app
       mgr     = appHttpManager app
-      backend = TE.unpack (cfgHydraBackendURL cfg)
+      backend = Text.unpack (cfgHydraBackendURL cfg)
       path    = Wai.rawPathInfo waiReq
       qs      = Wai.rawQueryString waiReq
 
@@ -52,7 +51,7 @@ proxyToBackend app waiReq respond = do
     Left (e :: SomeException) ->
       respond $ Wai.responseLBS status502
         [("Content-Type", "text/plain")]
-        (LBS.fromStrict $ TE.encodeUtf8 $ "proxy error: " <> TE.decodeLatin1 (BS8.pack (show e)))
+        (LBS.fromStrict $ BS8.pack $ "proxy error: " ++ show e)
     Right resp ->
       respond $ Wai.responseLBS
         (HC.responseStatus resp)
@@ -61,8 +60,9 @@ proxyToBackend app waiReq respond = do
 
   where
     -- Only forward safe headers.
-    filterHeaders :: [(BS.ByteString, BS.ByteString)] -> [(BS.ByteString, BS.ByteString)]
+    filterHeaders :: [Header] -> [Header]
     filterHeaders = filter (\(name, _) -> name `elem` allowedHeaders)
+    allowedHeaders :: [HeaderName]
     allowedHeaders =
       [ hContentType
       , hAuthorization
