@@ -18,6 +18,7 @@ module HydraWeb.DB.Builds
   , buildsByEval
   , queuedBuilds
   , latestBuildForJob
+  , latestBuilds
   ) where
 
 import Data.Text (Text)
@@ -232,6 +233,83 @@ latestBuildForJob conn project jobset job mSystem = do
   case rows of
     []    -> pure Nothing
     (r:_) -> pure $ Just (scanBuildListRow r)
+
+-- | Fetch recently finished builds with optional filters.
+-- Used by the JSON API /api/latestbuilds endpoint.
+latestBuilds :: Connection -> Int -> Maybe Text -> Maybe Text
+             -> Maybe Text -> Maybe Text -> IO [Build]
+latestBuilds conn nr mProject mJobset mJob mSystem = do
+  let limit = max 1 (min 1000 nr)
+  -- Build WHERE clause dynamically based on provided filters.
+  -- We always require finished=1. Additional filters are optional.
+  rows <- case (mProject, mJobset, mJob, mSystem) of
+    (Nothing, _, _, _) -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1
+        ORDER BY b.id DESC LIMIT ?
+      |] (Only limit)
+    (Just p, Nothing, _, _) -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1 AND j.project = ?
+        ORDER BY b.id DESC LIMIT ?
+      |] (p, limit)
+    (Just p, Just js, Nothing, Nothing) -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1 AND j.project = ? AND j.name = ?
+        ORDER BY b.id DESC LIMIT ?
+      |] (p, js, limit)
+    (Just p, Just js, Just job, Nothing) -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ?
+        ORDER BY b.id DESC LIMIT ?
+      |] (p, js, job, limit)
+    (Just p, Just js, Just job, Just sys) -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ? AND b.system = ?
+        ORDER BY b.id DESC LIMIT ?
+      |] (p, js, job, sys, limit)
+    _ -> query conn [sql|
+        SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
+               b.nixname, b.system, b.priority, b.globalpriority,
+               b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
+               b.drvpath, b.iscurrent,
+               j.project, j.name
+        FROM builds b
+        JOIN jobsets j ON j.id = b.jobset_id
+        WHERE b.finished = 1
+        ORDER BY b.id DESC LIMIT ?
+      |] (Only limit)
+  pure $ map scanBuildListRow rows
 
 -- | Scan a BuildStep row using nested tuples.
 scanStepRow :: ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)

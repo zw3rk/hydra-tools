@@ -13,10 +13,14 @@ module HydraWeb.API
   , FullAPI
   ) where
 
+import Data.Aeson (Value)
 import Data.Text (Text)
 import Lucid (Html)
 import Servant
 import Servant.HTML.Lucid (HTML)
+
+import HydraWeb.Handlers.API (APIJobset, APIBuild)
+import HydraWeb.Handlers.Job (ShieldBadge)
 
 -- | The main application API — all dynamic routes.
 type HydraWebAPI =
@@ -49,8 +53,31 @@ type HydraWebAPI =
   -- GET /robots.txt
   :<|> "robots.txt" :> Get '[PlainText] Text
 
+-- | JSON API endpoints (backward-compatible with Hydra).
+type JSONAPI =
+  -- GET /api/jobsets?project=...
+       "api" :> "jobsets" :> QueryParam "project" Text :> Get '[JSON] [APIJobset]
+  -- GET /api/nrqueue
+  :<|> "api" :> "nrqueue" :> Get '[PlainText] Text
+  -- GET /api/latestbuilds?nr=N&project=...&jobset=...&job=...&system=...
+  :<|> "api" :> "latestbuilds"
+       :> QueryParam "nr" Int :> QueryParam "project" Text
+       :> QueryParam "jobset" Text :> QueryParam "job" Text
+       :> QueryParam "system" Text :> Get '[JSON] [APIBuild]
+  -- GET /api/queue?nr=N
+  :<|> "api" :> "queue" :> QueryParam "nr" Int :> Get '[JSON] [APIBuild]
+
+-- | Job redirect and shield badge endpoints.
+type JobAPI =
+  "job" :> Capture "project" Text :> Capture "jobset" Text :> Capture "job" Text :>
+    (    "latest"          :> Get '[JSON] ShieldBadge
+    :<|> "latest-finished" :> Get '[JSON] ShieldBadge
+    :<|> "latest-for" :> Capture "system" Text :> Get '[JSON] ShieldBadge
+    :<|> "shield"          :> Get '[JSON] ShieldBadge
+    )
+
 -- | Static file serving API.
 type StaticAPI = "static" :> Raw
 
--- | Full API combining dynamic routes and static files.
-type FullAPI = HydraWebAPI :<|> StaticAPI
+-- | Full API combining all route groups and static files.
+type FullAPI = HydraWebAPI :<|> JSONAPI :<|> JobAPI :<|> StaticAPI

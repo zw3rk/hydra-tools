@@ -60,7 +60,10 @@ library
       , HydraWeb.Handlers.Build
       , HydraWeb.Handlers.Queue
       , HydraWeb.Handlers.Search
+      , HydraWeb.Handlers.API
+      , HydraWeb.Handlers.Job
       , HydraWeb.View.Layout
+      , HydraWeb.View.Render
       , HydraWeb.View.Components
       , HydraWeb.View.HTMX
       , HydraWeb.View.Pager
