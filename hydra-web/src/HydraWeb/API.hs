@@ -10,6 +10,9 @@
 module HydraWeb.API
   ( HydraWebAPI
   , AuthAPI
+  , ProfileAPI
+  , AdminAPI
+  , ProxyAPI
   , JSONAPI
   , JobAPI
   , SSEAPI
@@ -94,6 +97,15 @@ type AuthAPI =
   -- GET /logout
   :<|> "logout" :> Get '[HTML] (Html ())
 
+-- | Profile page (user info + API token management).
+type ProfileAPI = "profile" :> Get '[HTML] (Html ())
+
+-- | Admin dashboard (user management, super-admin toggle).
+type AdminAPI = "admin" :> Get '[HTML] (Html ())
+
+-- | Reverse proxy for write operations to Hydra backend (Raw WAI app).
+type ProxyAPI = "api" :> Raw
+
 -- | SSE stream endpoint (Raw WAI app for long-lived connections).
 type SSEAPI = "bridges" :> "stream" :> Raw
 
@@ -101,4 +113,14 @@ type SSEAPI = "bridges" :> "stream" :> Raw
 type StaticAPI = "static" :> Raw
 
 -- | Full API combining all route groups and static files.
-type FullAPI = HydraWebAPI :<|> AuthAPI :<|> JSONAPI :<|> JobAPI :<|> SSEAPI :<|> StaticAPI
+-- Note: ProxyAPI must come AFTER JSONAPI so specific /api/* routes match first.
+type FullAPI =
+       HydraWebAPI
+  :<|> AuthAPI
+  :<|> ProfileAPI
+  :<|> AdminAPI
+  :<|> JSONAPI
+  :<|> JobAPI
+  :<|> SSEAPI
+  :<|> ProxyAPI
+  :<|> StaticAPI

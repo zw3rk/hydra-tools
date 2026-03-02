@@ -16,7 +16,9 @@ import Servant
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (ssMaxAge, MaxAge(..))
 
-import HydraWeb.API (HydraWebAPI, AuthAPI, JSONAPI, JobAPI, StaticAPI, FullAPI)
+import HydraWeb.API
+  (HydraWebAPI, AuthAPI, ProfileAPI, AdminAPI, JSONAPI, JobAPI,
+   StaticAPI, FullAPI)
 import HydraWeb.Config (Config (..))
 import HydraWeb.Types (App (..), AppM, runAppM)
 import HydraWeb.Handlers.Overview (overviewHandler)
@@ -28,6 +30,9 @@ import HydraWeb.Handlers.Queue (queueHandler, queueSummaryHandler, machinesHandl
 import HydraWeb.Handlers.Search (searchHandler)
 import HydraWeb.Handlers.Bridges (bridgesHandler, bridgesStreamApp)
 import HydraWeb.Handlers.Auth (handleLogin, handleGitHubAuth, handleGitHubCallback, handleLogout)
+import HydraWeb.Handlers.Profile (profileHandler)
+import HydraWeb.Handlers.Admin (adminHandler)
+import HydraWeb.Handlers.Proxy (proxyToBackend)
 import HydraWeb.Handlers.API (apiJobsetsHandler, apiNrQueueHandler, apiLatestBuildsHandler, apiQueueHandler)
 import HydraWeb.Handlers.Job (jobLatestHandler, jobLatestFinishedHandler, jobLatestForSystemHandler, jobShieldHandler)
 
@@ -39,9 +44,12 @@ mkApp app = serve (Proxy @FullAPI) (server app)
 server :: App -> Server FullAPI
 server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> hoistServer (Proxy @AuthAPI) (runAppM app) authServer
+        :<|> hoistServer (Proxy @ProfileAPI) (runAppM app) profileHandler
+        :<|> hoistServer (Proxy @AdminAPI) (runAppM app) adminHandler
         :<|> hoistServer (Proxy @JSONAPI) (runAppM app) jsonServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
         :<|> Tagged (bridgesStreamApp app)
+        :<|> Tagged (proxyToBackend app)
         :<|> staticServer (cfgStaticDir $ appConfig app)
 
 -- | HTML page handlers, wired in the same order as HydraWebAPI.

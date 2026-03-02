@@ -71,6 +71,9 @@ library
       , HydraWeb.Handlers.Job
       , HydraWeb.Handlers.Bridges
       , HydraWeb.Handlers.Auth
+      , HydraWeb.Handlers.Profile
+      , HydraWeb.Handlers.Admin
+      , HydraWeb.Handlers.Proxy
       , HydraWeb.Models.Bridge
       , HydraWeb.Models.User
       , HydraWeb.DB.Migrate
@@ -97,6 +100,8 @@ library
       , HydraWeb.View.Pages.Build
       , HydraWeb.View.Pages.Queue
       , HydraWeb.View.Pages.Search
+      , HydraWeb.View.Pages.Profile
+      , HydraWeb.View.Pages.Admin
 
 executable hydra-web
     import: common
