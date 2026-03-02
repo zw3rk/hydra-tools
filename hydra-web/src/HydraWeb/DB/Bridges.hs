@@ -15,7 +15,7 @@ module HydraWeb.DB.Bridges
   ) where
 
 import Control.Exception (try)
-import Database.PostgreSQL.Simple (Connection, query_, query, SqlError (..))
+import Database.PostgreSQL.Simple (Connection, query_, SqlError (..))
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
 

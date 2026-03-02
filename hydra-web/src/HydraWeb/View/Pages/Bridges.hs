@@ -20,15 +20,15 @@ import Lucid
 
 import HydraWeb.Models.Bridge
 import HydraWeb.View.Components (fmtTime, showT, shortPath)
-import HydraWeb.View.HTMX (sseConnect_, sseSwap_)
+import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
 -- | Full bridges page with SSE live-update wrapper.
 bridgesPage :: Text -> BridgeStatus -> Html ()
 bridgesPage bp status = do
   h1_ "Bridge Status"
   script_ [src_ (bp <> "/static/sse.js")] ("" :: Text)
-  div_ [makeAttribute "hx-ext" "sse", sseConnect_ (bp <> "/bridges/stream")] $
-    div_ [id_ "bridge-content", sseSwap_ "bridge-update", makeAttribute "hx-swap" "innerHTML"] $
+  div_ [hxExt_ "sse", sseConnect_ (bp <> "/bridges/stream")] $
+    div_ [id_ "bridge-content", sseSwap_ "bridge-update", hxSwap_ "innerHTML"] $
       bridgesContent status
 
 -- | Reusable content partial for both initial render and SSE updates.
