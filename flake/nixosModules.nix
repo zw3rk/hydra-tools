@@ -370,7 +370,7 @@
           '';
         };
 
-        hydraBackend = mkOption {
+        hydraBackendURL = mkOption {
           type = types.str;
           default = "http://127.0.0.1:3000";
           description = ''
@@ -406,7 +406,7 @@
 
         # GitHub OAuth / App integration.
         github = {
-          appId = mkOption {
+          appID = mkOption {
             type = types.int;
             default = 0;
             description = "GitHub App ID.";
@@ -418,7 +418,7 @@
             description = "Path to GitHub App private key file.";
           };
 
-          clientId = mkOption {
+          clientID = mkOption {
             type = types.str;
             default = "";
             description = "GitHub OAuth client ID.";
@@ -430,11 +430,12 @@
             description = "File containing the GitHub OAuth client secret.";
           };
 
-          installationIds = mkOption {
-            type = types.str;
-            default = "";
+          installationIDs = mkOption {
+            type = types.attrsOf types.int;
+            default = {};
             description = ''
-              Comma-separated "org=id" pairs for GitHub App installations.
+              GitHub App installation IDs per organization.
+              Example: { "zw3rk" = 12345; "other-org" = 67890; }
             '';
           };
         };
@@ -449,6 +450,14 @@
       };
 
       config = lib.mkIf cfg.enable {
+        # Create a dedicated system user for the web frontend.
+        users.users.hydra-web = {
+          isSystemUser = true;
+          group = "hydra-web";
+          description = "Hydra Web Frontend";
+        };
+        users.groups.hydra-web = {};
+
         systemd.services.hydra-web = {
           wantedBy = ["multi-user.target"];
           after = ["postgresql.service"];
@@ -458,8 +467,8 @@
 
           serviceConfig =
             {
-              User = config.users.users.hydra.name;
-              Group = config.users.groups.hydra.name;
+              User = "hydra-web";
+              Group = "hydra-web";
 
               Restart = "always";
               RestartSec = "10s";
@@ -481,9 +490,9 @@
               HYDRA_WEB_LISTEN = cfg.listenAddr;
               HYDRA_WEB_BASE_URL = cfg.baseURL;
               HYDRA_WEB_DATABASE_URL = cfg.databaseURL;
-              HYDRA_WEB_HYDRA_BACKEND = cfg.hydraBackend;
+              HYDRA_WEB_HYDRA_BACKEND = cfg.hydraBackendURL;
               HYDRA_WEB_STATIC_DIR = "${cfg.package}/share/hydra-web/static";
-              HYDRA_WEB_GITHUB_CLIENT_ID = cfg.github.clientId;
+              HYDRA_WEB_GITHUB_CLIENT_ID = cfg.github.clientID;
             }
             // lib.optionalAttrs (cfg.basePath != "") {
               HYDRA_WEB_BASE_PATH = cfg.basePath;
@@ -491,11 +500,12 @@
             // lib.optionalAttrs (cfg.superAdmins != []) {
               HYDRA_WEB_SUPER_ADMINS = lib.concatStringsSep "," cfg.superAdmins;
             }
-            // lib.optionalAttrs (cfg.github.appId != 0) {
-              HYDRA_WEB_GITHUB_APP_ID = toString cfg.github.appId;
+            // lib.optionalAttrs (cfg.github.appID != 0) {
+              HYDRA_WEB_GITHUB_APP_ID = toString cfg.github.appID;
             }
-            // lib.optionalAttrs (cfg.github.installationIds != "") {
-              HYDRA_WEB_GITHUB_INSTALLATION_IDS = cfg.github.installationIds;
+            // lib.optionalAttrs (cfg.github.installationIDs != {}) {
+              HYDRA_WEB_GITHUB_INSTALLATION_IDS =
+                lib.concatStringsSep "," (lib.mapAttrsToList (org: id: "${org}=${toString id}") cfg.github.installationIDs);
             };
 
           script = ''
