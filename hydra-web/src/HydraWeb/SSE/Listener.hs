@@ -6,6 +6,7 @@
 -- channels, and broadcasts rendered bridge content to all SSE
 -- subscribers with debouncing and heartbeat support.
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module HydraWeb.SSE.Listener
   ( listenAndBroadcast

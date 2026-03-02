@@ -11,13 +11,12 @@ module HydraWeb.Server
   ( mkApp
   ) where
 
-import Data.Tagged (Tagged (..))
 import Data.Text (Text)
 import Servant
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (ssMaxAge, MaxAge(..))
 
-import HydraWeb.API (HydraWebAPI, JSONAPI, JobAPI, SSEAPI, StaticAPI, FullAPI)
+import HydraWeb.API (HydraWebAPI, JSONAPI, JobAPI, StaticAPI, FullAPI)
 import HydraWeb.Config (Config (..))
 import HydraWeb.Types (App (..), AppM, runAppM)
 import HydraWeb.Handlers.Overview (overviewHandler)
