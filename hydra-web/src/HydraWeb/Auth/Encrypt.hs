@@ -46,8 +46,8 @@ encrypt (Encryptor cipher) plaintext = do
   case aeadInit AEAD_GCM cipher nonce of
     CryptoFailed _   -> error "AES-GCM init failed"
     CryptoPassed aead -> do
-      let (out, tag) = aeadSimpleEncrypt (aead :: AEAD AES256) BS.empty plaintext 16
-      pure $ nonce <> out <> convert (tag :: AuthTag)
+      let (tag, out) = aeadSimpleEncrypt (aead :: AEAD AES256) BS.empty plaintext 16
+      pure $ nonce <> out <> convert tag
 
 -- | Decrypt AES-256-GCM ciphertext. Expects: nonce (12) || ciphertext || tag (16).
 decrypt :: Encryptor -> ByteString -> Maybe ByteString
