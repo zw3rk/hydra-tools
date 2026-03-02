@@ -473,6 +473,11 @@
               Restart = "always";
               RestartSec = "10s";
 
+              # GHC RTS initialisation + DB migration can take a while on
+              # cold start, especially when the binary is first loaded
+              # from disk.  The default 90 s is too tight.
+              TimeoutStartSec = "180s";
+
               # Static assets are bundled alongside the executable.
               StateDirectory = "hydra";
 
