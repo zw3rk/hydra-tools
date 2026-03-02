@@ -27,11 +27,10 @@ import System.Process
   )
 import Text.Read (readMaybe)
 
--- | Maximum number of retries before permanently discarding an entry.
--- At 1.5^20 * 5 min ≈ 16 hours for the last retry.  Entries beyond
--- this threshold are dead weight that will never succeed (the store
--- path was never fetched back from the remote builder, or the
--- derivation is genuinely broken).
+-- | Maximum number of retries before permanently deleting an entry.
+-- At 1.5^20 * 10 min ≈ 33 hours for the last retry.  Entries beyond
+-- this threshold will never succeed (the store path was garbage
+-- collected from all builders).
 maxRetries :: Int
 maxRetries = 20
 
@@ -79,15 +78,39 @@ processDrvPath conn cache = do
                 pushToAttic conn cache rowId drvPath
               ExitFailure _ -> do
                 -- Path truly unavailable anywhere on the network.
-                -- Use a longer backoff since these are unlikely to
-                -- appear soon (no point hammering every 2 minutes).
+                -- Exponential backoff: 10 min * 1.5^tries, capped at
+                -- 30 days.  These paths were likely GC'd from all
+                -- builders and will never reappear.
                 putStrLn $ "Path not available on any peer, deferring: " ++ drvPath
                 unless (null fetchErr) $ putStrLn $ "Fetch error: " ++ fetchErr
-                _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + interval '10 minutes', tries = tries + 1 WHERE id = ?;" (Only rowId)
+                _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '10 minutes' * least(4320, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
                 pure True
           ExitSuccess -> pushToAttic conn cache rowId drvPath
       _ -> pure False
   when more (processDrvPath conn cache)
+
+-- | Delete entries that have exhausted all retries.  These paths are
+-- permanently unreachable and keeping them around just clutters the
+-- queue / dashboard.  Returns the number of rows deleted.
+cleanupExhausted :: Connection -> IO Int
+cleanupExhausted conn = do
+  n <- execute conn "DELETE FROM DrvpathsToUpload WHERE tries >= ?;" (Only maxRetries)
+  pure (fromIntegral n)
+
+-- | Periodically clean up exhausted entries.  Runs every hour.
+cleanupLoop :: ConnectInfo -> IO ()
+cleanupLoop connectInfo =
+  withConnect connectInfo $ \conn ->
+    forever $ do
+      -- Sleep 1 hour between cleanup runs.
+      threadDelay (60 * 60 * 1000000)
+      catch
+        ( do n <- cleanupExhausted conn
+             when (n > 0) $
+               putStrLn $ "Cleanup: removed " ++ show n ++ " exhausted entries (tries >= " ++ show maxRetries ++ ")"
+        )
+        $ \err ->
+          putStrLn $ "Cleanup error: " ++ displayException (err :: SomeException)
 
 workerLoop :: Chan () -> ConnectInfo -> String -> IO ()
 workerLoop wakeChan connectInfo cache =
@@ -137,6 +160,13 @@ main = do
         void $
           forkIO $
             workerLoop wakeChan connectInfo cache
+      -- Background thread: clean up exhausted entries every hour.
+      void $ forkIO $ cleanupLoop connectInfo
+      -- Run initial cleanup at startup to clear any accumulated dead entries.
+      withConnect connectInfo $ \startupConn -> do
+        n <- cleanupExhausted startupConn
+        when (n > 0) $
+          putStrLn $ "Startup cleanup: removed " ++ show n ++ " exhausted entries"
       withConnect connectInfo $ \listenConn -> do
         _ <- execute_ listenConn "LISTEN step_finished" -- (build id, step id, logpath)
         -- Kick workers once to process any backlog that exists at startup.
