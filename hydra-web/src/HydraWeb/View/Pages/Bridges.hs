@@ -55,7 +55,11 @@ renderBridgesContentBS = LBS.toStrict . renderBS . bridgesContent
 renderGitHub :: GitHubBridgeStatus -> Html ()
 renderGitHub gh = do
   p_ $ do
-    "Pending: "
+    "Total: "
+    strong_ (toHtml $ showT (ghsTotal gh))
+    " | Sent: "
+    strong_ (toHtml $ showT (ghsSent gh))
+    " | Pending: "
     strong_ (toHtml $ showT (ghsPending gh))
     " | Failed: "
     strong_ (toHtml $ showT (ghsFailed gh))
@@ -104,10 +108,10 @@ renderAttic attic = do
   p_ $ do
     "Total: "
     strong_ (toHtml $ showT (absTotal attic))
-    " | Ready: "
-    strong_ (toHtml $ showT (absReady attic))
+    " | Pending: "
+    strong_ (toHtml $ showT (absPending attic))
     " | Waiting: "
-    strong_ (toHtml $ showT (absBackoff attic))
+    strong_ (toHtml $ showT (absWaiting attic))
     " | Failed: "
     strong_ (toHtml $ showT (absFailed attic))
 

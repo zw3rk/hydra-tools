@@ -26,7 +26,9 @@ data BridgeStatus = BridgeStatus
 
 -- | GitHub check-run notification delivery status.
 data GitHubBridgeStatus = GitHubBridgeStatus
-  { ghsPending    :: !Int                -- ^ sent IS NULL AND tries < 5
+  { ghsTotal      :: !Int                -- ^ All rows in github_status_payload
+  , ghsSent       :: !Int                -- ^ sent IS NOT NULL
+  , ghsPending    :: !Int                -- ^ sent IS NULL AND tries < 5
   , ghsFailed     :: !Int                -- ^ sent IS NULL AND tries >= 5
   , ghsByRepo     :: ![GitHubRepoRow]    -- ^ Breakdown by owner/repo
   , ghsRecentSent :: ![GitHubRecentSend] -- ^ Last 20 successfully sent
@@ -49,11 +51,13 @@ data GitHubRecentSend = GitHubRecentSend
   }
 
 -- | Attic binary-cache upload queue status.
+-- Note: successfully uploaded paths are deleted from the table, so all
+-- rows represent incomplete work.
 data AtticBridgeStatus = AtticBridgeStatus
   { absTotal        :: !Int              -- ^ All rows in drvpathstoupload
-  , absReady        :: !Int              -- ^ last < NOW() AND tries < 20
-  , absBackoff      :: !Int              -- ^ last >= NOW() AND tries < 20
-  , absFailed       :: !Int              -- ^ tries >= 20
+  , absPending      :: !Int              -- ^ last < NOW() AND tries < 20 (eligible for retry)
+  , absWaiting      :: !Int              -- ^ last >= NOW() AND tries < 20 (in backoff)
+  , absFailed       :: !Int              -- ^ tries >= 20 (exhausted retries)
   , absRecentActive :: ![AtticQueueItem] -- ^ 20 most recently active items
   }
 
