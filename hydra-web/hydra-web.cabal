@@ -20,8 +20,12 @@ common common
       , async
       , bytestring
       , containers
+      , crypton
+      , http-client
+      , http-client-tls
       , http-types
       , lucid
+      , memory
       , mtl
       , postgresql-simple
       , resource-pool
@@ -32,6 +36,7 @@ common common
       , tagged
       , text
       , time
+      , vault
       , wai
       , wai-extra
       , wai-app-static
@@ -65,7 +70,16 @@ library
       , HydraWeb.Handlers.API
       , HydraWeb.Handlers.Job
       , HydraWeb.Handlers.Bridges
+      , HydraWeb.Handlers.Auth
       , HydraWeb.Models.Bridge
+      , HydraWeb.Models.User
+      , HydraWeb.DB.Migrate
+      , HydraWeb.DB.Auth
+      , HydraWeb.Auth.Encrypt
+      , HydraWeb.Auth.Session
+      , HydraWeb.Auth.GitHub
+      , HydraWeb.Auth.Middleware
+      , HydraWeb.View.Pages.Login
       , HydraWeb.DB.Bridges
       , HydraWeb.SSE.Hub
       , HydraWeb.SSE.Listener

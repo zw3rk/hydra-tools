@@ -18,8 +18,13 @@ import Network.Wai.Handler.Warp
   (defaultSettings, setPort, setHost, setTimeout, runSettings)
 import System.IO (hFlush, stdout)
 
+import Network.HTTP.Client.TLS (newTlsManager)
+
+import HydraWeb.Auth.Encrypt (newEncryptor)
 import HydraWeb.Config (Config (..), loadConfig)
-import HydraWeb.DB.Pool (createPool)
+import HydraWeb.DB.Migrate (runMigrations)
+import HydraWeb.DB.Pool (createPool, withConn)
+import HydraWeb.DB.Auth (bootstrapSuperAdmins)
 import HydraWeb.SSE.Hub (newHub)
 import HydraWeb.SSE.Listener (listenAndBroadcast)
 import HydraWeb.Server (mkApp)
@@ -30,14 +35,26 @@ main = do
   cfg  <- loadConfig
   pool <- createPool (cfgDatabaseURL cfg)
   hub  <- newHub
+  mgr  <- newTlsManager
+
+  -- Run database migrations for auth tables.
+  withConn pool runMigrations
+
+  -- Bootstrap super-admins from config.
+  withConn pool $ \conn -> bootstrapSuperAdmins conn (cfgSuperAdmins cfg)
+
+  -- Initialize encryption (Nothing if key is empty).
+  let mEnc = newEncryptor (cfgEncryptionKey cfg)
 
   -- SSE listener shutdown signal.
   running <- newIORef True
 
   let app = App
-        { appPool   = pool
-        , appConfig = cfg
-        , appSSEHub = Just hub
+        { appPool        = pool
+        , appConfig      = cfg
+        , appSSEHub      = Just hub
+        , appEncryptor   = mEnc
+        , appHttpManager = mgr
         }
 
   let (host, port) = parseListenAddr (cfgListenAddr cfg)

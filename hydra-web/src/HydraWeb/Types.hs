@@ -20,15 +20,20 @@ import Database.PostgreSQL.Simple (Connection)
 import Servant (Handler)
 import Servant.Server (ServerError)
 
+import Network.HTTP.Client (Manager)
+
+import HydraWeb.Auth.Encrypt (Encryptor)
 import HydraWeb.Config (Config)
 import HydraWeb.SSE.Hub (Hub)
 
 -- | Shared application context, threaded through all handlers via ReaderT.
 -- No global mutable state: everything is in this record.
 data App = App
-  { appPool   :: !(Pool Connection)  -- ^ Database connection pool
-  , appConfig :: !Config             -- ^ Environment-based configuration
-  , appSSEHub :: !(Maybe Hub)        -- ^ SSE broadcast hub (Nothing if SSE disabled)
+  { appPool        :: !(Pool Connection)   -- ^ Database connection pool
+  , appConfig      :: !Config              -- ^ Environment-based configuration
+  , appSSEHub      :: !(Maybe Hub)         -- ^ SSE broadcast hub (Nothing if SSE disabled)
+  , appEncryptor   :: !(Maybe Encryptor)   -- ^ AES-GCM encryption (Nothing if disabled)
+  , appHttpManager :: !Manager             -- ^ HTTP client manager for GitHub API
   }
 
 -- | Handler monad: ReaderT App over Servant's Handler.

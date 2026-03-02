@@ -9,6 +9,7 @@
 
 module HydraWeb.API
   ( HydraWebAPI
+  , AuthAPI
   , JSONAPI
   , JobAPI
   , SSEAPI
@@ -80,6 +81,19 @@ type JobAPI =
     :<|> "shield"          :> Get '[JSON] ShieldBadge
     )
 
+-- | Authentication routes (login, OAuth flow, logout).
+type AuthAPI =
+  -- GET /login
+       "login" :> Get '[HTML] (Html ())
+  -- GET /auth/github — start OAuth flow
+  :<|> "auth" :> "github" :> Get '[HTML] (Html ())
+  -- GET /auth/github/callback?code=...&state=...
+  :<|> "auth" :> "github" :> "callback"
+       :> QueryParam "code" Text :> QueryParam "state" Text
+       :> Get '[HTML] (Html ())
+  -- GET /logout
+  :<|> "logout" :> Get '[HTML] (Html ())
+
 -- | SSE stream endpoint (Raw WAI app for long-lived connections).
 type SSEAPI = "bridges" :> "stream" :> Raw
 
@@ -87,5 +101,4 @@ type SSEAPI = "bridges" :> "stream" :> Raw
 type StaticAPI = "static" :> Raw
 
 -- | Full API combining all route groups and static files.
--- Note: SSEAPI must come before StaticAPI since both are Raw.
-type FullAPI = HydraWebAPI :<|> JSONAPI :<|> JobAPI :<|> SSEAPI :<|> StaticAPI
+type FullAPI = HydraWebAPI :<|> AuthAPI :<|> JSONAPI :<|> JobAPI :<|> SSEAPI :<|> StaticAPI
