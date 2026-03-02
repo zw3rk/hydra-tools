@@ -54,7 +54,17 @@ in {
     packages = {
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
       hydra-attic-bridge = haskellPkgSet'.getComponent "hydra-attic-bridge:exe:hydra-attic-bridge";
-      hydra-web = haskellPkgSet'.getComponent "hydra-web:exe:hydra-web";
+
+      # hydra-web needs the static assets (CSS, JS) bundled alongside the
+      # executable so the NixOS module can reference them via $out/share/...
+      hydra-web = let
+        exe = haskellPkgSet'.getComponent "hydra-web:exe:hydra-web";
+        pkgs = import inputs.nixpkgs { system = ctx.system; };
+      in pkgs.runCommand "hydra-web-with-static" { meta = exe.meta or {}; } ''
+        mkdir -p $out/bin $out/share/hydra-web
+        ln -s ${exe}/bin/hydra-web $out/bin/hydra-web
+        cp -r ${../../../hydra-web/static} $out/share/hydra-web/static
+      '';
     };
   };
 

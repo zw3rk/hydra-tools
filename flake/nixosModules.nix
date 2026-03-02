@@ -318,5 +318,196 @@
         };
       };
     });
+
+    hydra-web = moduleWithSystem (perSystem @ {config}: {
+      config,
+      lib,
+      pkgs,
+      ...
+    }: let
+      cfg = config.services.hydra-web;
+    in {
+      options.services.hydra-web = with lib; {
+        enable = mkEnableOption "hydra web frontend";
+
+        package = mkOption {
+          type = types.package;
+          default = perSystem.config.packages.hydra-web;
+          defaultText = "hydra-web";
+          description = "The Haskell hydra web frontend package.";
+        };
+
+        listenAddr = mkOption {
+          type = types.str;
+          default = "127.0.0.1:4000";
+          description = ''
+            Address and port to listen on (host:port).
+          '';
+        };
+
+        baseURL = mkOption {
+          type = types.str;
+          default = "http://localhost:4000";
+          description = ''
+            Public-facing base URL for generating absolute links.
+          '';
+        };
+
+        basePath = mkOption {
+          type = types.str;
+          default = "";
+          description = ''
+            URL prefix when deployed behind a reverse proxy at a sub-path
+            (e.g. "/hydra"). Empty for root deployment.
+          '';
+        };
+
+        databaseURL = mkOption {
+          type = types.str;
+          default = "postgres://hydra-web@/hydra?host=/run/postgresql";
+          description = ''
+            PostgreSQL connection string.
+          '';
+        };
+
+        hydraBackend = mkOption {
+          type = types.str;
+          default = "http://127.0.0.1:3000";
+          description = ''
+            Upstream Hydra backend URL for proxied write operations.
+          '';
+        };
+
+        superAdmins = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = ''
+            GitHub usernames to bootstrap as super-admins on startup.
+          '';
+        };
+
+        # Credential files for secrets (loaded via systemd LoadCredential).
+        sessionSecretFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            File containing the session signing secret.
+          '';
+        };
+
+        encryptionKeyFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            File containing the AES-256-GCM encryption key (hex-encoded)
+            for encrypting stored GitHub tokens.
+          '';
+        };
+
+        # GitHub OAuth / App integration.
+        github = {
+          appId = mkOption {
+            type = types.int;
+            default = 0;
+            description = "GitHub App ID.";
+          };
+
+          appKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = "Path to GitHub App private key file.";
+          };
+
+          clientId = mkOption {
+            type = types.str;
+            default = "";
+            description = "GitHub OAuth client ID.";
+          };
+
+          clientSecretFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = "File containing the GitHub OAuth client secret.";
+          };
+
+          installationIds = mkOption {
+            type = types.str;
+            default = "";
+            description = ''
+              Comma-separated "org=id" pairs for GitHub App installations.
+            '';
+          };
+        };
+
+        environmentFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            Optional environment file with additional secrets.
+          '';
+        };
+      };
+
+      config = lib.mkIf cfg.enable {
+        systemd.services.hydra-web = {
+          wantedBy = ["multi-user.target"];
+          after = ["postgresql.service"];
+          partOf = ["hydra-server.service"];
+
+          startLimitIntervalSec = 0;
+
+          serviceConfig =
+            {
+              User = config.users.users.hydra.name;
+              Group = config.users.groups.hydra.name;
+
+              Restart = "always";
+              RestartSec = "10s";
+
+              # Static assets are bundled alongside the executable.
+              StateDirectory = "hydra";
+
+              LoadCredential =
+                lib.optional (cfg.sessionSecretFile != null) "session-secret:${cfg.sessionSecretFile}"
+                ++ lib.optional (cfg.encryptionKeyFile != null) "encryption-key:${cfg.encryptionKeyFile}"
+                ++ lib.optional (cfg.github.appKeyFile != null) "github-app-key:${cfg.github.appKeyFile}"
+                ++ lib.optional (cfg.github.clientSecretFile != null) "github-client-secret:${cfg.github.clientSecretFile}";
+            }
+            // lib.optionalAttrs (cfg.environmentFile != null)
+            {EnvironmentFile = builtins.toPath cfg.environmentFile;};
+
+          environment =
+            {
+              HYDRA_WEB_LISTEN = cfg.listenAddr;
+              HYDRA_WEB_BASE_URL = cfg.baseURL;
+              HYDRA_WEB_DATABASE_URL = cfg.databaseURL;
+              HYDRA_WEB_HYDRA_BACKEND = cfg.hydraBackend;
+              HYDRA_WEB_STATIC_DIR = "${cfg.package}/share/hydra-web/static";
+              HYDRA_WEB_GITHUB_CLIENT_ID = cfg.github.clientId;
+            }
+            // lib.optionalAttrs (cfg.basePath != "") {
+              HYDRA_WEB_BASE_PATH = cfg.basePath;
+            }
+            // lib.optionalAttrs (cfg.superAdmins != []) {
+              HYDRA_WEB_SUPER_ADMINS = lib.concatStringsSep "," cfg.superAdmins;
+            }
+            // lib.optionalAttrs (cfg.github.appId != 0) {
+              HYDRA_WEB_GITHUB_APP_ID = toString cfg.github.appId;
+            }
+            // lib.optionalAttrs (cfg.github.installationIds != "") {
+              HYDRA_WEB_GITHUB_INSTALLATION_IDS = cfg.github.installationIds;
+            };
+
+          script = ''
+            ${lib.optionalString (cfg.sessionSecretFile != null) ''export HYDRA_WEB_SESSION_SECRET=$(< "$CREDENTIALS_DIRECTORY"/session-secret)''}
+            ${lib.optionalString (cfg.encryptionKeyFile != null) ''export HYDRA_WEB_ENCRYPTION_KEY=$(< "$CREDENTIALS_DIRECTORY"/encryption-key)''}
+            ${lib.optionalString (cfg.github.appKeyFile != null) ''export HYDRA_WEB_GITHUB_APP_KEY_FILE="$CREDENTIALS_DIRECTORY"/github-app-key''}
+            ${lib.optionalString (cfg.github.clientSecretFile != null) ''export HYDRA_WEB_GITHUB_CLIENT_SECRET=$(< "$CREDENTIALS_DIRECTORY"/github-client-secret)''}
+
+            exec ${lib.getExe cfg.package}
+          '';
+        };
+      };
+    });
   };
 }
