@@ -388,8 +388,7 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
               ghData =
                 [ "permissions"
                     := [ "checks" := ("write" :: String),
-                         "statuses" := ("write" :: String),
-                         "pull_requests" := ("read" :: String)
+                         "statuses" := ("write" :: String)
                        ]
                 ]
             }
