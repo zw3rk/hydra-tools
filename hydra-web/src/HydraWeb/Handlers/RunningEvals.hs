@@ -1,12 +1,11 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for the bridge status page.
--- SSE streaming is now handled by the unified stream endpoints.
+-- | Handler for the running evaluations page (GET /running-evals).
 {-# LANGUAGE OverloadedStrings #-}
 
-module HydraWeb.Handlers.Bridges
-  ( bridgesHandler
+module HydraWeb.Handlers.RunningEvals
+  ( runningEvalsHandler
   ) where
 
 import Control.Monad.IO.Class (liftIO)
@@ -16,23 +15,23 @@ import Lucid (Html)
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Bridges (bridgeFullStatus)
+import HydraWeb.DB.Evals (runningEvaluations)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
-import HydraWeb.View.Pages.Bridges (bridgesPage)
+import HydraWeb.View.Pages.RunningEvals (runningEvalsPage)
 
--- | GET /bridges — render the bridge status page with live SSE wrapper.
-bridgesHandler :: AppM (Html ())
-bridgesHandler = do
+-- | GET /running-evals — render the running evaluations page.
+runningEvalsHandler :: AppM (Html ())
+runningEvalsHandler = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  (status, counts) <- liftIO $ withConn pool $ \conn -> do
-    s  <- bridgeFullStatus conn
+  (evals, counts) <- liftIO $ withConn pool $ \conn -> do
+    es <- runningEvaluations conn
     nc <- navCounts conn
-    pure (s, nc)
+    pure (es, nc)
   let pd = PageData
-        { pdTitle    = "Bridge Status"
+        { pdTitle    = "Running Evaluations"
         , pdBasePath = bp
         , pdCounts   = counts
         }
-  pure $ pageLayout pd $ bridgesPage bp status
+  pure $ pageLayout pd $ runningEvalsPage bp evals

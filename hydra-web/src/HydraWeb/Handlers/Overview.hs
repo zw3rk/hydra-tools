@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for the overview page (GET /).
+-- | Handler for the overview page (GET / and GET /projects).
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -22,7 +22,7 @@ import HydraWeb.DB.Queue (navCounts, newsItems)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Overview (overviewPage)
 
--- | Render the overview page with all visible projects and news.
+-- | Render the overview page with all visible projects, metric cards, and news.
 overviewHandler :: AppM (Html ())
 overviewHandler = do
   pool <- asks appPool
@@ -30,7 +30,6 @@ overviewHandler = do
   (projects, counts, news) <- liftIO $ withConn pool $ \conn -> do
     ps <- visibleProjects conn
     nc <- navCounts conn
-    -- News items are non-fatal: return empty list on error.
     ni <- newsItems conn 5 `catch` (\(_ :: SomeException) -> pure [])
     pure (ps, nc, ni)
   let pd = PageData
@@ -38,4 +37,4 @@ overviewHandler = do
         , pdBasePath = bp
         , pdCounts   = counts
         }
-  pure $ pageLayout pd $ overviewPage bp projects news
+  pure $ pageLayout pd $ overviewPage bp counts projects news

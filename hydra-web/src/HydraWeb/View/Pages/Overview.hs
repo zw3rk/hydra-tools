@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Overview page HTML (project listing + news).
+-- | Overview page HTML: dashboard with metric cards, project grid, and news.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -14,22 +14,31 @@ import Data.Text (Text)
 import Lucid
 
 import HydraWeb.Models.Project (Project (..))
-import HydraWeb.Models.Queue (NewsItem (..))
-import HydraWeb.View.Components (projectURL, fmtTime)
+import HydraWeb.Models.Queue (NavCounts (..), NewsItem (..))
+import HydraWeb.View.Components (projectURL, fmtTime, metricCard)
 
--- | Render the overview page content.
-overviewPage :: Text -> [Project] -> [NewsItem] -> Html ()
-overviewPage bp projects news = do
-  h1_ "Projects"
+-- | Render the overview page content with dashboard metrics and project cards.
+overviewPage :: Text -> NavCounts -> [Project] -> [NewsItem] -> Html ()
+overviewPage bp counts projects news = do
+  h1_ "Hydra CI"
+
+  -- Dashboard metric cards.
+  div_ [class_ "metric-cards"] $ do
+    metricCard "queued" "Queued" (ncQueued counts)
+    metricCard "running" "Building" (ncRunning counts)
+    metricCard "evals" "Evaluating" (ncRunningEvals counts)
+    a_ [href_ (bp <> "/bridges")] $
+      metricCard "" "Bridge Pending" (ncBridgePending counts)
 
   -- News section (if any items).
   case news of
     [] -> pure ()
     _  -> details_ [open_ ""] $ do
       summary_ "News"
-      mapM_ (renderNewsItem) news
+      mapM_ renderNewsItem news
 
   -- Projects table.
+  h2_ "Projects"
   table_ $ do
     thead_ $ tr_ $ do
       th_ "Project"
