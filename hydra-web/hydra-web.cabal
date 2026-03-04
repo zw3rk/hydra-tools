@@ -125,3 +125,21 @@ executable hydra-web
     hs-source-dirs: app
     main-is: Main.hs
     build-depends: hydra-web
+
+test-suite hydra-web-test
+    import: common
+    type: exitcode-stdio-1.0
+    ghc-options: -threaded -rtsopts "-with-rtsopts=-N"
+    hs-source-dirs: test
+    main-is: Main.hs
+    build-depends:
+        hydra-web
+      , hspec
+      , QuickCheck
+    build-tool-depends:
+        hspec-discover:hspec-discover
+    other-modules:
+        HydraWeb.View.ComponentsSpec
+      , HydraWeb.ConfigSpec
+      , HydraWeb.Auth.EncryptSpec
+      , HydraWeb.Auth.MiddlewareSpec
