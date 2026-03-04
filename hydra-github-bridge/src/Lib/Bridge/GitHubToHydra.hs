@@ -2,8 +2,10 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Lib.Bridge.GitHubToHydra
   ( GitHubToHydraEnv (..),
@@ -34,7 +36,7 @@ import Control.Monad.Reader (ReaderT (..), asks)
 import Control.Monad.Reader.Class (MonadReader)
 import Data.Aeson qualified as Aeson
 import Data.Char (isNumber)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -122,179 +124,330 @@ singleEndpoint conn =
     :<|> checkSuiteHook conn
     :<|> checkRunHook conn
 
+-- | Handle push event webhooks under the following cases:
+--
+--  1. Merge queue deleted: Disable existing Hydra job
+--  2. Merge queue pushed: Create or update Hydra job
+--  3. Push important branches or tags: Create or update Hydra job
+--  4. All others: Logged and ignored
 pushHook :: Connection -> RepoWebhookEvent -> ((), PushEvent) -> GitHubToHydraT Handler ()
-pushHook conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = repo@HookRepository {whRepoFullName = repoName}})
-  | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
-    Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
-    "0000000000000000000000000000000000000000" == headSha = do
-      let projName = escapeHydraName repoName
-          jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
-          owner = hookRepoOwner repo
+pushHook conn _ (_, pushEvent@PushEvent {evPushHeadSha = Just headSha})
+  | isMergeQueueDeleted =
+      maybe
+        (liftIO warnParseMergeQueueRefFailed)
+        (handleMergeQueueDeleted conn pushEvent headSha)
+        (parseMergeQueueRef pushEvent.evPushRef)
+  | isMergeQueue =
+      maybe
+        (liftIO warnParseMergeQueueRefFailed)
+        (handleMergeQueuePushed conn pushEvent headSha)
+        (parseMergeQueueRef pushEvent.evPushRef)
+  | isInterestingBranch = handlePushBranch conn pushEvent headSha
+  | otherwise = liftIO $ do
+      Text.putStrLn $
+        "Ignoring unhandled push event"
+          <> maybe mempty ((" from " <>) . (.whUserLogin)) pushEvent.evPushSender
+          <> maybe mempty (\sha -> " (" <> sha <> ")") pushEvent.evPushHeadSha
+  where
+    isMergeQueueDeleted =
+      "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` pushEvent.evPushRef
+        && "0000000000000000000000000000000000000000" == headSha
+    isMergeQueue = "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` pushEvent.evPushRef
+    isInterestingBranch =
+      pushEvent.evPushRef `elem` ["refs/heads/" <> x | x <- ["main", "master", "develop"]]
+        || any
+          (`Text.isPrefixOf` pushEvent.evPushRef)
+          ["refs/" <> x <> "/" | x <- ["tags", "heads/release", "heads/ci"]]
 
-          jobset =
-            Hydra.defHydraFlakeJobset
-              { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
-                Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha,
-                -- setting visiblity seems to have no effect...
-                Hydra.hjVisible = False,
-                -- ... so we just disable it.
-                Hydra.hjEnabled = 0
-              }
-      -- We Update the Jobset instead of Delete, so that past build results will
-      -- still be available.  This should update the sha to 000000, and as such
-      -- allow us to find them and delete them later.
-      whenKnownInstallId owner Nothing . liftIO $ do
-        putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
-  | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
-    Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref = do
-      let jobset =
-            Hydra.defHydraFlakeJobset
-              { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
-                Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
-              }
+    warnParseMergeQueueRefFailed =
+      Text.putStrLn $
+        "Warning: Failed to parse merge queue ref " <> pushEvent.evPushRef
+pushHook _conn _ (_, pushEvent@PushEvent {evPushHeadSha = Nothing}) =
+  liftIO . Text.putStrLn $
+    "Ignoring commit without HEAD SHA"
+      <> maybe mempty ((" from " <>) . (.whUserLogin)) pushEvent.evPushSender
 
-          projName = escapeHydraName repoName
-          jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
-          owner = hookRepoOwner repo
-
-      -- TODO: 'PushEvent' doesn't contain app installation, even though GitHub sends it. This
-      -- will be fixed by https://github.com/cuedo/github-webhooks/pull/92. After it is
-      -- merged and released, be sure to pass the installation ID.
-      whenKnownInstallId owner Nothing . liftIO $ do
-        putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-  | ref `elem` ["refs/heads/" <> x | x <- ["main", "master", "develop"]]
-      || any (`Text.isPrefixOf` ref) ["refs/" <> x <> "/" | x <- ["tags", "heads/release", "heads/ci"]] = do
-      let projName = escapeHydraName repoName
-          refName = maybe (Text.drop (Text.length "refs/tags/") ref) id $ Text.stripPrefix "refs/heads/" ref
-          jobsetName = escapeHydraName refName
-          owner = hookRepoOwner repo
-          jobset =
-            Hydra.defHydraFlakeJobset
-              { Hydra.hjName = jobsetName,
-                Hydra.hjDescription = refName <> " " <> if "refs/heads/" `Text.isPrefixOf` ref then "branch" else "tag",
-                Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
-              }
-
-      -- TODO: 'PushEvent' doesn't contain app installation, even though GitHub sends it. This
-      -- will be fixed by https://github.com/cuedo/github-webhooks/pull/92. After it is
-      -- merged and released, be sure to pass the installation ID.
-      whenKnownInstallId owner Nothing . liftIO $ do
-        Text.putStrLn $ "Adding Create/Update " <> projName <> "/" <> jobsetName <> " to the queue. ****"
-        Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pushHook _conn _ (_, ev) = liftIO $ do
-  putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
-  print $ (fromJust . evPushHeadSha) ev
-
-parseMergeQueueRef :: Text -> Maybe (Text, Int)
-parseMergeQueueRef ref = do
-  suffix <- Text.stripPrefix "refs/heads/gh-readonly-queue/" ref
-  let (branchName, prPart) = Text.breakOn "/pr-" suffix
-  rest <- Text.stripPrefix "/pr-" prPart
-  let prNumberText = Text.takeWhile isNumber rest
-  prNumber <- readMaybe (Text.unpack prNumberText) :: Maybe Int
-
-  return (branchName, prNumber)
-
-escapeHydraName :: Text -> Text
-escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
-
-issueCommentHook ::
-  RepoWebhookEvent ->
-  ((), IssueCommentEvent) ->
-  GitHubToHydraT Handler ()
-issueCommentHook _ (_, ev) = liftIO $ do
-  putStrLn "An issue comment was posted:"
-  print $ (whIssueCommentBody . evIssueCommentPayload) ev
-
-pullRequestHook ::
+-- | Handle merge queue deleted webhook event. GitHub signals this by sending head SHA
+-- (`after` JSON key) as "00000...". Instead of deleting the jobset, we disable it so we
+-- don't lose past build results. We also set the SHA to "00000..." so they are easy to
+-- find and delete.
+handleMergeQueueDeleted ::
+  (MonadIO io) =>
   Connection ->
-  RepoWebhookEvent ->
-  ((), PullRequestEvent) ->
-  GitHubToHydraT Handler ()
-pullRequestHook
-  conn
-  _
-  ( _,
-    ev@PullRequestEvent
-      { evPullReqAction = action,
-        evPullReqPayload = HookPullRequest {whPullReqIsDraft = isDraft},
-        evPullReqRepo = repo@HookRepository {whRepoFullName = repoName},
-        evPullReqInstallationId = installationId
-      }
-    )
-    | action
-        `elem` [ PullRequestOpenedAction,
-                 PullRequestReopenedAction,
-                 (PullRequestActionOther "synchronize")
-               ]
-        && ( repoName
-               `notElem` [ "IntersectMBO/ouroboros-network",
-                           "IntersectMBO/cardano-cli",
-                           "IntersectMBO/cardano-api"
-                         ]
-               || not (maybe False id isDraft)
-           ) = do
-        let owner = hookRepoOwner repo
-            projName = escapeHydraName repoName
-            jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
-            -- Create or update the jobset with:
-            --  * name: pullrequest-{n}
-            --  * description: PR {n}: {pr title}
-            --  * flake = "github:${info.head.repo.owner.login}/${info.head.repo.name}/${info.head.ref}";
-            jobset =
-              Hydra.defHydraFlakeJobset
-                { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
-                  Hydra.hjDescription =
-                    "PR "
-                      <> Text.pack (show (evPullReqNumber ev))
-                      <> ": "
-                      <> whPullReqTitle (evPullReqPayload ev),
-                  Hydra.hjFlake =
-                    "github:"
-                      <> repoName
-                      <> "/"
-                      <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
-                }
+  PushEvent ->
+  Text ->
+  (Text, Int) ->
+  GitHubToHydraT io ()
+handleMergeQueueDeleted conn pushEvent headSha (targetBranch, pullReqNumber) = do
+  let owner = hookRepoOwner pushEvent.evPushRepository
+      jobsetName = "merge-queue-" <> Text.show pullReqNumber
+      projName = escapeHydraName pushEvent.evPushRepository.whRepoFullName
 
-        whenKnownInstallId owner installationId . liftIO $ do
-          putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-          Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pullRequestHook conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = do
-  let repoName = whRepoFullName (evPullReqRepo ev)
-      projName = escapeHydraName repoName
-      jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
-      repo = evPullReqRepo ev
-      installationId = evPullReqInstallationId ev
-      owner = hookRepoOwner repo
       jobset =
         Hydra.defHydraFlakeJobset
-          { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
-            Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
-            Hydra.hjFlake =
-              "github:"
-                <> repoName
-                <> "/"
-                <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)),
+          { Hydra.hjName = "merge-queue-" <> Text.show pullReqNumber,
+            Hydra.hjDescription = "Merge Queue: PR" <> Text.show pullReqNumber <> " -> " <> targetBranch,
+            Hydra.hjFlake = "github:" <> pushEvent.evPushRepository.whRepoFullName <> "/" <> headSha,
             -- setting visiblity seems to have no effect...
             Hydra.hjVisible = False,
             -- ... so we just disable it.
             Hydra.hjEnabled = 0
           }
 
+  whenKnownInstallId owner Nothing . liftIO $ do
+    Text.putStrLn $ "Adding Update " <> projName <> "/" <> jobsetName <> " to the queue."
+    Hydra.writeCommand
+      conn
+      (Hydra.UpdateJobset pushEvent.evPushRepository.whRepoFullName projName jobsetName jobset)
+
+-- | Handle merge queue pushed event. Creates or updates the Hydra jobset with the
+-- specified commit SHA.
+handleMergeQueuePushed ::
+  (MonadIO io) =>
+  Connection ->
+  PushEvent ->
+  Text ->
+  (Text, Int) ->
+  GitHubToHydraT io ()
+handleMergeQueuePushed conn pushEvent headSha (targetBranch, pullReqNumber) = do
+  let owner = hookRepoOwner pushEvent.evPushRepository
+      projName = escapeHydraName pushEvent.evPushRepository.whRepoFullName
+      jobset =
+        Hydra.defHydraFlakeJobset
+          { Hydra.hjName = "merge-queue-" <> Text.show pullReqNumber,
+            Hydra.hjDescription = "Merge Queue: PR" <> Text.show pullReqNumber <> " -> " <> targetBranch,
+            Hydra.hjFlake = "github:" <> pushEvent.evPushRepository.whRepoFullName <> "/" <> headSha
+          }
+
+      jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
+
+  -- TODO: 'PushEvent' doesn't contain app installation, even though GitHub sends it. This
+  -- will be fixed by https://github.com/cuedo/github-webhooks/pull/92. After it is
+  -- merged and released, be sure to pass the installation ID.
+  whenKnownInstallId owner Nothing . liftIO $ do
+    Text.putStrLn $ "Adding Create/Update " <> projName <> "/" <> jobsetName <> " to the queue."
+    Hydra.writeCommand conn $
+      Hydra.CreateOrUpdateJobset
+        pushEvent.evPushRepository.whRepoFullName
+        projName
+        jobsetName
+        jobset
+
+-- | Handle pushed event for the following branches:
+--
+--  * master
+--  * main
+--  * develop
+--  * tags
+--  * branch names beginning with ci or release
+--
+-- Creates or updates the Hydra jobset with the specified commit SHA.
+handlePushBranch ::
+  (MonadIO io) =>
+  Connection ->
+  PushEvent ->
+  Text ->
+  GitHubToHydraT io ()
+handlePushBranch conn pushEvent headSha = do
+  let owner = hookRepoOwner pushEvent.evPushRepository
+      refName =
+        fromMaybe
+          (Text.drop (Text.length "refs/tags/") pushEvent.evPushRef)
+          (Text.stripPrefix "refs/heads/" pushEvent.evPushRef)
+      jobsetName = escapeHydraName refName
+      jobset =
+        Hydra.defHydraFlakeJobset
+          { Hydra.hjName = jobsetName,
+            Hydra.hjDescription =
+              refName
+                <> " "
+                <> if "refs/heads/" `Text.isPrefixOf` pushEvent.evPushRef then "branch" else "tag",
+            Hydra.hjFlake =
+              "github:"
+                <> pushEvent.evPushRepository.whRepoFullName
+                <> "/"
+                <> headSha
+          }
+      projName = escapeHydraName pushEvent.evPushRepository.whRepoFullName
+
+  -- TODO: 'PushEvent' doesn't contain app installation, even though GitHub sends it. This
+  -- will be fixed by https://github.com/cuedo/github-webhooks/pull/92. After it is
+  -- merged and released, be sure to pass the installation ID.
+  whenKnownInstallId owner Nothing . liftIO $ do
+    Text.putStrLn $ "Adding Create/Update " <> projName <> "/" <> jobsetName <> " to the queue."
+    Hydra.writeCommand conn $
+      Hydra.CreateOrUpdateJobset
+        pushEvent.evPushRepository.whRepoFullName
+        projName
+        jobsetName
+        jobset
+
+-- | Attempt to interpret the `ref` from a merge queue. The expected format is:
+--
+-- refs/heads/gh-readonly-queue/<branch-name>/pr-<number>
+parseMergeQueueRef :: Text -> Maybe (Text, Int)
+parseMergeQueueRef ref = do
+  suffix <- Text.stripPrefix "refs/heads/gh-readonly-queue/" ref
+  let (branchName, prPart) = Text.breakOn "/pr-" suffix
+  rest <- Text.stripPrefix "/pr-" prPart
+  let prNumberText = Text.takeWhile isNumber rest
+  prNumber <- readMaybe (Text.unpack prNumberText)
+
+  return (branchName, prNumber)
+
+-- | Remove '/' and '.' by replacing them with '-'. Hydra can't handle these in project
+-- and jobset names.
+escapeHydraName :: Text -> Text
+escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
+
+-- | Handle issue webhook events. These are always logged and ignored.
+issueCommentHook ::
+  RepoWebhookEvent ->
+  ((), IssueCommentEvent) ->
+  GitHubToHydraT Handler ()
+issueCommentHook _ (_, commentEvent) = liftIO $ do
+  Text.putStrLn $
+    "An issue comment was posted: "
+      <> commentEvent.evIssueCommentPayload.whIssueCommentBody
+
+-- | Handle PR event webhooks under the following cases:
+--
+--  * PR Opened/Reopened/Synchronize: Create or update Hydra project and jobset
+--  * PR Closed: Disable Hydra jobset
+--  * Others: Log and ignore
+pullRequestHook ::
+  Connection ->
+  RepoWebhookEvent ->
+  ((), PullRequestEvent) ->
+  GitHubToHydraT Handler ()
+pullRequestHook conn _ (_, prEvent) =
+  case prEvent.evPullReqAction of
+    -- Build-triggering actions
+    PullRequestOpenedAction
+      | shouldIgnore -> logAndIgnore
+      | otherwise -> handlePullRequestUpdated conn prEvent
+    PullRequestReopenedAction
+      | shouldIgnore -> logAndIgnore
+      | otherwise -> handlePullRequestUpdated conn prEvent
+    PullRequestActionOther "synchronize"
+      | shouldIgnore -> logAndIgnore
+      | otherwise -> handlePullRequestUpdated conn prEvent
+    -- Closed action triggers the jobset to be disabled
+    PullRequestClosedAction -> handlePullRequestClosed conn prEvent
+    -- All others are ignored
+    PullRequestActionOther _ -> logAndIgnore
+    PullRequestAssignedAction -> logAndIgnore
+    PullRequestUnassignedAction -> logAndIgnore
+    PullRequestReviewRequestedAction -> logAndIgnore
+    PullRequestReviewRequestRemovedAction -> logAndIgnore
+    PullRequestLabeledAction -> logAndIgnore
+    PullRequestUnlabeledAction -> logAndIgnore
+    PullRequestEditedAction -> logAndIgnore
+  where
+    isDraft = fromMaybe False prEvent.evPullReqPayload.whPullReqIsDraft
+    repoFullName = prEvent.evPullReqRepo.whRepoFullName
+
+    shouldIgnore =
+      isDraft
+        && repoFullName
+          `elem` [ "IntersectMBO/ouroboros-network",
+                   "IntersectMBO/cardano-cli",
+                   "IntersectMBO/cardano-api"
+                 ]
+
+    logAndIgnore =
+      liftIO . Text.putStrLn $
+        "Ignoring pull request action "
+          <> Text.show prEvent.evPullReqAction
+          <> " on "
+          <> repoFullName
+          <> if isDraft then " (draft)" else ""
+
+-- | Handle pull request created/updated/synchronized events. This creates or updates the
+-- Hydra jobset with:
+--
+--  * name: pullrequest-{n}
+--  * description: PR {n}: {pr title}
+--  * flake = "github:${info.head.repo.owner.login}/${info.head.repo.name}/${info.head.ref}";
+handlePullRequestUpdated ::
+  (MonadIO io) =>
+  Connection ->
+  PullRequestEvent ->
+  GitHubToHydraT io ()
+handlePullRequestUpdated conn prEvent = do
+  let owner = hookRepoOwner prEvent.evPullReqRepo
+      projName = escapeHydraName prEvent.evPullReqRepo.whRepoFullName
+      jobsetName = "pullrequest-" <> Text.show prEvent.evPullReqNumber
+
+      jobset =
+        Hydra.defHydraFlakeJobset
+          { Hydra.hjName = "pullrequest-" <> Text.show prEvent.evPullReqNumber,
+            Hydra.hjDescription =
+              "PR "
+                <> Text.show prEvent.evPullReqNumber
+                <> ": "
+                <> prEvent.evPullReqPayload.whPullReqTitle,
+            Hydra.hjFlake =
+              "github:"
+                <> prEvent.evPullReqRepo.whRepoFullName
+                <> "/"
+                <> prEvent.evPullReqPayload.whPullReqHead.whPullReqTargetSha
+          }
+
+  whenKnownInstallId owner prEvent.evPullReqInstallationId . liftIO $ do
+    Text.putStrLn $
+      "Adding Create/Update " <> projName <> "/" <> jobsetName <> " to the queue."
+    Hydra.writeCommand conn $
+      Hydra.CreateOrUpdateJobset
+        prEvent.evPullReqRepo.whRepoFullName
+        projName
+        jobsetName
+        jobset
+
+-- | Handle pull request closed event. This disables the jobset so we don't lose past
+-- build results
+handlePullRequestClosed ::
+  (MonadIO io) =>
+  Connection ->
+  PullRequestEvent ->
+  GitHubToHydraT io ()
+handlePullRequestClosed conn prEvent = do
+  let repoName = prEvent.evPullReqRepo.whRepoFullName
+      projName = escapeHydraName repoName
+      jobsetName = "pullrequest-" <> Text.show prEvent.evPullReqNumber
+      repo = prEvent.evPullReqRepo
+      installationId = prEvent.evPullReqInstallationId
+      owner = hookRepoOwner repo
+      jobset =
+        Hydra.defHydraFlakeJobset
+          { Hydra.hjName = "pullrequest-" <> Text.show prEvent.evPullReqNumber,
+            Hydra.hjDescription =
+              "PR "
+                <> Text.show prEvent.evPullReqNumber
+                <> ": "
+                <> prEvent.evPullReqPayload.whPullReqTitle,
+            Hydra.hjFlake =
+              "github:"
+                <> repoName
+                <> "/"
+                <> prEvent.evPullReqPayload.whPullReqHead.whPullReqTargetSha,
+            -- setting visiblity seems to have no effect...
+            Hydra.hjVisible = False,
+            -- so we just disable it.
+            Hydra.hjEnabled = 0
+          }
+
   whenKnownInstallId owner installationId . liftIO $ do
     Text.putStrLn $ "Adding Update " <> projName <> "/" <> jobsetName <> " to the queue."
     Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _ _ (_, ev) =
-  liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
+-- | Look up the owner of a repository as Text
 hookRepoOwner :: HookRepository -> Text
 hookRepoOwner HookRepository {whRepoOwner} =
-  either whSimplUserName whUserLogin whRepoOwner
+  either (.whSimplUserName) (.whUserLogin) whRepoOwner
 
+-- | Compare the owner and GitHub application installation ID with the configured app
+-- install IDs. If there's a match, execute the specified action. Otherwise, log an error.
 whenKnownInstallId ::
   (MonadIO io) =>
   Text ->
@@ -302,7 +455,7 @@ whenKnownInstallId ::
   GitHubToHydraT io () ->
   GitHubToHydraT io ()
 whenKnownInstallId owner installId action = do
-  knownInstallIds <- asks gthEnvGhAppInstallIds
+  knownInstallIds <- asks (.gthEnvGhAppInstallIds)
   if matchesKnownInstallId owner installId knownInstallIds
     then action
     else
@@ -324,77 +477,111 @@ matchesKnownInstallId owner installId knownInstallIds =
     matchesKnownInstallId' knownInsts instId = (owner, instId) `elem` knownInsts
     matchesOwnerInstallId = any $ (== owner) . fst
 
+-- | Handle check suite event webhook. When the action is rerequested, the matching Hydra
+-- PR jobsets are updated, otherwise it's logged and ignored.
 checkSuiteHook ::
   Connection ->
   RepoWebhookEvent ->
   ((), CheckSuiteEvent) ->
   GitHubToHydraT Handler ()
-checkSuiteHook conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = do
-  clientEnv <- asks gthEnvHydraClient
+checkSuiteHook conn _ (_, checkEvent) =
+  case checkEvent.evCheckSuiteAction of
+    CheckSuiteEventActionRerequested -> handleCheckSuiteRerequested conn checkEvent
+    _ -> logAndIgnore
+  where
+    logAndIgnore =
+      liftIO . Text.putStrLn $
+        "Ignoring unhandled check suite "
+          <> Text.show checkEvent.evCheckSuiteAction
 
-  let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
-      repo = evCheckSuiteRepository ev
-      repoName = whRepoFullName repo
+-- | Handle check suite reregistered event. The matching Hydra PR jobsets are updated with
+-- the specified target commit SHAs (`check_suite.pull_requests.[].head.sha` JSON keys).
+handleCheckSuiteRerequested ::
+  (MonadIO io) =>
+  Connection ->
+  CheckSuiteEvent ->
+  GitHubToHydraT io ()
+handleCheckSuiteRerequested conn checkEvent = do
+  clientEnv <- asks (.gthEnvHydraClient)
+
+  let prs = checkEvent.evCheckSuiteCheckSuite.whCheckSuitePullRequests
+      repo = checkEvent.evCheckSuiteRepository
+      repoName = repo.whRepoFullName
       owner = hookRepoOwner repo
       projName = escapeHydraName repoName
-      installId = whChecksInstallationId <$> evCheckSuiteInstallation ev
+      installId = (.whChecksInstallationId) <$> checkEvent.evCheckSuiteInstallation
 
   forM_ prs $ \pr -> do
-    let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+    let jobsetName = "pullrequest-" <> Text.show pr.whChecksPullRequestNumber
 
     whenKnownInstallId owner installId . liftIO $ do
       -- TODO: Handle failures gracefully
       jobset <-
-        (flip Servant.runClientM clientEnv $ Hydra.getJobset projName jobsetName)
+        Servant.runClientM (Hydra.getJobset projName jobsetName) clientEnv
           >>= either (die . show) return
           >>= \response -> case Aeson.fromJSON response of
-            Aeson.Error e -> die $ show e 
+            Aeson.Error e -> die $ show e
             Aeson.Success v -> return v
 
-      putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+      Text.putStrLn $ "Adding Update " <> projName <> "/" <> jobsetName <> " to the queue."
       Hydra.writeCommand conn $
         Hydra.UpdateJobset repoName projName jobsetName $
           jobset
-            { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
+            { Hydra.hjFlake =
+                "github:"
+                  <> repoName
+                  <> "/"
+                  <> pr.whChecksPullRequestHead.whChecksPullRequestTargetSha
             }
-checkSuiteHook _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
+-- | Handle check run webhook event. If the action is rerequested (`action = "rerequested"`
+-- in JSON), eval or rebuild the jobset. Otherwise, log and ignore it.
 checkRunHook ::
   Connection ->
   RepoWebhookEvent ->
   ((), CheckRunEvent) ->
   GitHubToHydraT Handler ()
-checkRunHook conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = do
-  let checkRun = evCheckRunCheckRun ev
-      checkRunName = whCheckRunName checkRun
-      repo = evCheckRunRepository ev
-      repoName = whRepoFullName repo
+checkRunHook conn _ (_, checkEvent) =
+  case checkEvent.evCheckRunAction of
+    CheckRunEventActionRerequested -> handleCheckRunRerequested conn checkEvent
+    CheckRunEventActionCreated -> logAndIgnore
+    CheckRunEventActionCompleted -> logAndIgnore
+    CheckRunEventActionRequestedAction -> logAndIgnore
+    CheckRunEventActionOther _ -> logAndIgnore
+  where
+    logAndIgnore =
+      liftIO . Text.putStrLn $
+        "Ignoring unhandled check run: "
+          <> Text.show checkEvent.evCheckRunAction
+
+-- | Handle check run rerequested action. If the check run (`.check_run.name` JSON key) is
+-- ci/eval, evaluate the jobset, otherwise rebuild it.
+handleCheckRunRerequested ::
+  Connection ->
+  CheckRunEvent ->
+  GitHubToHydraT Handler ()
+handleCheckRunRerequested conn checkEvent = do
+  let checkRun = checkEvent.evCheckRunCheckRun
+      checkRunName = checkRun.whCheckRunName
+      repo = checkEvent.evCheckRunRepository
+      repoName = repo.whRepoFullName
       owner = hookRepoOwner repo
       projName = escapeHydraName repoName
-      prs = whCheckRunPullRequests checkRun
-      installId = whChecksInstallationId <$> evCheckRunInstallation ev
+      prs = checkRun.whCheckRunPullRequests
+      installId = (.whChecksInstallationId) <$> checkEvent.evCheckRunInstallation
 
   whenKnownInstallId owner installId . liftIO $ do
     if "ci/eval" `Text.isPrefixOf` checkRunName
       then forM_ prs $ \pr -> do
-        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+        let jobsetName = "pullrequest-" <> Text.show pr.whChecksPullRequestNumber
 
-        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        Text.putStrLn $ "Adding Eval " <> projName <> "/" <> jobsetName <> " to the queue."
         Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
       else do
-        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
-        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+        let externalId = read . Text.unpack $ checkRun.whCheckRunExternalId
+        Text.putStrLn $
+          "Adding Restart " <> checkRunName <> " #" <> Text.show externalId <> " to the queue."
         Hydra.writeCommand conn $ Hydra.RestartBuild externalId
-checkRunHook _ _ (_, ev) =
-  liftIO . putStrLn $
-    "Unhandled checkRunEvent with action: "
-      ++ show (evCheckRunAction ev)
-      ++ "; payload: ["
-      ++ show (whCheckRunHeadSha (evCheckRunCheckRun ev))
-      ++ "] "
-      ++ show (whCheckRunName (evCheckRunCheckRun ev))
-      ++ ": "
-      ++ show (whCheckRunStatus (evCheckRunCheckRun ev))
 
 hydraClientEnv :: Text -> Text -> Text -> IO HydraClientEnv
 hydraClientEnv host user pass = do

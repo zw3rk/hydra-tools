@@ -325,7 +325,7 @@ getValidToken buffer lease fetch = do
     case tok.expiry of
       Just expiry' | addUTCTime buffer now < expiry' -> return (owner, tok)
       -- If `fetch` doesn't return a lease, ignore it rather than remove it from the
-      -- list. This is okay because unknown installations should have been removed at 
+      -- list. This is okay because unknown installations should have been removed at
       -- application startup anyways.
       _ -> maybe lease' (owner,) <$> fetch owner
   writeIORef lease leases''

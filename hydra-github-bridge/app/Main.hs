@@ -13,7 +13,7 @@ import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple
-import Lib.Bridge.GitHubToHydra (app, hydraClient, hydraClientEnv, GitHubToHydraEnv (..))
+import Lib.Bridge.GitHubToHydra (GitHubToHydraEnv (..), app, hydraClient, hydraClientEnv)
 import Lib.Bridge.HydraToGitHub
   ( HydraToGitHubEnv (..),
     fetchGitHubTokens,
@@ -61,7 +61,6 @@ main = do
 
   -- Start the app loop
   let numWorkers = 10 -- default number of workers
-
       hydraToGitHubEnv =
         HydraToGitHubEnv
           { htgEnvHydraHost = host,
@@ -95,7 +94,7 @@ main = do
       withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (runHydraToGitHubT hydraToGitHubEnv . notificationWatcher),
-      withConnect 
+      withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (run port . app gitHubToHydraEnv)
     ]
