@@ -107,4 +107,32 @@ runMigrations conn = do
       PRIMARY KEY (owner, repo)
     )
   |]
+
+  -- GitHub App installations (replaces HYDRA_WEB_GITHUB_INSTALLATION_IDS env var).
+  _ <- execute_ conn [sql|
+    CREATE TABLE IF NOT EXISTS gf_github_installations (
+      id                serial PRIMARY KEY,
+      org_name          text UNIQUE NOT NULL,
+      installation_id   bigint NOT NULL,
+      enabled           boolean NOT NULL DEFAULT true,
+      created_at        timestamptz NOT NULL DEFAULT now(),
+      updated_at        timestamptz NOT NULL DEFAULT now()
+    )
+  |]
+
+  -- Project → org/repo mapping (auto-detected from flake URLs + manual override).
+  _ <- execute_ conn [sql|
+    CREATE TABLE IF NOT EXISTS gf_org_project_map (
+      project_name      text PRIMARY KEY,
+      org_name          text NOT NULL,
+      repo_name         text NOT NULL,
+      auto_detected     boolean NOT NULL DEFAULT true,
+      created_at        timestamptz NOT NULL DEFAULT now()
+    )
+  |]
+  _ <- execute_ conn [sql|
+    CREATE INDEX IF NOT EXISTS idx_gf_org_project_map_org_repo
+      ON gf_org_project_map(org_name, repo_name)
+  |]
+
   pure ()
