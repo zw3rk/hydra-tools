@@ -135,4 +135,10 @@ runMigrations conn = do
       ON gf_org_project_map(org_name, repo_name)
   |]
 
+  -- Allow the hydra user (used by hydra-github-bridge) to read mappings
+  -- for periodic PR/jobset sync reconciliation.
+  _ <- execute_ conn [sql|
+    GRANT SELECT ON gf_org_project_map TO hydra
+  |]
+
   pure ()

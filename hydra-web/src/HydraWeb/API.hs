@@ -169,7 +169,9 @@ type StaticAPI = "static" :> Raw
 -- | Full API combining all route groups and static files.
 -- Route order matters: specific routes first, catch-alls last.
 -- ProxyAPI must come AFTER JSONAPI so specific /api/* routes match first.
--- OrgRepoAPI must be last before StaticAPI (catch-all for /:org/:repo).
+-- StaticAPI must come BEFORE OrgRepoAPI: the two-segment catch-all would
+-- otherwise intercept /static/* requests when browsers send Accept: */*.
+-- OrgRepoAPI must be last (catch-all for /:org/:repo).
 type FullAPI =
        HydraWebAPI
   :<|> LegacyRedirectAPI
@@ -180,5 +182,5 @@ type FullAPI =
   :<|> JobAPI
   :<|> StreamAPI
   :<|> ProxyAPI
-  :<|> OrgRepoAPI
   :<|> StaticAPI
+  :<|> OrgRepoAPI

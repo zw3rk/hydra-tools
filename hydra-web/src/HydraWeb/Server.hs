@@ -68,8 +68,8 @@ server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
         :<|> streamServer app
         :<|> Tagged (proxyToBackend app)
-        :<|> hoistServer (Proxy @OrgRepoAPI) (runAppM app) orgRepoHandler
         :<|> staticServer (cfgStaticDir $ appConfig app)
+        :<|> hoistServer (Proxy @OrgRepoAPI) (runAppM app) orgRepoHandler
 
 -- | HTML page handlers, wired in the same order as HydraWebAPI.
 htmlServer :: ServerT HydraWebAPI AppM
