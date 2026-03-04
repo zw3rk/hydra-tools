@@ -1,12 +1,12 @@
 cabal-version:      3.0
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 name:               hydra-web
-version:            0.1.0.0
+version:            0.2.0.0
 synopsis:           Haskell frontend for Hydra CI (replaces Go hydra-web)
 license:            Apache-2.0
 author:             Moritz Angermann
-maintainer:         moritz@zw3rk.com
+maintainer:         moritz.angermann@iohk.io
 category:           Web
 build-type:         Simple
 
@@ -46,20 +46,31 @@ library
     import: common
     hs-source-dirs: src
     exposed-modules:
+        -- Core
         HydraWeb.Config
       , HydraWeb.Types
       , HydraWeb.API
       , HydraWeb.Server
+        -- Database
       , HydraWeb.DB.Pool
       , HydraWeb.DB.Projects
       , HydraWeb.DB.Builds
       , HydraWeb.DB.Evals
       , HydraWeb.DB.Queue
       , HydraWeb.DB.Search
+      , HydraWeb.DB.Migrate
+      , HydraWeb.DB.Auth
+      , HydraWeb.DB.Bridges
+      , HydraWeb.DB.Installations
+      , HydraWeb.DB.OrgMap
+        -- Models
       , HydraWeb.Models.Project
       , HydraWeb.Models.Build
       , HydraWeb.Models.Eval
       , HydraWeb.Models.Queue
+      , HydraWeb.Models.Bridge
+      , HydraWeb.Models.User
+        -- Handlers
       , HydraWeb.Handlers.Overview
       , HydraWeb.Handlers.Project
       , HydraWeb.Handlers.Jobset
@@ -74,25 +85,29 @@ library
       , HydraWeb.Handlers.Profile
       , HydraWeb.Handlers.Admin
       , HydraWeb.Handlers.Proxy
-      , HydraWeb.Models.Bridge
-      , HydraWeb.Models.User
-      , HydraWeb.DB.Migrate
-      , HydraWeb.DB.Auth
+      , HydraWeb.Handlers.Redirect
+      , HydraWeb.Handlers.OrgRepo
+      , HydraWeb.Handlers.RunningEvals
+        -- Auth
       , HydraWeb.Auth.Encrypt
       , HydraWeb.Auth.Session
       , HydraWeb.Auth.GitHub
       , HydraWeb.Auth.Middleware
-      , HydraWeb.View.Pages.Login
-      , HydraWeb.DB.Bridges
+        -- SSE
       , HydraWeb.SSE.Hub
       , HydraWeb.SSE.Listener
+      , HydraWeb.SSE.Stream
+      , HydraWeb.SSE.Fragments
+        -- Views
       , HydraWeb.View.Layout
       , HydraWeb.View.Render
-      , HydraWeb.View.Pages.Bridges
       , HydraWeb.View.Components
       , HydraWeb.View.HTMX
       , HydraWeb.View.Pager
       , HydraWeb.View.BuildDiff
+        -- Pages
+      , HydraWeb.View.Pages.Login
+      , HydraWeb.View.Pages.Bridges
       , HydraWeb.View.Pages.Overview
       , HydraWeb.View.Pages.Project
       , HydraWeb.View.Pages.Jobset
@@ -102,6 +117,7 @@ library
       , HydraWeb.View.Pages.Search
       , HydraWeb.View.Pages.Profile
       , HydraWeb.View.Pages.Admin
+      , HydraWeb.View.Pages.RunningEvals
 
 executable hydra-web
     import: common

@@ -1,9 +1,9 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Entry point for the hydra-web server.
 -- Loads configuration, creates a DB pool, starts the SSE listener,
--- and launches Warp with no write timeout (for SSE connections).
+-- runs migrations, seeds installations, and launches Warp.
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -16,15 +16,17 @@ import qualified Data.Text.IO as Text
 import Data.String (fromString)
 import Network.Wai.Handler.Warp
   (defaultSettings, setPort, setHost, setTimeout, runSettings)
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout, hPutStrLn, stderr)
 
 import Network.HTTP.Client.TLS (newTlsManager)
 
 import HydraWeb.Auth.Encrypt (newEncryptor)
-import HydraWeb.Config (Config (..), loadConfig)
+import HydraWeb.Config (Config (..), GitHubConfig (..), loadConfig)
 import HydraWeb.DB.Migrate (runMigrations)
 import HydraWeb.DB.Pool (createPool, withConn)
 import HydraWeb.DB.Auth (bootstrapSuperAdmins)
+import HydraWeb.DB.Installations (seedFromConfig)
+import HydraWeb.DB.OrgMap (autoDetectMappings)
 import HydraWeb.SSE.Hub (newHub)
 import HydraWeb.SSE.Listener (listenAndBroadcast)
 import HydraWeb.Server (mkApp)
@@ -37,11 +39,22 @@ main = do
   hub  <- newHub
   mgr  <- newTlsManager
 
-  -- Run database migrations for auth tables.
+  -- Run database migrations for auth + installation tables.
   withConn pool runMigrations
 
   -- Bootstrap super-admins from config.
   withConn pool $ \conn -> bootstrapSuperAdmins conn (cfgSuperAdmins cfg)
+
+  -- Seed GitHub installations from env var (one-time migration).
+  let installPairs = ghInstallationIDs (cfgGitHub cfg)
+  if null installPairs
+    then pure ()
+    else do
+      withConn pool $ seedFromConfig installPairs
+      hPutStrLn stderr $ "Seeded " ++ show (length installPairs) ++ " installation(s) from env"
+
+  -- Auto-detect org/repo mappings from flake URIs.
+  withConn pool autoDetectMappings
 
   -- Initialize encryption (Nothing if key is empty).
   let mEnc = newEncryptor (cfgEncryptionKey cfg)
