@@ -1,7 +1,9 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | HTTP handlers for GitHub OAuth login, callback, and logout.
+-- The callback validates the CSRF state cookie. Logout clears the
+-- server-side session from the database.
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.Handlers.Auth
@@ -15,15 +17,17 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
 import Data.Text (Text)
+import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import Lucid (Html)
-import Servant (err302, err400, err500, ServerError (..))
+import Servant (err302, err400, err403, err500, ServerError (..))
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..), GitHubConfig (..))
 import HydraWeb.Auth.GitHub
   (generateOAuthState, authorizeURL, exchangeCode, fetchGitHubUser, GitHubUser (..))
-import HydraWeb.Auth.Session (createSessionForUser, sessionCookieName)
+import HydraWeb.Auth.Middleware (extractSessionId)
+import HydraWeb.Auth.Session (createSessionForUser, clearSession, sessionCookieName)
 import HydraWeb.Auth.Encrypt (encrypt)
 import HydraWeb.DB.Auth (upsertGFUser, upsertGitHubToken)
 import HydraWeb.DB.Pool (withConn)
@@ -55,11 +59,21 @@ handleGitHubAuth = do
     }
 
 -- | GET /auth/github/callback?code=...&state=... — OAuth callback.
-handleGitHubCallback :: Maybe Text -> Maybe Text -> AppM (Html ())
-handleGitHubCallback mCode mState = do
+-- Validates the CSRF state parameter against the hydra_oauth_state cookie.
+handleGitHubCallback :: Maybe Text -> Maybe Text -> Maybe Text -> AppM (Html ())
+handleGitHubCallback mCookie mCode mState = do
   code  <- maybe (throwError err400 { errBody = "missing code" }) pure mCode
-  _state <- maybe (throwError err400 { errBody = "missing state" }) pure mState
-  -- TODO: verify state matches cookie (requires access to request cookies)
+  state <- maybe (throwError err400 { errBody = "missing state" }) pure mState
+
+  -- Validate CSRF state: the state param must match the hydra_oauth_state cookie.
+  let mCookieState = mCookie >>= extractOAuthState
+  case mCookieState of
+    Nothing -> throwError err403
+      { errBody = "CSRF validation failed: missing state cookie" }
+    Just cookieState
+      | cookieState /= state -> throwError err403
+          { errBody = "CSRF validation failed: state mismatch" }
+      | otherwise -> pure ()
 
   cfg <- asks appConfig
   bp  <- asks (cfgBasePath . appConfig)
@@ -92,22 +106,29 @@ handleGitHubCallback mCode mState = do
   -- Create session.
   sid <- liftIO $ createSessionForUser pool userId
 
-  -- Redirect to home with session cookie.
+  -- Redirect to home with session cookie. Clear the OAuth state cookie.
   throwError err302
     { errHeaders =
         [ ("Location", TE.encodeUtf8 (bp <> "/"))
         , ("Set-Cookie", sessionCookieName <> "=" <> TE.encodeUtf8 sid
             <> "; Path=/; Max-Age=604800; HttpOnly; SameSite=Strict")
+        , ("Set-Cookie", "hydra_oauth_state=; Path=/; Max-Age=0; HttpOnly")
         ]
     , errBody = ""
     }
 
--- | GET /logout — destroy session and redirect to home.
-handleLogout :: AppM (Html ())
-handleLogout = do
+-- | GET /logout — destroy session in database and clear cookie.
+handleLogout :: Maybe Text -> AppM (Html ())
+handleLogout mCookie = do
+  pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  -- TODO: extract session from cookie, clear it
-  -- For now, just clear the cookie and redirect.
+
+  -- Clear the server-side session if one exists.
+  case mCookie >>= extractSessionId of
+    Just sid -> liftIO $ clearSession pool sid
+    Nothing  -> pure ()
+
+  -- Clear the session cookie and redirect to home.
   throwError err302
     { errHeaders =
         [ ("Location", TE.encodeUtf8 (bp <> "/"))
@@ -116,3 +137,14 @@ handleLogout = do
         ]
     , errBody = ""
     }
+
+-- | Extract the hydra_oauth_state value from a raw Cookie header.
+-- Parses "hydra_oauth_state=<value>; ..." from the cookie string.
+extractOAuthState :: Text -> Maybe Text
+extractOAuthState cookieStr =
+  let pairs = map parsePair $ splitCookies cookieStr
+  in  lookup ("hydra_oauth_state" :: Text) pairs
+  where
+    splitCookies = map (Text.strip) . Text.splitOn ";"
+    parsePair s = case Text.breakOn "=" s of
+      (name, rest) -> (name, Text.drop 1 rest)

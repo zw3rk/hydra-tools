@@ -33,5 +33,6 @@ runningEvalsHandler = do
         { pdTitle    = "Running Evaluations"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ runningEvalsPage bp evals

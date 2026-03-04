@@ -101,43 +101,41 @@ type JobAPI =
     )
 
 -- | Authentication routes (login, OAuth flow, logout).
+-- The callback and logout routes receive the Cookie header for
+-- CSRF state validation and session cleanup respectively.
 type AuthAPI =
   -- GET /login
        "login" :> Get '[HTML] (Html ())
   -- GET /auth/github — start OAuth flow
   :<|> "auth" :> "github" :> Get '[HTML] (Html ())
-  -- GET /auth/github/callback?code=...&state=...
+  -- GET /auth/github/callback?code=...&state=... (receives Cookie for CSRF validation)
   :<|> "auth" :> "github" :> "callback"
+       :> Header "Cookie" Text
        :> QueryParam "code" Text :> QueryParam "state" Text
        :> Get '[HTML] (Html ())
-  -- GET /logout
-  :<|> "logout" :> Get '[HTML] (Html ())
+  -- GET /logout (receives Cookie to clear the server-side session)
+  :<|> "logout" :> Header "Cookie" Text :> Get '[HTML] (Html ())
 
 -- | Profile page (user info + API token management).
-type ProfileAPI = "profile" :> Get '[HTML] (Html ())
+-- Receives Cookie header for session-based authentication.
+type ProfileAPI = "profile" :> Header "Cookie" Text :> Get '[HTML] (Html ())
 
 -- | Admin dashboard with installation and org-map management.
-type AdminAPI =
-  -- GET /admin — admin dashboard
-       "admin" :> Get '[HTML] (Html ())
-  -- GET /admin/installations — GitHub App installations
+-- All admin routes require Cookie header for super-admin authentication.
+type AdminAPI = Header "Cookie" Text :>
+  (    "admin" :> Get '[HTML] (Html ())
   :<|> "admin" :> "installations" :> Get '[HTML] (Html ())
-  -- POST /admin/installations — add new installation
   :<|> "admin" :> "installations" :> ReqBody '[FormUrlEncoded] [(Text, Text)]
        :> Post '[HTML] (Html ())
-  -- POST /admin/installations/:id/toggle — toggle enabled
   :<|> "admin" :> "installations" :> Capture "id" Int :> "toggle"
        :> Post '[HTML] (Html ())
-  -- POST /admin/installations/:id/delete — delete installation
   :<|> "admin" :> "installations" :> Capture "id" Int :> "delete"
        :> Post '[HTML] (Html ())
-  -- GET /admin/org-map — org/repo mappings
   :<|> "admin" :> "org-map" :> Get '[HTML] (Html ())
-  -- POST /admin/org-map — add/update mapping
   :<|> "admin" :> "org-map" :> ReqBody '[FormUrlEncoded] [(Text, Text)]
        :> Post '[HTML] (Html ())
-  -- POST /admin/org-map/detect — auto-detect mappings from flake URIs
   :<|> "admin" :> "org-map" :> "detect" :> Post '[HTML] (Html ())
+  )
 
 -- | SSE stream endpoints (Raw WAI apps for long-lived connections).
 type StreamAPI =

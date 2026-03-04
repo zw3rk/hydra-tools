@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Handler for the project page (GET /project/:name).
@@ -41,5 +41,6 @@ projectHandler name = do
             { pdTitle    = projDisplayName project
             , pdBasePath = bp
             , pdCounts   = counts
+            , pdUser     = Nothing
             }
       pure $ pageLayout pd $ projectPage bp project jobsets

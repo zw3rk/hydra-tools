@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Handler for the jobset page (GET /jobset/:project/:jobset).
@@ -49,5 +49,6 @@ jobsetHandler project jobset mPage = do
             { pdTitle    = project <> ":" <> jsName js
             , pdBasePath = bp
             , pdCounts   = counts
+            , pdUser     = Nothing
             }
       pure $ pageLayout pd $ jobsetPage bp js evals total page perPage

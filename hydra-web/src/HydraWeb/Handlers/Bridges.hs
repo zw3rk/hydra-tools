@@ -34,5 +34,6 @@ bridgesHandler = do
         { pdTitle    = "Bridge Status"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ bridgesPage bp status

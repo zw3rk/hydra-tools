@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Handler for eval pages (GET /eval/:id) and HTMX tab partials.
@@ -63,6 +63,7 @@ evalHandler eid = do
             { pdTitle    = "Evaluation #" <> showT eid
             , pdBasePath = bp
             , pdCounts   = counts
+            , pdUser     = Nothing
             }
       pure $ pageLayout pd $ evalPage bp eval inputs evalErr diff
 
@@ -99,5 +100,6 @@ latestEvalsHandler mPage = do
         { pdTitle    = "Latest Evaluations"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ latestEvalsPage bp evals total page perPage

@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Handler for build pages (GET /build/:id) and HTMX tab partials.
@@ -51,6 +51,7 @@ buildHandler bid = do
             { pdTitle    = "Build #" <> showT bid
             , pdBasePath = bp
             , pdCounts   = counts
+            , pdUser     = Nothing
             }
       pure $ pageLayout pd $
         buildPage bp build steps outputs products metrics inputs evalIDs constits

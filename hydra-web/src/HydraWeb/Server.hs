@@ -40,10 +40,7 @@ import HydraWeb.Handlers.OrgRepo (orgRepoHandler)
 -- Auth handlers
 import HydraWeb.Handlers.Auth (handleLogin, handleGitHubAuth, handleGitHubCallback, handleLogout)
 import HydraWeb.Handlers.Profile (profileHandler)
-import HydraWeb.Handlers.Admin
-  (adminHandler, installationsHandler, installationsPostHandler,
-   installationToggleHandler, installationDeleteHandler,
-   orgMapHandler, orgMapPostHandler, orgMapDetectHandler)
+import HydraWeb.Handlers.Admin (adminServer)
 
 -- API handlers
 import HydraWeb.Handlers.Proxy (proxyToBackend)
@@ -111,22 +108,12 @@ jobServer project jobset job =
     :<|> jobShieldHandler project jobset job
 
 -- | Auth handlers, wired in the same order as AuthAPI.
+-- The callback and logout routes now receive the Cookie header.
 authServer :: ServerT AuthAPI AppM
 authServer = handleLogin
         :<|> handleGitHubAuth
         :<|> handleGitHubCallback
         :<|> handleLogout
-
--- | Admin handlers, wired in the same order as AdminAPI.
-adminServer :: ServerT AdminAPI AppM
-adminServer = adminHandler
-         :<|> installationsHandler
-         :<|> installationsPostHandler
-         :<|> installationToggleHandler
-         :<|> installationDeleteHandler
-         :<|> orgMapHandler
-         :<|> orgMapPostHandler
-         :<|> orgMapDetectHandler
 
 -- | SSE stream server — Raw WAI applications for each stream topic.
 streamServer :: App -> Server StreamAPI

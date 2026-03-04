@@ -3,7 +3,8 @@
 --
 -- | Page layout wrapper: HTML head, navigation bar, and footer.
 -- All pages use 'pageLayout' to get a consistent shell. The nav bar
--- includes live badge counts for queue, machines, bridges, and evaluating.
+-- includes live badge counts for queue, machines, bridges, and evaluating,
+-- and shows the logged-in user or a "Sign in" link.
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Layout
@@ -16,12 +17,14 @@ import qualified Data.Text as Text
 import Lucid
 
 import HydraWeb.Models.Queue (NavCounts (..))
+import HydraWeb.Models.User (GFUser (..))
 
--- | Data passed to every page render: title, nav counts, page body.
+-- | Data passed to every page render: title, nav counts, optional user.
 data PageData = PageData
-  { pdTitle    :: !Text       -- ^ Page title (appears in <title> tag)
-  , pdBasePath :: !Text       -- ^ URL prefix for reverse proxy sub-path
-  , pdCounts   :: !NavCounts  -- ^ Queue/running/bridge/evaluating badge counts
+  { pdTitle    :: !Text             -- ^ Page title (appears in <title> tag)
+  , pdBasePath :: !Text             -- ^ URL prefix for reverse proxy sub-path
+  , pdCounts   :: !NavCounts        -- ^ Queue/running/bridge/evaluating badge counts
+  , pdUser     :: !(Maybe GFUser)   -- ^ Authenticated user (Nothing = not logged in)
   }
 
 -- | Render a full HTML page with navigation, main content, and footer.
@@ -57,7 +60,14 @@ pageLayout pd content = doctypehtml_ $ do
         li_ $ a_ [href_ (url pd "/evals")] "Evals"
         li_ $ a_ [href_ (url pd "/steps")] "Steps"
         li_ $ a_ [href_ (url pd "/search")] "Search"
-        li_ $ a_ [href_ (url pd "/login"), class_ "nav-signin"] "Sign in"
+        -- Show user info or sign-in link.
+        case pdUser pd of
+          Just user -> do
+            li_ $ a_ [href_ (url pd "/profile"), class_ "nav-user"] $
+              toHtml (gfuGitHubLogin user)
+            li_ $ a_ [href_ (url pd "/logout"), class_ "nav-signin"] "Sign out"
+          Nothing ->
+            li_ $ a_ [href_ (url pd "/login"), class_ "nav-signin"] "Sign in"
 
     main_ [class_ "container"] content
 

@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Handlers for queue pages, queue summary, machines, and steps.
@@ -38,6 +38,7 @@ queueHandler = do
         { pdTitle    = "Build Queue (" <> showT total <> ")"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ queuePage bp builds total
 
@@ -56,6 +57,7 @@ queueSummaryHandler = do
         { pdTitle    = "Queue Summary"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ queueSummaryPage bp summary systems total
 
@@ -72,6 +74,7 @@ machinesHandler = do
         { pdTitle    = "Machine Status"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ machinesPage bp steps
 
@@ -91,5 +94,6 @@ stepsHandler mPage = do
         { pdTitle    = "Latest Build Steps"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ stepsPage bp steps page perPage

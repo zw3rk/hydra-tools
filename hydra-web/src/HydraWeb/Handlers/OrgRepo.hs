@@ -50,5 +50,6 @@ orgRepoHandler org repo = do
             { pdTitle    = projDisplayName project
             , pdBasePath = bp
             , pdCounts   = counts
+            , pdUser     = Nothing
             }
       pure $ pageLayout pd $ projectPage bp project jobsets

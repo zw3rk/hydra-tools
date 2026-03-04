@@ -36,5 +36,6 @@ overviewHandler = do
         { pdTitle    = "Overview"
         , pdBasePath = bp
         , pdCounts   = counts
+        , pdUser     = Nothing
         }
   pure $ pageLayout pd $ overviewPage bp counts projects news
