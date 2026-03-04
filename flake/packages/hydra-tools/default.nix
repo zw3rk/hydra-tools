@@ -36,12 +36,14 @@
 
               inputsFrom = [config.treefmt.build.devShell];
 
-              buildInputs = withSystem system ({config, ...}: [
-                config.packages.mockoon-cli
-                config.packages.fake-send-webhook
-                final.mockoon
-                final.gh
-              ]);
+              buildInputs =
+                withSystem system ({config, ...}: [
+                  config.packages.mockoon-cli
+                  config.packages.fake-send-webhook
+                  final.gh
+                  # Mockoon Desktop is broken on MacOS
+                ])
+                ++ final.lib.optional (!final.stdenv.hostPlatform.isDarwin) final.mockoon;
             };
           };
         })
