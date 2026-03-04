@@ -43,17 +43,27 @@ runningCount conn = do
   |]
   pure n
 
--- | Batched navigation counts: queue size, running steps, bridge pending.
+-- | Batched navigation counts: queue size, running steps, bridge pending, running evals.
 navCounts :: Connection -> IO NavCounts
 navCounts conn = do
   queued  <- queueCount conn
   running <- runningCount conn
   pending <- bridgePending conn
+  evals   <- runningEvalsCount' conn
   pure NavCounts
     { ncQueued        = queued
     , ncRunning       = running
     , ncBridgePending = pending
+    , ncRunningEvals  = evals
     }
+
+-- | Count of currently-running evaluations (jobsets with starttime IS NOT NULL).
+runningEvalsCount' :: Connection -> IO Int
+runningEvalsCount' conn = do
+  [Only n] <- query_ conn [sql|
+    SELECT count(*) FROM jobsets WHERE starttime IS NOT NULL
+  |]
+  pure n
 
 -- | Count of pending bridge notifications. Returns 0 if the table doesn't exist.
 bridgePending :: Connection -> IO Int

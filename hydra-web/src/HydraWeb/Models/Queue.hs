@@ -44,11 +44,12 @@ data ActiveStep = ActiveStep
   , asBusy      :: !Int
   } deriving (Show, Eq, Generic)
 
--- | Navigation bar badge counts (queue size, running builds, bridge pending).
+-- | Navigation bar badge counts (queue size, running builds, bridge pending, running evals).
 data NavCounts = NavCounts
   { ncQueued        :: !Int
   , ncRunning       :: !Int
   , ncBridgePending :: !Int
+  , ncRunningEvals  :: !Int
   } deriving (Show, Eq, Generic)
 
 -- | A news item for the overview page.

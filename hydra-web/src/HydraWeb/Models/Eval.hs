@@ -9,6 +9,7 @@ module HydraWeb.Models.Eval
   , JobsetEvalInput (..)
   , EvalInfo (..)
   , EvaluationError (..)
+  , RunningEval (..)
   ) where
 
 import Data.Text (Text)
@@ -61,4 +62,14 @@ data EvaluationError = EvaluationError
   { eeId        :: !Int
   , eeErrorMsg  :: !(Maybe Text)
   , eeErrorTime :: !(Maybe Int)
+  } deriving (Show, Eq, Generic)
+
+-- | A currently-running evaluation (jobset with starttime set, still evaluating).
+data RunningEval = RunningEval
+  { reJobset    :: !Text         -- ^ Jobset name
+  , reProject   :: !Text         -- ^ Project name
+  , reStartTime :: !Int          -- ^ When evaluation started (epoch)
+  , reDuration  :: !Int          -- ^ Seconds elapsed since start
+  , reFlake     :: !(Maybe Text) -- ^ Flake URI (if flake-based)
+  , reJobsetId  :: !Int          -- ^ Jobset ID (for linking)
   } deriving (Show, Eq, Generic)

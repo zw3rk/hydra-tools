@@ -15,6 +15,8 @@ module HydraWeb.DB.Evals
   , allJobsetEvalsCount
   , latestEvals
   , latestEvalsCount
+  , runningEvaluations
+  , runningEvalsCount
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -25,6 +27,7 @@ import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Eval
+  (JobsetEval (..), JobsetEvalInput (..), EvalInfo (..), EvaluationError (..), RunningEval (..))
 
 -- | Fetch a single evaluation by ID with denormalized project/jobset.
 getEval :: Connection -> Int -> IO (Maybe JobsetEval)
@@ -214,6 +217,28 @@ computeChangedInputs current prev =
               || jeiType input /= jeiType p
               || jeiUri input /= jeiUri p
               || jeiDependency input /= jeiDependency p
+
+-- | Fetch currently-running evaluations (jobsets with starttime set).
+runningEvaluations :: Connection -> IO [RunningEval]
+runningEvaluations conn = do
+  rows <- query_ conn [sql|
+    SELECT j.name, j.project, j.starttime,
+           extract(epoch from now())::int - j.starttime,
+           j.flake, j.id
+    FROM jobsets j
+    WHERE j.starttime IS NOT NULL
+    ORDER BY j.starttime ASC
+  |]
+  pure $ map (\(name, proj, start, dur, flake, jid) ->
+    RunningEval name proj start dur flake jid) rows
+
+-- | Count of currently-running evaluations (for nav badge).
+runningEvalsCount :: Connection -> IO Int
+runningEvalsCount conn = do
+  [Only n] <- query_ conn [sql|
+    SELECT count(*) FROM jobsets WHERE starttime IS NOT NULL
+  |]
+  pure n
 
 -- | Scan a jobset eval row (15 columns) using nested tuples via (:.).
 scanEvalRow :: ( (Int, Int, Maybe Int, Int, Int, Int, Int, Text)
