@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Evaluation page HTML (eval info + inputs + build diff tabs).
+-- | Evaluation page HTML: eval info, inputs, build diff tabs with progress bar.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -23,17 +23,24 @@ import HydraWeb.View.Components
 import HydraWeb.View.HTMX (hxGet_, hxTarget_)
 import HydraWeb.View.Pager (pager)
 
--- | Render the eval detail page content.
+-- | Render the eval detail page with breadcrumb and build diff tabs.
 evalPage :: Text -> JobsetEval -> [JobsetEvalInput] -> Maybe EvaluationError
          -> BuildDiff -> Html ()
 evalPage bp eval inputs evalErr diff = do
-  hgroup_ $ do
-    h1_ $ toHtml ("Evaluation #" <> showT (evalId eval))
-    p_ $ do
-      a_ [href_ (projectURL bp (evalProject eval))] $ toHtml (evalProject eval)
-      " / "
-      a_ [href_ (jobsetURL bp (evalProject eval) (evalJobset eval))]
-        $ toHtml (evalJobset eval)
+  -- Breadcrumb: Home / Project / Jobset / Eval #N
+  breadcrumb [ ("Projects", bp <> "/")
+             , (evalProject eval, projectURL bp (evalProject eval))
+             , (evalJobset eval, jobsetURL bp (evalProject eval) (evalJobset eval))
+             , ("Eval #" <> showT (evalId eval), "")
+             ]
+
+  h1_ $ toHtml ("Evaluation #" <> showT (evalId eval))
+
+  -- Summary progress bar (all builds in this eval).
+  let nrBuilds = fromMaybe 0 (evalNrBuilds eval)
+      nrSucc   = fromMaybe 0 (evalNrSucceeded eval)
+      nrFail   = nrBuilds - nrSucc
+  progressBar nrSucc nrFail 0
 
   -- Eval info.
   dl_ [class_ "eval-info"] $ do
@@ -137,13 +144,14 @@ renderInput i = tr_ $ do
   td_ $ toHtml (fromMaybe "" (jeiUri i))
   td_ $ code_ $ toHtml (maybe "" shortRev (jeiRevision i))
 
--- | Render the latest evals page (GET /evals).
+-- | Render the latest evals page (GET /evals) with breadcrumb.
 latestEvalsPage :: Text -> [EvalInfo] -> Int -> Int -> Int -> Html ()
 latestEvalsPage bp evals total page perPage = do
   h1_ "Latest Evaluations"
   table_ $ do
     thead_ $ tr_ $ do
       th_ "#"; th_ "Project"; th_ "Jobset"; th_ "Time"
+      th_ "Progress"
       th_ [class_ "num"] "Succeeded"
       th_ [class_ "num"] "Failed"
     tbody_ $ mapM_ renderLatestEval evals
@@ -158,5 +166,6 @@ latestEvalsPage bp evals total page perPage = do
         td_ $ a_ [href_ (jobsetURL bp (evalProject eval) (evalJobset eval))]
           $ toHtml (evalJobset eval)
         td_ $ toHtml (showT (evalTimestamp eval))
+        td_ $ progressBar (eiNrSucceeded ei) (eiNrFailed ei) (eiNrScheduled ei)
         td_ [class_ "num status-succeeded"] $ toHtml (showT (eiNrSucceeded ei))
         td_ [class_ "num status-failed"] $ toHtml (showT (eiNrFailed ei))

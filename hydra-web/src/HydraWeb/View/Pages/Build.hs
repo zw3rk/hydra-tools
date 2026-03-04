@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Build page HTML (build info, steps, outputs, products, inputs).
+-- | Build page HTML: status hero card, timeline steps, outputs, products.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -17,22 +17,26 @@ import Lucid
 import HydraWeb.Models.Build
 import HydraWeb.View.Components
 
--- | Render the build detail page content.
+-- | Render the build detail page with status hero and timeline.
 buildPage :: Text -> Build -> [BuildStep] -> [BuildOutput] -> [BuildProduct]
           -> [BuildMetric] -> [BuildInput] -> [Int] -> [Build] -> Html ()
 buildPage bp build steps outputs products metrics inputs evalIDs constits = do
-  -- Header with status icon.
-  hgroup_ $ do
+  -- Breadcrumb: Home / Project / Jobset / Build #N
+  breadcrumb [ ("Projects", bp <> "/")
+             , (buildProject build, projectURL bp (buildProject build))
+             , (buildJobset build, jobsetURL bp (buildProject build) (buildJobset build))
+             , ("Build #" <> showT (buildId build), "")
+             ]
+
+  -- Status hero card.
+  div_ [class_ ("build-hero " <> statusClass (buildStatus build))] $ do
     h1_ $ do
-      span_ [class_ (statusClass (buildStatus build))] $ statusIcon (buildStatus build)
+      statusIcon (buildStatus build)
       toHtml (" Build #" <> showT (buildId build))
     p_ $ do
-      a_ [href_ (projectURL bp (buildProject build))] $ toHtml (buildProject build)
-      " / "
-      a_ [href_ (jobsetURL bp (buildProject build) (buildJobset build))]
-        $ toHtml (buildJobset build)
-      " / "
       toHtml (buildJob build)
+      " \x2014 "
+      toHtml (buildSystem build)
 
   -- Build summary.
   dl_ [class_ "build-summary"] $ do
@@ -95,12 +99,10 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits = do
         td_ $ toHtml (maybe "" (humanBytes) (bpFileSize p))
         ) prods
 
-  -- Build steps.
+  -- Build steps (timeline style).
   renderSection "Build Steps" steps $ \ss ->
-    table_ $ do
-      thead_ $ tr_ $ do
-        th_ "#"; th_ ""; th_ "Machine"; th_ "Duration"; th_ "Derivation"
-      tbody_ $ mapM_ renderStep ss
+    div_ [class_ "timeline"] $
+      mapM_ renderTimelineStep ss
 
   -- Build inputs.
   renderSection "Inputs" inputs $ \is ->
@@ -148,17 +150,27 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits = do
           td_ $ toHtml (fromMaybe "" (bmUnit m))
           ) ms
 
--- | Render a build step row.
-renderStep :: BuildStep -> Html ()
-renderStep s = tr_ $ do
-  td_ $ toHtml (showT (stepNr s))
-  td_ [class_ (statusClass (stepStatus s))] $
-    toHtml (stepStatusText s)
-  td_ $ toHtml (stripSSH (stepMachine s))
-  td_ $ case (stepStartTime s, stepStopTime s) of
-    (Just start, Just stop) -> toHtml (fmtDuration (stop - start))
-    _ -> pure ()
-  td_ $ code_ $ toHtml (maybe "" shortDrv (stepDrvPath s))
+-- | Render a build step as a timeline item.
+renderTimelineStep :: BuildStep -> Html ()
+renderTimelineStep s = do
+  let cls = case stepStatus s of
+        Just 0  -> "success"
+        Just 1  -> "failed"
+        Nothing -> "running"
+        _       -> "failed"
+  div_ [class_ ("timeline-item " <> cls)] $ do
+    div_ $ do
+      strong_ $ toHtml ("#" <> showT (stepNr s))
+      " "
+      toHtml (stepStatusText s)
+      " on "
+      toHtml (stripSSH (stepMachine s))
+    div_ $ do
+      case (stepStartTime s, stepStopTime s) of
+        (Just start, Just stop) -> toHtml (fmtDuration (stop - start))
+        _ -> pure ()
+      " "
+      code_ $ toHtml (maybe "" shortDrv (stepDrvPath s))
 
 -- | Conditionally render a section if the list is non-empty.
 renderSection :: Text -> [a] -> ([a] -> Html ()) -> Html ()

@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Jobset page HTML (jobset info + paginated evaluations).
+-- | Jobset page HTML: jobset info + paginated evaluations with progress bars.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -15,20 +15,33 @@ import Lucid
 
 import HydraWeb.Models.Project (Jobset (..), hasErrorMsg)
 import HydraWeb.Models.Eval (EvalInfo (..), JobsetEval (..), JobsetEvalInput (..))
-import HydraWeb.View.Components (projectURL, evalURL, showT, shortRev)
+import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, showT, shortRev)
 import HydraWeb.View.Pager (pager)
 
--- | Render the jobset page content.
+-- | Render the jobset page content with breadcrumbs and progress bars.
 jobsetPage :: Text -> Jobset -> [EvalInfo] -> Int -> Int -> Int -> Html ()
 jobsetPage bp js evals total page perPage = do
+  -- Breadcrumb: Home / Project / Jobset
+  breadcrumb [ ("Projects", bp <> "/")
+             , (jsProject js, projectURL bp (jsProject js))
+             , (jsName js, "")
+             ]
+
   hgroup_ $ do
-    h1_ $ do
-      a_ [href_ (projectURL bp (jsProject js))] $ toHtml (jsProject js)
-      " / "
-      toHtml (jsName js)
+    h1_ $ toHtml (jsProject js <> " / " <> jsName js)
     case jsDescription js of
       Just d  -> p_ $ toHtml d
       Nothing -> pure ()
+
+  -- Overall progress bar.
+  progressBar (jsNrSucceeded js) (jsNrFailed js) (jsNrScheduled js)
+
+  -- Running evaluation indicator.
+  case jsStartTime js of
+    Just _ -> div_ [class_ "running-eval"] $ do
+      span_ [class_ "pulse"] ""
+      em_ "Currently evaluating..."
+    Nothing -> pure ()
 
   -- Error box.
   if hasErrorMsg js
@@ -62,6 +75,7 @@ jobsetPage bp js evals total page perPage = do
       th_ "#"
       th_ "Time"
       th_ "Input changes"
+      th_ "Progress"
       th_ [class_ "num"] "Succeeded"
       th_ [class_ "num"] "Failed"
       th_ [class_ "num"] "Queued"
@@ -72,7 +86,7 @@ jobsetPage bp js evals total page perPage = do
   -- Pagination.
   pager total page perPage
 
--- | Render a single eval row in the jobset evaluations table.
+-- | Render a single eval row with progress bar.
 renderEvalInfo :: Text -> EvalInfo -> Html ()
 renderEvalInfo bp ei = do
   let eval = eiEval ei
@@ -80,6 +94,7 @@ renderEvalInfo bp ei = do
     td_ $ a_ [href_ (evalURL bp (evalId eval))] $ toHtml (showT (evalId eval))
     td_ $ toHtml (showT (evalTimestamp eval))
     td_ $ mapM_ renderChangedInput (eiChangedInputs ei)
+    td_ $ progressBar (eiNrSucceeded ei) (eiNrFailed ei) (eiNrScheduled ei)
     td_ [class_ "num status-succeeded"] $ toHtml (showT (eiNrSucceeded ei))
     td_ [class_ "num status-failed"] $ toHtml (showT (eiNrFailed ei))
     td_ [class_ "num status-queued"] $ toHtml (showT (eiNrScheduled ei))

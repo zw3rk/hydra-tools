@@ -26,8 +26,7 @@ import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 bridgesPage :: Text -> BridgeStatus -> Html ()
 bridgesPage bp status = do
   h1_ "Bridge Status"
-  script_ [src_ (bp <> "/static/sse.js")] ("" :: Text)
-  div_ [hxExt_ "sse", sseConnect_ (bp <> "/bridges/stream")] $
+  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $
     div_ [id_ "bridge-content", sseSwap_ "bridge-update", hxSwap_ "innerHTML"] $
       bridgesContent status
 

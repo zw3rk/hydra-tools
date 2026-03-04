@@ -1,21 +1,273 @@
-/* hydra-web — Minimal CSS for Pico CSS compatibility.
- * Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+/* hydra-web — Custom CSS layer on top of Pico CSS.
+ * Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
  * SPDX-License-Identifier: Apache-2.0
  *
- * This CSS works with Pico CSS (https://picocss.com) as a base.
- * Include Pico CSS via CDN or vendor it alongside this file.
- * These are supplemental styles for Hydra-specific UI elements.
+ * Design tokens, status colors, card system, progress bars, breadcrumbs,
+ * timeline, animations, and responsive layout refinements.
  */
 
-/* ── Status colors ─────────────────────────── */
-.status-succeeded { color: #2e7d32; }
-.status-failed    { color: #c62828; }
-.status-queued    { color: #f57f17; }
-.status-aborted   { color: #e65100; }
-.status-unknown   { color: #757575; }
+/* ── Design Tokens ────────────────────────────────────────── */
+:root {
+  --hw-success:       #2e7d32;
+  --hw-success-bg:    #e8f5e9;
+  --hw-failed:        #c62828;
+  --hw-failed-bg:     #ffebee;
+  --hw-queued:        #f57f17;
+  --hw-queued-bg:     #fff8e1;
+  --hw-aborted:       #e65100;
+  --hw-unknown:       #757575;
+  --hw-depfail:       #ef6c00;
 
-/* ── Tables ────────────────────────────────── */
-table { width: 100%; }
+  --hw-radius:        0.5rem;
+  --hw-radius-sm:     0.25rem;
+  --hw-shadow:        0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --hw-shadow-md:     0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+
+  --hw-border:        var(--pico-muted-border-color, #ddd);
+  --hw-bg-card:       var(--pico-card-background-color, #fff);
+  --hw-bg-subtle:     var(--pico-card-sectioning-background-color, #f8f9fa);
+  --hw-text-muted:    var(--pico-muted-color, #757575);
+  --hw-primary:       var(--pico-primary, #1976d2);
+  --hw-font-mono:     var(--pico-font-family-monospace, "Fira Code", monospace);
+}
+
+/* ── Dark mode overrides ──────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hw-success-bg:  #1b3a1d;
+    --hw-failed-bg:   #3a1515;
+    --hw-queued-bg:   #3a3015;
+    --hw-shadow:      0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+    --hw-shadow-md:   0 4px 6px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.2);
+  }
+}
+
+/* ── Status Colors ────────────────────────────────────────── */
+.status-succeeded, .success { color: var(--hw-success); }
+.status-failed, .failed     { color: var(--hw-failed); }
+.status-queued, .queued      { color: var(--hw-queued); }
+.status-aborted              { color: var(--hw-aborted); }
+.status-unknown              { color: var(--hw-unknown); }
+.depfail                     { color: var(--hw-depfail); }
+
+/* ── Status Dots ──────────────────────────────────────────── */
+.status-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+.status-dot.success   { background: var(--hw-success); }
+.status-dot.failed    { background: var(--hw-failed); }
+.status-dot.queued    { background: var(--hw-queued); }
+.status-dot.aborted   { background: var(--hw-aborted); }
+.status-dot.unknown   { background: var(--hw-unknown); }
+
+/* ── Navigation ───────────────────────────────────────────── */
+.site-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--hw-border);
+  margin-bottom: 0;
+  background: var(--hw-bg-card);
+  box-shadow: var(--hw-shadow);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.nav-brand a {
+  text-decoration: none;
+  font-size: 1.1rem;
+  color: var(--hw-primary);
+}
+
+.nav-links {
+  list-style: none;
+  display: flex;
+  gap: 0.25rem;
+  padding: 0;
+  margin: 0;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.nav-links li a {
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--hw-radius-sm);
+  text-decoration: none;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.nav-links li a:hover {
+  background: var(--hw-bg-subtle);
+}
+
+.nav-signin {
+  border: 1px solid var(--hw-border);
+  border-radius: var(--hw-radius) !important;
+}
+
+/* ── Nav Badges ───────────────────────────────────────────── */
+.nav-badge {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0.1em 0.45em;
+  margin-left: 0.3em;
+  border-radius: 1em;
+  background: var(--hw-bg-subtle);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-badge.pulse {
+  animation: pulse 2s ease-in-out infinite;
+  background: var(--hw-queued-bg);
+  color: var(--hw-queued);
+}
+
+/* ── Container ────────────────────────────────────────────── */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem;
+}
+
+/* ── Cards ────────────────────────────────────────────────── */
+.card {
+  background: var(--hw-bg-card);
+  border: 1px solid var(--hw-border);
+  border-radius: var(--hw-radius);
+  box-shadow: var(--hw-shadow);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.card header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--hw-border);
+  background: var(--hw-bg-subtle);
+}
+
+.card header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.card > :not(header) {
+  padding: 0.75rem 1rem;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* ── Metric Cards (Dashboard) ─────────────────────────────── */
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.metric-card {
+  background: var(--hw-bg-card);
+  border: 1px solid var(--hw-border);
+  border-radius: var(--hw-radius);
+  padding: 1rem;
+  text-align: center;
+  box-shadow: var(--hw-shadow);
+  transition: box-shadow 0.15s;
+}
+
+.metric-card:hover {
+  box-shadow: var(--hw-shadow-md);
+}
+
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+  font-size: 0.8rem;
+  color: var(--hw-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.25rem;
+}
+
+.metric-card.queued .metric-value  { color: var(--hw-queued); }
+.metric-card.running .metric-value { color: var(--hw-primary); }
+.metric-card.evals .metric-value   { color: var(--hw-queued); }
+.metric-card.success .metric-value { color: var(--hw-success); }
+.metric-card.failed .metric-value  { color: var(--hw-failed); }
+
+/* ── Progress Bar ─────────────────────────────────────────── */
+.progress-bar {
+  display: flex;
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  overflow: hidden;
+  background: var(--hw-bg-subtle);
+  margin: 0.35rem 0;
+}
+
+.progress-segment {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.progress-segment.success { background: var(--hw-success); }
+.progress-segment.failed  { background: var(--hw-failed); }
+.progress-segment.queued  { background: var(--hw-queued); }
+
+/* ── Breadcrumbs ──────────────────────────────────────────── */
+.breadcrumb {
+  margin-bottom: 1rem;
+}
+
+.breadcrumb ul {
+  list-style: none;
+  display: flex;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.breadcrumb li::after {
+  content: "/";
+  margin: 0 0.4rem;
+  color: var(--hw-text-muted);
+}
+
+.breadcrumb li:last-child::after {
+  content: "";
+}
+
+.breadcrumb li.current {
+  color: var(--hw-text-muted);
+}
+
+/* ── Tables ───────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
 
 th.num, td.num {
   text-align: right;
@@ -25,44 +277,135 @@ th.num, td.num {
 tr.disabled td { opacity: 0.5; }
 tr.hidden-jobset td { opacity: 0.7; }
 
-/* ── Navigation ────────────────────────────── */
-nav ul {
-  list-style: none;
-  display: flex;
-  gap: 1rem;
-  padding: 0;
-  margin: 0;
-  align-items: center;
+thead th {
+  border-bottom: 2px solid var(--hw-border);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--hw-text-muted);
+  padding: 0.5rem 0.75rem;
 }
 
-nav {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--pico-muted-border-color, #ddd);
-  margin-bottom: 1rem;
+tbody td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--hw-border);
 }
 
-/* ── Badges / Tags ─────────────────────────── */
+tbody tr:hover {
+  background: var(--hw-bg-subtle);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Badges / Tags ────────────────────────────────────────── */
 .badge {
   display: inline-block;
   padding: 0.15em 0.5em;
-  border-radius: 0.25rem;
-  background: var(--pico-muted-color, #e0e0e0);
-  font-size: 0.85em;
+  border-radius: var(--hw-radius-sm);
+  background: var(--hw-bg-subtle);
+  border: 1px solid var(--hw-border);
+  font-size: 0.8em;
   margin: 0.1em;
+  white-space: nowrap;
 }
+
+.badge.success { background: var(--hw-success-bg); border-color: var(--hw-success); color: var(--hw-success); }
+.badge.failed  { background: var(--hw-failed-bg); border-color: var(--hw-failed); color: var(--hw-failed); }
+.badge.queued  { background: var(--hw-queued-bg); border-color: var(--hw-queued); color: var(--hw-queued); }
 
 .disabled-badge {
   display: inline-block;
   padding: 0.15em 0.4em;
-  border-radius: 0.25rem;
-  background: #bdbdbd;
+  border-radius: var(--hw-radius-sm);
+  background: var(--hw-text-muted);
   color: #fff;
   font-size: 0.75em;
 }
 
-/* ── Eval info ─────────────────────────────── */
+/* ── Build Status Hero ────────────────────────────────────── */
+.build-hero {
+  border-radius: var(--hw-radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1rem;
+  border-left: 4px solid;
+}
+
+.build-hero.success {
+  background: var(--hw-success-bg);
+  border-left-color: var(--hw-success);
+}
+
+.build-hero.failed {
+  background: var(--hw-failed-bg);
+  border-left-color: var(--hw-failed);
+}
+
+.build-hero.queued {
+  background: var(--hw-queued-bg);
+  border-left-color: var(--hw-queued);
+}
+
+/* ── Timeline (Build Steps) ───────────────────────────────── */
+.timeline {
+  position: relative;
+  padding-left: 2rem;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--hw-border);
+}
+
+.timeline-item {
+  position: relative;
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -1.3rem;
+  top: 0.85rem;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 2px solid var(--hw-border);
+  background: var(--hw-bg-card);
+}
+
+.timeline-item.success::before { border-color: var(--hw-success); background: var(--hw-success); }
+.timeline-item.failed::before  { border-color: var(--hw-failed); background: var(--hw-failed); }
+.timeline-item.running::before { border-color: var(--hw-queued); background: var(--hw-queued); animation: pulse 2s ease-in-out infinite; }
+
+/* ── Running Eval ─────────────────────────────────────────── */
+.running-eval .eval-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.pulse::before {
+  content: "";
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--hw-queued);
+  margin-right: 0.4rem;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ── DL grids (eval info, build summary) ──────────────────── */
 dl.eval-info, dl.build-summary {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -72,19 +415,22 @@ dl.eval-info, dl.build-summary {
 dl.eval-info dt, dl.build-summary dt {
   font-weight: 600;
   text-align: right;
+  color: var(--hw-text-muted);
+  font-size: 0.9rem;
 }
 
-/* ── Error box ─────────────────────────────── */
+/* ── Error box ────────────────────────────────────────────── */
 .error-box {
-  border-left: 4px solid #c62828;
-  background: #ffebee;
-  padding: 0.5rem 1rem;
+  border-left: 4px solid var(--hw-failed);
+  background: var(--hw-failed-bg);
+  padding: 0.75rem 1rem;
   margin: 1rem 0;
+  border-radius: 0 var(--hw-radius-sm) var(--hw-radius-sm) 0;
 }
 
 .error-box header {
   font-weight: 700;
-  color: #c62828;
+  color: var(--hw-failed);
 }
 
 .error-box pre {
@@ -95,7 +441,7 @@ dl.eval-info dt, dl.build-summary dt {
   overflow: auto;
 }
 
-/* ── Tab buttons ───────────────────────────── */
+/* ── Tab buttons ──────────────────────────────────────────── */
 [role="tablist"] {
   display: flex;
   gap: 0.25rem;
@@ -105,28 +451,62 @@ dl.eval-info dt, dl.build-summary dt {
 
 [role="tablist"] button {
   padding: 0.4em 0.8em;
-  border: 1px solid var(--pico-muted-border-color, #ddd);
-  border-radius: 0.25rem;
+  border: 1px solid var(--hw-border);
+  border-radius: var(--hw-radius-sm);
   background: transparent;
   cursor: pointer;
   font-size: 0.9em;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 [role="tablist"] button:hover,
 [role="tablist"] button.htmx-request {
-  background: var(--pico-primary-background, #e3f2fd);
+  background: var(--hw-bg-subtle);
+  border-color: var(--hw-primary);
 }
 
-/* ── Flash message ─────────────────────────── */
+/* ── Admin nav ────────────────────────────────────────────── */
+.admin-nav ul {
+  list-style: none;
+  display: flex;
+  gap: 0;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+  border-bottom: 2px solid var(--hw-border);
+}
+
+.admin-nav li a {
+  display: block;
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: border-color 0.15s;
+}
+
+.admin-nav li a.active {
+  border-bottom-color: var(--hw-primary);
+  font-weight: 600;
+}
+
+.admin-nav li a:hover {
+  border-bottom-color: var(--hw-text-muted);
+}
+
+.inline-form {
+  display: inline;
+}
+
+/* ── Flash message ────────────────────────────────────────── */
 .flash {
   padding: 0.75rem 1rem;
-  background: #e8f5e9;
-  border: 1px solid #a5d6a7;
-  border-radius: 0.25rem;
+  background: var(--hw-success-bg);
+  border: 1px solid var(--hw-success);
+  border-radius: var(--hw-radius-sm);
   margin-bottom: 1rem;
 }
 
-/* ── Pager ─────────────────────────────────── */
+/* ── Pager ─────────────────────────────────────────────────── */
 .pager {
   display: flex;
   justify-content: center;
@@ -134,23 +514,68 @@ dl.eval-info dt, dl.build-summary dt {
   padding: 1rem 0;
 }
 
-/* ── Small external link indicator ─────────── */
+/* ── Small external link indicator ─────────────────────────── */
 .small.external {
   font-size: 0.8em;
   text-decoration: none;
   margin-left: 0.25em;
 }
 
-/* ── Code blocks ───────────────────────────── */
+/* ── Code blocks ───────────────────────────────────────────── */
 code {
   font-size: 0.85em;
   word-break: break-all;
+  font-family: var(--hw-font-mono);
 }
 
-/* ── Footer ────────────────────────────────── */
-footer {
-  margin-top: 2rem;
+/* ── Footer ────────────────────────────────────────────────── */
+.site-footer {
+  margin-top: 3rem;
   padding: 1rem;
   text-align: center;
-  border-top: 1px solid var(--pico-muted-border-color, #ddd);
+  border-top: 1px solid var(--hw-border);
+  color: var(--hw-text-muted);
+}
+
+/* ── Animations ────────────────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* HTMX settling transition. */
+.htmx-settling {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* New SSE content fade-in. */
+.htmx-added {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .site-nav {
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+  }
+  .nav-links {
+    gap: 0.1rem;
+    justify-content: center;
+  }
+  .metric-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+  .container {
+    padding: 0.75rem;
+  }
 }

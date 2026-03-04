@@ -1,7 +1,7 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Project page HTML (jobset listing with build counts).
+-- | Project page HTML: jobset listing with progress bars and breadcrumbs.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -13,11 +13,14 @@ import Data.Text (Text)
 import Lucid
 
 import HydraWeb.Models.Project (Project (..), Jobset (..), hasErrorMsg)
-import HydraWeb.View.Components (jobsetURL, showT)
+import HydraWeb.View.Components (jobsetURL, progressBar, breadcrumb, showT)
 
--- | Render the project page content.
+-- | Render the project page content with breadcrumb and jobset cards.
 projectPage :: Text -> Project -> [Jobset] -> Html ()
 projectPage bp project jobsets = do
+  -- Breadcrumb: Home / Project
+  breadcrumb [("Projects", bp <> "/"), (projDisplayName project, "")]
+
   hgroup_ $ do
     h1_ $ toHtml (projDisplayName project)
     case projDescription project of
@@ -29,6 +32,7 @@ projectPage bp project jobsets = do
     thead_ $ tr_ $ do
       th_ "Jobset"
       th_ "Type"
+      th_ "Progress"
       th_ [class_ "num"] "Succeeded"
       th_ [class_ "num"] "Failed"
       th_ [class_ "num"] "Queued"
@@ -37,7 +41,7 @@ projectPage bp project jobsets = do
     tbody_ $
       mapM_ (renderJobset bp) jobsets
 
--- | Render a single jobset table row.
+-- | Render a single jobset table row with progress bar.
 renderJobset :: Text -> Jobset -> Html ()
 renderJobset bp js = do
   let cls | jsHidden js == 1 = [class_ "hidden-jobset"]
@@ -46,6 +50,7 @@ renderJobset bp js = do
   tr_ cls $ do
     td_ $ a_ [href_ (jobsetURL bp (jsProject js) (jsName js))] $ toHtml (jsName js)
     td_ $ if jsType js == 1 then "flake" else "legacy"
+    td_ $ progressBar (jsNrSucceeded js) (jsNrFailed js) (jsNrScheduled js)
     td_ [class_ "num status-succeeded"] $ toHtml (showT (jsNrSucceeded js))
     td_ [class_ "num status-failed"] $ toHtml (showT (jsNrFailed js))
     td_ [class_ "num status-queued"] $ toHtml (showT (jsNrScheduled js))

@@ -1,7 +1,8 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Queue, queue-summary, machines, and steps page HTML.
+-- Queue and machines pages now use SSE for live updates.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -20,21 +21,26 @@ import Lucid
 import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
 import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
 import HydraWeb.View.Components
-import HydraWeb.View.HTMX (hxGet_, hxTrigger_, hxSwap_, hxTarget_)
+import HydraWeb.View.HTMX (hxExt_, sseConnect_, sseSwap_, hxSwap_)
 
--- | Render the full queue list page.
+-- | Render the full queue list page with SSE live updates.
 queuePage :: Text -> [Build] -> Int -> Html ()
 queuePage bp builds total = do
   h1_ $ toHtml ("Build Queue (" <> showT total <> ")")
   p_ $ a_ [href_ (bp <> "/queue-summary")] "View queue summary"
 
-  -- Auto-refresh wrapper.
-  div_ [hxGet_ (bp <> "/queue"), hxTrigger_ "every 30s",
-        hxSwap_ "innerHTML", hxTarget_ "#queue-table"] $ do
-    table_ [id_ "queue-table"] $ do
-      thead_ $ tr_ $ do
-        th_ "ID"; th_ "Job"; th_ "System"; th_ "Priority"; th_ "Queued"
-      tbody_ $ mapM_ renderQueuedBuild builds
+  -- SSE live-update wrapper.
+  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/queue")] $
+    div_ [id_ "queue-content", sseSwap_ "queue-update", hxSwap_ "innerHTML"] $
+      queueContent bp builds
+
+-- | Queue content partial (for both initial render and SSE updates).
+queueContent :: Text -> [Build] -> Html ()
+queueContent bp builds =
+  table_ [id_ "queue-table"] $ do
+    thead_ $ tr_ $ do
+      th_ "ID"; th_ "Job"; th_ "System"; th_ "Priority"; th_ "Queued"
+    tbody_ $ mapM_ renderQueuedBuild builds
   where
     renderQueuedBuild :: Build -> Html ()
     renderQueuedBuild b = tr_ $ do
@@ -77,10 +83,18 @@ queueSummaryPage bp summary systems total = do
       td_ $ toHtml (fmtTime (qsOldest s))
       td_ $ toHtml (fmtTime (qsNewest s))
 
--- | Render the machines/active steps page.
+-- | Render the machines/active steps page with SSE live updates.
 machinesPage :: Text -> [ActiveStep] -> Html ()
 machinesPage bp steps = do
   h1_ "Machine Status"
+
+  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/machines")] $
+    div_ [id_ "machines-content", sseSwap_ "machines-update", hxSwap_ "innerHTML"] $
+      machinesContent bp steps
+
+-- | Machines content partial (for both initial render and SSE updates).
+machinesContent :: Text -> [ActiveStep] -> Html ()
+machinesContent bp steps =
   case steps of
     [] -> p_ "No active build steps."
     _  -> table_ $ do
