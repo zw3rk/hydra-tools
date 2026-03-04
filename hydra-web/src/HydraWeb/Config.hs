@@ -38,7 +38,8 @@ data GitHubConfig = GitHubConfig
   , ghAppKeyFile      :: !FilePath       -- ^ HYDRA_WEB_GITHUB_APP_KEY_FILE
   , ghClientID        :: !Text           -- ^ HYDRA_WEB_GITHUB_CLIENT_ID
   , ghClientSecret    :: !Text           -- ^ HYDRA_WEB_GITHUB_CLIENT_SECRET
-  , ghInstallationIDs :: ![(Text, Int)]  -- ^ HYDRA_WEB_GITHUB_INSTALLATION_IDS ("org=id,...")
+  , ghInstallationIDs :: ![(Text, Int)]  -- ^ DEPRECATED: use DB-backed gf_github_installations instead.
+                                        -- ^ HYDRA_WEB_GITHUB_INSTALLATION_IDS — parsed for one-time seed migration.
   } deriving (Show)
 
 -- | Load configuration from environment variables.

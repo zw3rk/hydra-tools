@@ -11,6 +11,7 @@ module HydraWeb.View.HTMX
   , hxPost_
   , hxTarget_
   , hxSwap_
+  , hxSwapOob_
   , hxTrigger_
   , hxPushUrl_
   , hxIndicator_
@@ -19,6 +20,7 @@ module HydraWeb.View.HTMX
   , hxExt_
   , sseConnect_
   , sseSwap_
+  , sseClose_
   ) where
 
 import Data.Text (Text)
@@ -71,3 +73,11 @@ sseConnect_ = makeAttribute "sse-connect"
 -- | sse-swap="event" — SSE extension: swap content on named event.
 sseSwap_ :: Text -> Attribute
 sseSwap_ = makeAttribute "sse-swap"
+
+-- | sse-close="event" — SSE extension: close connection on named event.
+sseClose_ :: Text -> Attribute
+sseClose_ = makeAttribute "sse-close"
+
+-- | hx-swap-oob="true|selector" — out-of-band swap (update element by ID outside target).
+hxSwapOob_ :: Text -> Attribute
+hxSwapOob_ = makeAttribute "hx-swap-oob"

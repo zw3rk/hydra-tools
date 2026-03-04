@@ -1,4 +1,4 @@
--- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
+-- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
 -- | Servant API type declaration for hydra-web.
@@ -9,13 +9,15 @@
 
 module HydraWeb.API
   ( HydraWebAPI
+  , LegacyRedirectAPI
   , AuthAPI
   , ProfileAPI
   , AdminAPI
   , ProxyAPI
   , JSONAPI
   , JobAPI
-  , SSEAPI
+  , StreamAPI
+  , OrgRepoAPI
   , StaticAPI
   , FullAPI
   ) where
@@ -29,20 +31,23 @@ import HydraWeb.Handlers.API (APIJobset, APIBuild)
 import HydraWeb.Handlers.Job (ShieldBadge)
 
 -- | The main application API — all dynamic routes.
+-- Uses REST-style pluralized resource names.
 type HydraWebAPI =
-  -- GET / — overview page
+  -- GET / — overview page (also serves as project list)
        Get '[HTML] (Html ())
-  -- GET /project/:name
-  :<|> "project" :> Capture "name" Text :> Get '[HTML] (Html ())
-  -- GET /jobset/:project/:jobset?page=N
-  :<|> "jobset" :> Capture "project" Text :> Capture "jobset" Text
+  -- GET /projects — explicit project list
+  :<|> "projects" :> Get '[HTML] (Html ())
+  -- GET /projects/:name
+  :<|> "projects" :> Capture "name" Text :> Get '[HTML] (Html ())
+  -- GET /projects/:name/jobsets/:js?page=N
+  :<|> "projects" :> Capture "name" Text :> "jobsets" :> Capture "js" Text
        :> QueryParam "page" Int :> Get '[HTML] (Html ())
-  -- GET /eval/:id
+  -- GET /eval/:id (flat — IDs are globally unique)
   :<|> "eval" :> Capture "id" Int :> Get '[HTML] (Html ())
   -- GET /eval/:id/tab/:name (HTMX partial)
   :<|> "eval" :> Capture "id" Int :> "tab" :> Capture "name" Text
        :> Get '[HTML] (Html ())
-  -- GET /build/:id
+  -- GET /build/:id (flat — IDs are globally unique)
   :<|> "build" :> Capture "id" Int :> Get '[HTML] (Html ())
   -- GET /queue
   :<|> "queue" :> Get '[HTML] (Html ())
@@ -58,8 +63,19 @@ type HydraWebAPI =
   :<|> "search" :> QueryParam "query" Text :> Get '[HTML] (Html ())
   -- GET /bridges
   :<|> "bridges" :> Get '[HTML] (Html ())
+  -- GET /running-evals — currently evaluating jobsets
+  :<|> "running-evals" :> Get '[HTML] (Html ())
   -- GET /robots.txt
   :<|> "robots.txt" :> Get '[PlainText] Text
+
+-- | Legacy URL redirects (301 permanent).
+-- Old URLs redirect to the new REST-style paths.
+type LegacyRedirectAPI =
+  -- /project/:name → /projects/:name
+       "project" :> Capture "name" Text :> Get '[HTML] (Html ())
+  -- /jobset/:p/:j → /projects/:p/jobsets/:j
+  :<|> "jobset" :> Capture "project" Text :> Capture "jobset" Text
+       :> QueryParam "page" Int :> Get '[HTML] (Html ())
 
 -- | JSON API endpoints (backward-compatible with Hydra).
 type JSONAPI =
@@ -100,27 +116,69 @@ type AuthAPI =
 -- | Profile page (user info + API token management).
 type ProfileAPI = "profile" :> Get '[HTML] (Html ())
 
--- | Admin dashboard (user management, super-admin toggle).
-type AdminAPI = "admin" :> Get '[HTML] (Html ())
+-- | Admin dashboard with installation and org-map management.
+type AdminAPI =
+  -- GET /admin — admin dashboard
+       "admin" :> Get '[HTML] (Html ())
+  -- GET /admin/installations — GitHub App installations
+  :<|> "admin" :> "installations" :> Get '[HTML] (Html ())
+  -- POST /admin/installations — add new installation
+  :<|> "admin" :> "installations" :> ReqBody '[FormUrlEncoded] [(Text, Text)]
+       :> Post '[HTML] (Html ())
+  -- POST /admin/installations/:id/toggle — toggle enabled
+  :<|> "admin" :> "installations" :> Capture "id" Int :> "toggle"
+       :> Post '[HTML] (Html ())
+  -- POST /admin/installations/:id/delete — delete installation
+  :<|> "admin" :> "installations" :> Capture "id" Int :> "delete"
+       :> Post '[HTML] (Html ())
+  -- GET /admin/org-map — org/repo mappings
+  :<|> "admin" :> "org-map" :> Get '[HTML] (Html ())
+  -- POST /admin/org-map — add/update mapping
+  :<|> "admin" :> "org-map" :> ReqBody '[FormUrlEncoded] [(Text, Text)]
+       :> Post '[HTML] (Html ())
+  -- POST /admin/org-map/detect — auto-detect mappings from flake URIs
+  :<|> "admin" :> "org-map" :> "detect" :> Post '[HTML] (Html ())
+
+-- | SSE stream endpoints (Raw WAI apps for long-lived connections).
+type StreamAPI =
+  -- GET /stream/global — nav count updates
+       "stream" :> "global" :> Raw
+  -- GET /stream/bridges — bridge status updates
+  :<|> "stream" :> "bridges" :> Raw
+  -- GET /stream/queue — queue updates
+  :<|> "stream" :> "queue" :> Raw
+  -- GET /stream/machines — active steps updates
+  :<|> "stream" :> "machines" :> Raw
+  -- GET /stream/running-evals — running evaluations updates
+  :<|> "stream" :> "running-evals" :> Raw
+  -- GET /stream/project/:name — per-project updates
+  :<|> "stream" :> "project" :> Capture "name" Text :> Raw
+  -- GET /stream/jobset/:p/:j — per-jobset updates
+  :<|> "stream" :> "jobset" :> Capture "p" Text :> Capture "j" Text :> Raw
+
+-- | Org/repo catch-all — must be last before StaticAPI.
+-- Allows /:org/:repo URLs to resolve to a project page.
+type OrgRepoAPI = Capture "org" Text :> Capture "repo" Text :> Get '[HTML] (Html ())
 
 -- | Reverse proxy for write operations to Hydra backend (Raw WAI app).
 type ProxyAPI = "api" :> Raw
-
--- | SSE stream endpoint (Raw WAI app for long-lived connections).
-type SSEAPI = "bridges" :> "stream" :> Raw
 
 -- | Static file serving API.
 type StaticAPI = "static" :> Raw
 
 -- | Full API combining all route groups and static files.
--- Note: ProxyAPI must come AFTER JSONAPI so specific /api/* routes match first.
+-- Route order matters: specific routes first, catch-alls last.
+-- ProxyAPI must come AFTER JSONAPI so specific /api/* routes match first.
+-- OrgRepoAPI must be last before StaticAPI (catch-all for /:org/:repo).
 type FullAPI =
        HydraWebAPI
+  :<|> LegacyRedirectAPI
   :<|> AuthAPI
   :<|> ProfileAPI
   :<|> AdminAPI
   :<|> JSONAPI
   :<|> JobAPI
-  :<|> SSEAPI
+  :<|> StreamAPI
   :<|> ProxyAPI
+  :<|> OrgRepoAPI
   :<|> StaticAPI

@@ -3,6 +3,7 @@
 --
 -- | Reusable Lucid components: tables, status badges, pagination, formatting.
 -- These are the building blocks for all page views.
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Components
@@ -27,6 +28,15 @@ module HydraWeb.View.Components
   , jobsetURL
   , buildURL
   , evalURL
+  , orgRepoURL
+
+    -- * New visual components
+  , statusDot
+  , progressBar
+  , metricCard
+  , breadcrumb
+  , cardWithHeader
+  , sseTarget
   ) where
 
 import Data.Text (Text)
@@ -34,6 +44,7 @@ import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Lucid
+import qualified Lucid.Base
 
 -- | Status icon character for a build status code.
 statusIcon :: Maybe Int -> Html ()
@@ -128,18 +139,85 @@ truncateText n t
 showT :: Int -> Text
 showT = Text.pack . show
 
--- | Build a project URL.
+-- | Build a project URL (REST-style: /projects/:name).
 projectURL :: Text -> Text -> Text
-projectURL basePath name = basePath <> "/project/" <> name
+projectURL basePath name = basePath <> "/projects/" <> name
 
--- | Build a jobset URL.
+-- | Build a jobset URL (REST-style: /projects/:p/jobsets/:j).
 jobsetURL :: Text -> Text -> Text -> Text
-jobsetURL basePath project jobset = basePath <> "/jobset/" <> project <> "/" <> jobset
+jobsetURL basePath project jobset = basePath <> "/projects/" <> project <> "/jobsets/" <> jobset
 
--- | Build a build detail URL.
+-- | Build a build detail URL (flat: /build/:id).
 buildURL :: Text -> Int -> Text
 buildURL basePath bid = basePath <> "/build/" <> showT bid
 
--- | Build an eval URL.
+-- | Build an eval URL (flat: /eval/:id).
 evalURL :: Text -> Int -> Text
 evalURL basePath eid = basePath <> "/eval/" <> showT eid
+
+-- | Build an org/repo URL (/:org/:repo).
+orgRepoURL :: Text -> Text -> Text -> Text
+orgRepoURL basePath org repo = basePath <> "/" <> org <> "/" <> repo
+
+-- | Small colored dot indicator for build status.
+statusDot :: Maybe Int -> Html ()
+statusDot st = span_ [class_ ("status-dot " <> statusClass st)] ""
+
+-- | Stacked horizontal progress bar showing build status distribution.
+-- Takes (succeeded, failed, queued) counts and renders proportional segments.
+progressBar :: Int -> Int -> Int -> Html ()
+progressBar succ' fail' queued' =
+  let total = succ' + fail' + queued'
+  in  if total == 0
+        then div_ [class_ "progress-bar"] $ pure ()
+        else div_ [class_ "progress-bar"] $ do
+          when (succ' > 0) $
+            div_ [class_ "progress-segment success"
+                 , style_ ("width:" <> pct succ' total)] ""
+          when (fail' > 0) $
+            div_ [class_ "progress-segment failed"
+                 , style_ ("width:" <> pct fail' total)] ""
+          when (queued' > 0) $
+            div_ [class_ "progress-segment queued"
+                 , style_ ("width:" <> pct queued' total)] ""
+  where
+    pct n t = showT (n * 100 `div` t) <> "%"
+    when True  f = f
+    when False _ = pure ()
+
+-- | A metric card showing a count and label (for dashboard).
+metricCard :: Text -> Text -> Int -> Html ()
+metricCard cls label count' =
+  div_ [class_ ("metric-card " <> cls)] $ do
+    div_ [class_ "metric-value"] $ toHtml (showT count')
+    div_ [class_ "metric-label"] $ toHtml label
+
+-- | Render a breadcrumb navigation trail from (label, url) pairs.
+-- The last item is rendered without a link (current page).
+breadcrumb :: [(Text, Text)] -> Html ()
+breadcrumb items = nav_ [class_ "breadcrumb"] $
+  ul_ $ mapM_ renderItem (zip [0 :: Int ..] items)
+  where
+    lastIdx = length items - 1
+    renderItem :: (Int, (Text, Text)) -> Html ()
+    renderItem (idx, (label, url'))
+      | idx == lastIdx = li_ [class_ "current"] $ toHtml label
+      | otherwise      = li_ $ a_ [href_ url'] $ toHtml label
+
+-- | A card with a styled header.
+cardWithHeader :: Text -> Html () -> Html ()
+cardWithHeader title content = article_ [class_ "card"] $ do
+  header_ $ h3_ $ toHtml title
+  content
+
+-- | SSE live-update wrapper div.
+sseTarget :: Text -> Text -> Text -> Html () -> Html ()
+sseTarget bp streamPath eventName content =
+  div_ [hxExt_ "sse", sseConnect_ (bp <> streamPath)] $
+    div_ [id_ (eventName <> "-content"), sseSwap_ eventName, hxSwap_ "innerHTML"] content
+  where
+    hxExt_ = makeAttribute "hx-ext"
+    sseConnect_ = makeAttribute "sse-connect"
+    sseSwap_ = makeAttribute "sse-swap"
+    hxSwap_ = makeAttribute "hx-swap"
+    makeAttribute k v = Lucid.Base.makeAttribute k v
