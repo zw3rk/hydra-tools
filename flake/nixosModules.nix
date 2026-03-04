@@ -483,6 +483,8 @@
         users.users.hydra-web = {
           isSystemUser = true;
           group = "hydra-web";
+          # Member of hydra group to read build logs from /var/lib/hydra/build-logs/.
+          extraGroups = [ "hydra" ];
           description = "Hydra Web Frontend";
         };
         users.groups.hydra-web = {};
