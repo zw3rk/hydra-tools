@@ -52,6 +52,7 @@ library
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.Sync
                       , Lib.Hydra
                       , Lib.Hydra.Client
                       , Lib.Hydra.DB
@@ -73,6 +74,7 @@ executable hydra-github-bridge
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.Sync
                       , Lib.GitHub
                       , Lib.GitHub.Client
                       , Lib.GitHub.WebHookServer

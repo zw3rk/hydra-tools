@@ -27,6 +27,7 @@ import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
 import Lib.Hydra (HydraClientEnv (..))
@@ -156,6 +157,11 @@ main = do
   ssePort <- maybe 8812 read <$> lookupEnv "SSE_PORT"
   let sseTtl = 86400 :: NominalDiffTime -- 24 hours
 
+  -- Sync configuration
+  syncEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_ENABLED"
+  syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
+  syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
+
   -- Authenticate to GitHub
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
   ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
@@ -167,6 +173,9 @@ main = do
   putStrLn $ "Server is starting on port " ++ show port
   when sseEnabled $
     putStrLn $ "SSE server will start on port " ++ show ssePort
+  when syncEnabled $
+    putStrLn $ "Sync worker will run every " ++ show syncInterval ++ "s"
+      ++ if syncDryRun then " (DRY RUN)" else ""
 
   -- Initialize SSE status cache
   cache <- newStatusCache
@@ -229,3 +238,16 @@ main = do
             putStrLn $ "Pruned " ++ show pruned ++ " stale notification(s)"
     ]
     ++ [ runSSEServer cache ssePort sseTtl | sseEnabled ]
+    ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+           syncLoop
+             SyncConfig
+               { scInterval = syncInterval,
+                 scDryRun = syncDryRun,
+                 scEndpoint = ghEndpointUrl,
+                 scUserAgent = ghUserAgent,
+                 scTokensRef = ghTokens,
+                 scGetTokens = getValidGitHubToken'
+               }
+             conn
+       | syncEnabled
+       ]

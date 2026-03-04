@@ -125,6 +125,32 @@
                 '';
               };
 
+              enableSync = mkOption {
+                type = types.bool;
+                default = true;
+                description = ''
+                  Enable the periodic sync worker that reconciles GitHub PR
+                  state with Hydra jobsets. Catches missed webhook events.
+                '';
+              };
+
+              syncInterval = mkOption {
+                type = types.int;
+                default = 900;
+                description = ''
+                  Seconds between sync cycles (default: 900 = 15 minutes).
+                '';
+              };
+
+              syncDryRun = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  When true, log reconciliation actions without actually
+                  queuing create/disable commands.
+                '';
+              };
+
               enableSse = mkOption {
                 type = types.bool;
                 default = true;
@@ -216,6 +242,9 @@
                   FILTER_JOBS = lib.boolToString iCfg.filterJobs;
                   SSE_ENABLED = lib.boolToString iCfg.enableSse;
                   SSE_PORT = toString iCfg.ssePort;
+                  SYNC_ENABLED = lib.boolToString iCfg.enableSync;
+                  SYNC_INTERVAL = toString iCfg.syncInterval;
+                  SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
                 };
 
               script = ''
