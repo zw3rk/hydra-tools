@@ -11,9 +11,10 @@ import Data.ByteString.Char8 qualified as C8
 import Data.IORef (newIORef)
 import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
+import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple
-import Lib.Bridge.GitHubToHydra (GitHubToHydraEnv (..), app, hydraClient, hydraClientEnv)
+import Lib.Bridge.GitHubToHydra (GitHubToHydraEnv (..), app, hydraClient, hydraClientEnv, parseInstallIds)
 import Lib.Bridge.HydraToGitHub
   ( HydraToGitHubEnv (..),
     fetchGitHubTokens,
@@ -25,7 +26,16 @@ import Lib.GitHub (gitHubKey)
 import Lib.Hydra (HydraClientEnv (..))
 import Network.Wai.Handler.Warp (run)
 import System.Environment (getEnv, lookupEnv)
+import System.Exit (die)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdin, stdout)
+
+getGhAppInstallIds :: IO [(Text, Int)]
+getGhAppInstallIds = do
+  ghAppInstallIds <- parseInstallIds . Text.pack <$> getEnv "GITHUB_APP_INSTALL_IDS"
+  either
+    (die . ("Failed to parse " <>))
+    pure
+    ghAppInstallIds
 
 main :: IO ()
 main = do
@@ -49,7 +59,8 @@ main = do
   -- Authenticate to GitHub
   ghAppId <- read <$> getEnv "GITHUB_APP_ID"
   ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-  ghAppInstallIds <- read <$> getEnv "GITHUB_APP_INSTALL_IDS"
+
+  ghAppInstallIds <- getGhAppInstallIds
 
   ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds
   ghTokensRef <- newIORef ghTokens

@@ -23,6 +23,7 @@ module Lib.Bridge.GitHubToHydra
     hydraClient,
     handleCmd,
     on404,
+    parseInstallIds,
     splitRepo,
     reAuthenticate,
   )
@@ -35,12 +36,14 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (ReaderT (..), asks)
 import Control.Monad.Reader.Class (MonadReader)
 import Data.Aeson qualified as Aeson
+import Data.Bifunctor (Bifunctor (..))
 import Data.Char (isNumber)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
+import Data.Void (Void)
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events
   ( CheckRunEvent (..),
@@ -84,6 +87,10 @@ import Servant.Client (ClientEnv, ClientM)
 import Servant.Client qualified as Servant
 import Servant.GitHub.Webhook (RepoWebhookEvent)
 import System.Exit (die)
+import Text.Megaparsec (Parsec, (<?>))
+import Text.Megaparsec qualified as Parsec
+import Text.Megaparsec.Char (char)
+import Text.Megaparsec.Char.Lexer (decimal)
 import Text.Read (readMaybe)
 
 data GitHubToHydraEnv = GitHubToHydraEnv
@@ -698,6 +705,23 @@ splitRepo repo =
   case Text.splitOn "/" repo of
     (org : proj : _) -> (org, proj)
     _ -> error $ "Lib.splitrepo on " ++ Text.unpack repo
+
+-- | Parse GITHUB_APP_INSTALL_IDS in format "org1=123,org2=457"
+parseInstallIds :: Text -> Either String [(Text, Int)]
+parseInstallIds =
+  first Parsec.errorBundlePretty . Parsec.runParser parser "GITHUB_APP_INSTALL_IDS"
+  where
+    parser :: Parsec Void Text [(Text, Int)]
+    parser = Parsec.sepBy1 parseOrgInstall (char ',') <* Parsec.eof
+
+    parseOrgInstall :: Parsec Void Text (Text, Int)
+    parseOrgInstall =
+      (,)
+        <$> (parseOrgName <* char '=')
+        <*> (decimal <?> "app installation id")
+
+    parseOrgName :: Parsec Void Text Text
+    parseOrgName = Parsec.takeWhile1P (Just "organization name") (/= '=')
 
 -- Re-authenticate with Hydra when session expires
 reAuthenticate :: HydraClientEnv -> IO (Either String ())
