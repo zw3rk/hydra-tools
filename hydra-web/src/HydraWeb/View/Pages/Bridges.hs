@@ -31,18 +31,37 @@ bridgesPage bp status = do
       bridgesContent status
 
 -- | Reusable content partial for both initial render and SSE updates.
+-- Uses client-side tabs to switch between GitHub and Attic sections.
 bridgesContent :: BridgeStatus -> Html ()
 bridgesContent status = do
-  -- GitHub section
-  h2_ "GitHub Notifications"
-  case bsGitHub status of
-    Nothing -> p_ "GitHub bridge tables not found. Bridge may not be deployed."
-    Just gh -> renderGitHub gh
-  -- Attic section
-  h2_ "Attic Uploads"
-  case bsAttic status of
-    Nothing -> p_ "Attic bridge table not found. Bridge may not be deployed."
-    Just attic -> renderAttic attic
+  -- Tab buttons with pending counts in labels.
+  div_ [role_ "tablist"] $ do
+    let ghLabel = "GitHub" <> ghBadge
+        ghBadge = case bsGitHub status of
+          Just gh | ghsPending gh > 0 -> " (" <> showT (ghsPending gh) <> ")"
+          _ -> ""
+        atLabel = "Attic" <> atBadge
+        atBadge = case bsAttic status of
+          Just at | absPending at > 0 -> " (" <> showT (absPending at) <> ")"
+          _ -> ""
+    button_ [ role_ "tab", id_ "tab-github-btn", class_ "active"
+            , onclick_ "document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
+            ] (toHtml ghLabel)
+    button_ [ role_ "tab", id_ "tab-attic-btn"
+            , onclick_ "document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
+            ] (toHtml atLabel)
+
+  -- GitHub tab panel (shown by default).
+  div_ [id_ "tab-github"] $
+    case bsGitHub status of
+      Nothing -> p_ "GitHub bridge tables not found. Bridge may not be deployed."
+      Just gh -> renderGitHub gh
+
+  -- Attic tab panel (hidden by default).
+  div_ [id_ "tab-attic", style_ "display:none"] $
+    case bsAttic status of
+      Nothing -> p_ "Attic bridge table not found. Bridge may not be deployed."
+      Just attic -> renderAttic attic
 
 -- | Render the bridges content partial to a strict ByteString.
 -- Used by the SSE broadcaster.
