@@ -29,6 +29,7 @@ import GitHub.REST.Auth (fromToken)
 import Network.HTTP.Client (Manager, Request (..), httpLbs, parseRequest_,
                             responseBody, responseStatus)
 import Network.HTTP.Types (statusCode)
+import System.IO (hPutStrLn, stderr)
 
 import HydraLib.GitHub.Client (fetchAppInstallationToken, gitHubApiVersion)
 import HydraLib.GitHub.Types (TokenLease (..))
@@ -40,7 +41,7 @@ import HydraWeb.DB.RepoVisibility (allProjectRepos, upsertRepoVisibility)
 -- Checks all repos in @gf_org_project_map@ against the GitHub API.
 repoVisibilityLoop :: Pool Connection -> Manager -> Int -> FilePath -> ByteString -> Int -> IO ()
 repoVisibilityLoop pool mgr interval ghAppKeyFile ghUserAgent ghAppId = do
-  putStrLn "[repo-visibility] Background visibility checker started"
+  hPutStrLn stderr "[repo-visibility] Background visibility checker started"
   loop
   where
     loop = do
@@ -49,11 +50,11 @@ repoVisibilityLoop pool mgr interval ghAppKeyFile ghUserAgent ghAppId = do
       result <- try (refreshAll pool mgr ghAppKeyFile ghUserAgent ghAppId)
       case result of
         Right (checked, errors) ->
-          putStrLn $ "[repo-visibility] Refresh complete: "
+          hPutStrLn stderr $ "[repo-visibility] Refresh complete: "
             <> show checked <> " repo(s) checked, "
             <> show errors <> " error(s)"
         Left (e :: SomeException) ->
-          putStrLn $ "[repo-visibility] ERROR: " <> show e
+          hPutStrLn stderr $ "[repo-visibility] ERROR: " <> show e
       loop
 
 -- | Refresh visibility for all repos in @gf_org_project_map@.
@@ -87,7 +88,7 @@ fetchOrgTokens ghAppKeyFile ghUserAgent ghAppId installs = do
     case result of
       Right lease -> pure (Just (org, fromToken (HydraLib.GitHub.Types.token lease)))
       Left (e :: SomeException) -> do
-        putStrLn $ "[repo-visibility] Failed to get token for " <> Text.unpack org <> ": " <> show e
+        hPutStrLn stderr $ "[repo-visibility] Failed to get token for " <> Text.unpack org <> ": " <> show e
         pure Nothing
     ) installs
   pure [x | Just x <- results]
@@ -108,11 +109,11 @@ checkAndStore conn mgr ghUserAgent orgTokens (org, repo) =
           upsertRepoVisibility conn org repo isPublic
           pure True
         Right Nothing -> do
-          putStrLn $ "[repo-visibility] Could not parse visibility for "
+          hPutStrLn stderr $ "[repo-visibility] Could not parse visibility for "
             <> Text.unpack org <> "/" <> Text.unpack repo
           pure False
         Left (e :: SomeException) -> do
-          putStrLn $ "[repo-visibility] Error checking "
+          hPutStrLn stderr $ "[repo-visibility] Error checking "
             <> Text.unpack org <> "/" <> Text.unpack repo <> ": " <> show e
           pure False
 
