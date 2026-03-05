@@ -43,7 +43,7 @@
               };
 
               ghUserAgent = mkOption {
-                type = types.str;
+                type = types.nullOr types.str;
                 default = null;
                 description = ''
                   The user agent to use for authorization with the GitHub API.
@@ -52,8 +52,8 @@
               };
 
               ghAppKeyFile = mkOption {
-                type = types.path;
-                default = "";
+                type = types.nullOr types.path;
+                default = null;
                 description = ''
                   Path to a file containing the GitHub App private key for authorization with GitHub.
                 '';
@@ -225,7 +225,7 @@
                   HYDRA_DB = iCfg.hydraDb;
                   PORT = toString iCfg.port;
                 }
-                // lib.optionalAttrs (iCfg.ghUserAgent != "") {
+                // lib.optionalAttrs (iCfg.ghUserAgent != null) {
                   GITHUB_USER_AGENT = iCfg.ghUserAgent;
                 }
                 // lib.optionalAttrs (iCfg.ghAppId != 0) {
