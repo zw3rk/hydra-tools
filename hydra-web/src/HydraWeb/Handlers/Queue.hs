@@ -90,7 +90,7 @@ stepsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  let page    = max 1 (maybe 1 id mPage)
+  let page    = min 10000 (max 1 (maybe 1 id mPage))
       perPage = 20
       offset  = (page - 1) * perPage
   (steps, counts) <- liftIO $ withConn pool $ \conn -> do

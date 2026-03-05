@@ -90,7 +90,7 @@ latestEvalsHandler :: Maybe Text -> Maybe Int -> AppM (Html ())
 latestEvalsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  let page    = max 1 (maybe 1 id mPage)
+  let page    = min 10000 (max 1 (maybe 1 id mPage))
       perPage = 20
       offset  = (page - 1) * perPage
   (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
