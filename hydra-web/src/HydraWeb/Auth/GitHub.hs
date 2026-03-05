@@ -63,13 +63,16 @@ authorizeURL clientId callbackURL state =
   <> "&scope=read:user,read:org"
 
 -- | Exchange an authorization code for an access token.
-exchangeCode :: Manager -> Text -> Text -> Text -> IO (Maybe Text)
-exchangeCode mgr clientId clientSecret code = do
+-- The redirect_uri MUST match the one sent during authorization;
+-- GitHub rejects the exchange if they differ.
+exchangeCode :: Manager -> Text -> Text -> Text -> Text -> IO (Maybe Text)
+exchangeCode mgr clientId clientSecret code redirectUri = do
   initReq <- parseRequest "https://github.com/login/oauth/access_token"
   let req = urlEncodedBody
         [ ("client_id", TE.encodeUtf8 clientId)
         , ("client_secret", TE.encodeUtf8 clientSecret)
         , ("code", TE.encodeUtf8 code)
+        , ("redirect_uri", TE.encodeUtf8 redirectUri)
         ]
         initReq
           { requestHeaders = [("Accept", "application/json")]

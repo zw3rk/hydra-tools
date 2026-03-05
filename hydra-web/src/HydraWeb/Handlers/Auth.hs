@@ -53,7 +53,7 @@ handleGitHubAuth = do
     { errHeaders =
         [ ("Location", TE.encodeUtf8 url)
         , ("Set-Cookie", "hydra_oauth_state=" <> TE.encodeUtf8 state
-            <> "; Path=/; Max-Age=600; HttpOnly; SameSite=Lax")
+            <> "; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax")
         ]
     , errBody = ""
     }
@@ -82,8 +82,10 @@ handleGitHubCallback mCookie mCode mState = do
   mEnc <- asks appEncryptor
 
   -- Exchange code for access token.
+  -- The redirect_uri must match the one sent during authorization.
+  let callbackURL = cfgBaseURL cfg <> bp <> "/auth/github/callback"
   mgr <- asks appHttpManager
-  mToken <- liftIO $ exchangeCode mgr (ghClientID gh) (ghClientSecret gh) code
+  mToken <- liftIO $ exchangeCode mgr (ghClientID gh) (ghClientSecret gh) code callbackURL
   token <- maybe (throwError err500 { errBody = "token exchange failed" }) pure mToken
 
   -- Fetch GitHub user info.
@@ -111,7 +113,7 @@ handleGitHubCallback mCookie mCode mState = do
     { errHeaders =
         [ ("Location", TE.encodeUtf8 (bp <> "/"))
         , ("Set-Cookie", sessionCookieName <> "=" <> TE.encodeUtf8 sid
-            <> "; Path=/; Max-Age=604800; HttpOnly; SameSite=Strict")
+            <> "; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Strict")
         , ("Set-Cookie", "hydra_oauth_state=; Path=/; Max-Age=0; HttpOnly")
         ]
     , errBody = ""
@@ -133,7 +135,7 @@ handleLogout mCookie = do
     { errHeaders =
         [ ("Location", TE.encodeUtf8 (bp <> "/"))
         , ("Set-Cookie", sessionCookieName
-            <> "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")
+            <> "=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict")
         ]
     , errBody = ""
     }
