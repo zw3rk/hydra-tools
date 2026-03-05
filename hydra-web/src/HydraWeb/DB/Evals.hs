@@ -21,10 +21,12 @@ module HydraWeb.DB.Evals
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)), In(..))
 
 import HydraWeb.Models.Eval
   (JobsetEval (..), JobsetEvalInput (..), EvalInfo (..), EvaluationError (..), RunningEval (..))
@@ -91,8 +93,12 @@ previousEval conn eval = do
     (r:_) -> pure $ Just (scanEvalRow r)
 
 -- | Fetch paginated evaluations for a jobset with computed stats and diffs.
+-- Uses batched queries to avoid N+1: fetches all build-status counts and
+-- inputs in bulk rather than per-eval.
 jobsetEvals :: Connection -> Int -> Int -> Int -> IO [EvalInfo]
 jobsetEvals conn jobsetId' offset limit = do
+  -- Fetch one extra eval to serve as the "previous" for the last page entry,
+  -- since our list is already ordered by id DESC with hasnewbuilds=1.
   rows <- query conn [sql|
     SELECT e.id, e.jobset_id, e.evaluationerror_id,
            e.timestamp, e.checkouttime, e.evaltime,
@@ -104,9 +110,76 @@ jobsetEvals conn jobsetId' offset limit = do
     WHERE e.jobset_id = ? AND e.hasnewbuilds = 1
     ORDER BY e.id DESC
     LIMIT ? OFFSET ?
-  |] (jobsetId', limit, offset)
-  let evals = map scanEvalRow rows
-  mapM (computeEvalInfo conn) evals
+  |] (jobsetId', limit + 1, offset)
+  let allEvals  = map scanEvalRow rows
+      pageEvals = take limit allEvals
+  if null pageEvals then pure [] else do
+    let allIds     = map evalId allEvals
+        needCounts = [evalId e | e <- allEvals, evalNrSucceeded e == Nothing]
+
+    -- Batch: scheduled/succeeded counts for evals without precomputed values.
+    (schedMap, succMap) <- if null needCounts
+      then pure (Map.empty, Map.empty)
+      else do
+        schedRows <- query conn [sql|
+          SELECT m.eval, count(*)
+          FROM builds b
+          JOIN jobsetevalmembers m ON m.build = b.id
+          WHERE m.eval IN ? AND b.finished = 0
+          GROUP BY m.eval
+        |] (Only (In needCounts))
+        succRows <- query conn [sql|
+          SELECT m.eval, count(*)
+          FROM builds b
+          JOIN jobsetevalmembers m ON m.build = b.id
+          WHERE m.eval IN ? AND b.finished = 1 AND b.buildstatus = 0
+          GROUP BY m.eval
+        |] (Only (In needCounts))
+        pure (Map.fromList (schedRows :: [(Int, Int)])
+             , Map.fromList (succRows :: [(Int, Int)]))
+
+    -- Batch: inputs for all eval IDs (page evals + the extra previous).
+    inputRows <- query conn [sql|
+      SELECT eval, name, altnr, type, uri, revision, value, dependency
+      FROM jobsetevalinputs
+      WHERE eval IN ?
+        AND altnr = 0
+        AND ((uri IS NOT NULL AND revision IS NOT NULL) OR dependency IS NOT NULL)
+      ORDER BY name
+    |] (Only (In allIds))
+    let inputMap :: Map Int [JobsetEvalInput]
+        inputMap = Map.fromListWith (++) $ flip map inputRows $
+          \((eid, n, a, t) :. (u, r, v, d)) ->
+            (eid :: Int, [JobsetEvalInput n a t u r v d])
+
+    -- Build a map from each page eval's ID to its "previous" eval.
+    -- Since allEvals is ordered by id DESC from the same jobset with
+    -- hasnewbuilds=1, eval[i]'s previous is eval[i+1].
+    let prevMap = Map.fromList (zip (map evalId pageEvals) (drop 1 allEvals))
+
+    pure $ map (buildEvalInfo schedMap succMap inputMap prevMap) pageEvals
+  where
+    buildEvalInfo :: Map Int Int -> Map Int Int -> Map Int [JobsetEvalInput]
+                  -> Map Int JobsetEval -> JobsetEval -> EvalInfo
+    buildEvalInfo schedMap succMap inputMap prevMap eval =
+      let eid = evalId eval
+          (nrScheduled, nrSucceeded) = case evalNrSucceeded eval of
+            Just s  -> (0, s)
+            Nothing -> ( Map.findWithDefault 0 eid schedMap
+                       , Map.findWithDefault 0 eid succMap )
+          nrBuilds = fromMaybe 0 (evalNrBuilds eval)
+          nrFailed = nrBuilds - nrSucceeded - nrScheduled
+          inputs   = Map.findWithDefault [] eid inputMap
+          (diff, changedInputs) = case Map.lookup eid prevMap of
+            Nothing -> (0, [])
+            Just prev ->
+              let prevSucceeded = case evalNrSucceeded prev of
+                    Just s  -> s
+                    Nothing -> Map.findWithDefault 0 (evalId prev) succMap
+                  prevInputs = Map.findWithDefault [] (evalId prev) inputMap
+                  changed    = computeChangedInputs inputs prevInputs
+              in (nrSucceeded - prevSucceeded, changed)
+      in EvalInfo eval nrScheduled nrSucceeded nrFailed diff changedInputs
 
 -- | Count of evals with new builds for a jobset (for pagination).
 allJobsetEvalsCount :: Connection -> Int -> IO Int
@@ -142,59 +215,6 @@ latestEvalsCount conn = do
     SELECT count(*) FROM jobsetevals WHERE hasnewbuilds = 1
   |]
   pure n
-
--- | Compute stats and diff for a single eval (used in jobsetEvals).
-computeEvalInfo :: Connection -> JobsetEval -> IO EvalInfo
-computeEvalInfo conn eval = do
-  -- Compute scheduled/succeeded counts.
-  (nrScheduled, nrSucceeded) <- case evalNrSucceeded eval of
-    Just s  -> pure (0, s)
-    Nothing -> do
-      [Only sched] <- query conn [sql|
-        SELECT count(*) FROM builds b
-        JOIN jobsetevalmembers m ON m.build = b.id
-        WHERE m.eval = ? AND b.finished = 0
-      |] (Only (evalId eval))
-      [Only succ'] <- query conn [sql|
-        SELECT count(*) FROM builds b
-        JOIN jobsetevalmembers m ON m.build = b.id
-        WHERE m.eval = ? AND b.finished = 1 AND b.buildstatus = 0
-      |] (Only (evalId eval))
-      pure (sched :: Int, succ' :: Int)
-
-  let nrBuilds = fromMaybe 0 (evalNrBuilds eval)
-      nrFailed = nrBuilds - nrSucceeded - nrScheduled
-
-  -- Load inputs for this eval.
-  inputs <- getEvalInputs conn (evalId eval)
-
-  -- Find previous eval for diff.
-  mPrev <- previousEval conn eval
-
-  (diff, changedInputs) <- case mPrev of
-    Nothing -> pure (0, [])
-    Just prev -> do
-      prevSucceeded <- case evalNrSucceeded prev of
-        Just s  -> pure s
-        Nothing -> do
-          [Only s] <- query conn [sql|
-            SELECT count(*) FROM builds b
-            JOIN jobsetevalmembers m ON m.build = b.id
-            WHERE m.eval = ? AND b.finished = 1 AND b.buildstatus = 0
-          |] (Only (evalId prev))
-          pure (s :: Int)
-      prevInputs <- getEvalInputs conn (evalId prev)
-      let changed = computeChangedInputs inputs prevInputs
-      pure (nrSucceeded - prevSucceeded, changed)
-
-  pure EvalInfo
-    { eiEval          = eval
-    , eiNrScheduled   = nrScheduled
-    , eiNrSucceeded   = nrSucceeded
-    , eiNrFailed      = nrFailed
-    , eiDiff          = diff
-    , eiChangedInputs = changedInputs
-    }
 
 -- | Simple eval info without diff computation (for /evals page).
 simpleEvalInfo :: JobsetEval -> EvalInfo
