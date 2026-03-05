@@ -29,18 +29,31 @@ import HydraWeb.DB.Evals (runningEvalsCount)
 import HydraWeb.Models.Build (BuildStep)
 
 -- | Count of unfinished builds in the queue.
+-- Excludes builds from hidden projects/jobsets.
 queueCount :: Connection -> IO Int
 queueCount conn = do
   [Only n] <- query_ conn [sql|
-    SELECT count(*) FROM builds WHERE finished = 0
+    SELECT count(*)
+    FROM builds b
+    JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE b.finished = 0
+      AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
 
 -- | Count of currently running build steps (distinct builds).
+-- Excludes steps from hidden projects/jobsets.
 runningCount :: Connection -> IO Int
 runningCount conn = do
   [Only n] <- query_ conn [sql|
-    SELECT count(DISTINCT build) FROM buildsteps WHERE busy != 0
+    SELECT count(DISTINCT s.build)
+    FROM buildsteps s
+    JOIN builds b ON s.build = b.id
+    JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE s.busy != 0
+      AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
 
@@ -128,12 +141,17 @@ activeSteps conn = do
     ActiveStep b nr sys drv m st p j job busy) rows
 
 -- | Count of currently-running build steps (for SSE fragments).
+-- Excludes steps from hidden projects/jobsets.
 activeStepCount :: Connection -> IO Int
 activeStepCount conn = do
   [Only n] <- query_ conn [sql|
     SELECT count(*)
-    FROM buildsteps
-    WHERE busy != 0
+    FROM buildsteps s
+    JOIN builds b ON s.build = b.id
+    JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE s.busy != 0
+      AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
 
