@@ -33,7 +33,7 @@ module HydraWeb.DB.Auth
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Database.PostgreSQL.Simple
-  (Connection, query, query_, execute, Only (..))
+  (Connection, query, query_, execute, Only (..), Binary (..))
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
 import HydraWeb.Models.User (GFUser (..), GFSession (..), GFAPIToken (..))
@@ -177,6 +177,8 @@ deleteExpiredSessions conn = do
 -- ── GitHub tokens ────────────────────────────────────────────────────
 
 -- | Store or replace an encrypted GitHub access token.
+-- The Binary wrapper tells postgresql-simple to use bytea encoding
+-- for the raw ciphertext bytes.
 upsertGitHubToken :: Connection -> Int -> ByteString -> IO ()
 upsertGitHubToken conn userId encToken = do
   _ <- execute conn [sql|
@@ -185,18 +187,19 @@ upsertGitHubToken conn userId encToken = do
     ON CONFLICT (user_id) DO UPDATE SET
       access_token_enc = EXCLUDED.access_token_enc,
       obtained_at = now()
-  |] (userId, encToken)
+  |] (userId, Binary encToken)
   pure ()
 
 -- | Get the encrypted GitHub token for a user.
+-- Uses Binary wrapper to read bytea column as raw bytes.
 getGitHubToken :: Connection -> Int -> IO (Maybe ByteString)
 getGitHubToken conn userId = do
   rows <- query conn [sql|
     SELECT access_token_enc FROM gf_github_tokens WHERE user_id = ?
   |] (Only userId)
   pure $ case rows of
-    []          -> Nothing
-    (Only t:_)  -> Just t
+    []                    -> Nothing
+    (Only (Binary t):_)   -> Just t
 
 -- ── API tokens ───────────────────────────────────────────────────────
 
