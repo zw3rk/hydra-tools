@@ -34,9 +34,15 @@
 /* ── Dark mode overrides ──────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
+    --hw-success:     #66bb6a;
     --hw-success-bg:  #1b3a1d;
+    --hw-failed:      #ef5350;
     --hw-failed-bg:   #3a1515;
+    --hw-queued:      #ffca28;
     --hw-queued-bg:   #3a3015;
+    --hw-aborted:     #ff9800;
+    --hw-unknown:     #9e9e9e;
+    --hw-depfail:     #ffa726;
     --hw-shadow:      0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
     --hw-shadow-md:   0 4px 6px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.2);
   }
@@ -463,6 +469,12 @@ dl.eval-info dt, dl.build-summary dt {
 [role="tablist"] button.htmx-request {
   background: var(--hw-bg-subtle);
   border-color: var(--hw-primary);
+}
+
+[role="tablist"] button.active {
+  background: var(--hw-primary);
+  border-color: var(--hw-primary);
+  color: #fff;
 }
 
 /* ── Admin nav ────────────────────────────────────────────── */
