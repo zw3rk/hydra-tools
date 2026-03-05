@@ -71,25 +71,53 @@ listMappings conn = do
     toMapping (pn, org, repo, auto, ca) =
       OrgMapping pn org repo auto ca
 
--- | Auto-detect org/repo mappings by scanning jobsets.flake fields.
--- Parses flake URIs like "github:org/repo/ref" and upserts into the
--- mapping table. Only overwrites auto-detected entries (manual overrides
--- are preserved).
+-- | Auto-detect org/repo mappings by scanning jobsets.flake fields
+-- and falling back to parsing the project name (e.g. "zw3rk-repo" → zw3rk/repo).
+-- Only overwrites auto-detected entries (manual overrides are preserved).
 autoDetectMappings :: Connection -> IO ()
 autoDetectMappings conn = do
-  rows <- query_ conn [sql|
+  -- Phase 1: Parse flake URIs from jobsets.
+  flakeRows <- query_ conn [sql|
     SELECT DISTINCT j.project, j.flake
     FROM jobsets j
     WHERE j.flake IS NOT NULL AND j.flake LIKE 'github:%'
   |] `catch` (\(_ :: SomeException) -> pure [])
-  mapM_ processRow rows
+  mapM_ processFlakeRow flakeRows
+
+  -- Phase 2: For projects without mappings, try parsing the project name.
+  -- Project names follow the "org-repo" convention (e.g. "zw3rk-hydra-tools").
+  unmapped <- query_ conn [sql|
+    SELECT p.name FROM projects p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM gf_org_project_map m WHERE m.project_name = p.name
+    )
+  |] `catch` (\(_ :: SomeException) -> pure [])
+  mapM_ processNameRow unmapped
   where
-    processRow :: (Text, Text) -> IO ()
-    processRow (projectName, flake) =
+    processFlakeRow :: (Text, Text) -> IO ()
+    processFlakeRow (projectName, flake) =
       case parseGitHubFlake flake of
         Just (org, repo) ->
           upsertMapping conn projectName org repo True
         Nothing -> pure ()
+
+    processNameRow :: Only Text -> IO ()
+    processNameRow (Only projectName) =
+      case parseProjectName projectName of
+        Just (org, repo) ->
+          upsertMapping conn projectName org repo True
+        Nothing -> pure ()
+
+-- | Parse a project name like "org-repo" or "org-repo-sub" into (org, repo).
+-- The org is the first segment before "-", the repo is everything after.
+-- E.g. "zw3rk-hydra-tools" → ("zw3rk", "hydra-tools").
+parseProjectName :: Text -> Maybe (Text, Text)
+parseProjectName name =
+  case Text.breakOn "-" name of
+    (org, rest)
+      | not (Text.null org) && not (Text.null rest) ->
+          Just (org, Text.drop 1 rest)  -- drop the leading "-"
+      | otherwise -> Nothing
 
 -- | Parse a GitHub flake URI into (org, repo).
 -- Handles formats: "github:org/repo", "github:org/repo/ref",
