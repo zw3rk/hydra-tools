@@ -76,7 +76,7 @@ loadConfig = do
 
 loadGitHubConfig :: IO GitHubConfig
 loadGitHubConfig = do
-  appID      <- maybe 0 id . (>>= readMaybe) <$> lookupEnv "HYDRA_WEB_GITHUB_APP_ID"
+  appID      <- fromMaybe 0 . (>>= readMaybe) <$> lookupEnv "HYDRA_WEB_GITHUB_APP_ID"
   keyFile    <- envOrStr "HYDRA_WEB_GITHUB_APP_KEY_FILE" ""
   clientID   <- envOr "HYDRA_WEB_GITHUB_CLIENT_ID" ""
   clientSec  <- envOr "HYDRA_WEB_GITHUB_CLIENT_SECRET" ""

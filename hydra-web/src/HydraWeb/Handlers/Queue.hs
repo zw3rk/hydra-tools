@@ -13,6 +13,7 @@ module HydraWeb.Handlers.Queue
 
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
+import Data.Maybe (fromMaybe)
 import Lucid
 
 import Data.Text (Text)
@@ -90,7 +91,7 @@ stepsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  let page    = min 10000 (max 1 (maybe 1 id mPage))
+  let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
   (steps, counts) <- liftIO $ withConn pool $ \conn -> do

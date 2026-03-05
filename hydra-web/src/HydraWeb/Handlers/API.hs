@@ -25,7 +25,7 @@ import GHC.Generics (Generic)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Projects (jobsetOverview)
+import HydraWeb.DB.Projects (jobsetOverview, isProjectHidden)
 import HydraWeb.DB.Queue (queueCount)
 import HydraWeb.DB.Builds (queuedBuilds, latestBuilds)
 import HydraWeb.Models.Project (Jobset (..))
@@ -92,7 +92,7 @@ buildToAPI b = APIBuild
   }
 
 -- | GET /api/jobsets?project=... — jobset overview as JSON.
--- Filters out hidden jobsets (jsHidden=1) from the response.
+-- Filters out hidden projects and hidden jobsets from the response.
 apiJobsetsHandler :: Maybe Text -> AppM [APIJobset]
 apiJobsetsHandler mProject = do
   pool <- asks appPool
@@ -100,10 +100,12 @@ apiJobsetsHandler mProject = do
   if Text.null project
     then pure []
     else do
-      jobsets <- liftIO $ withConn pool $ \conn ->
-        jobsetOverview conn project
-      -- Exclude hidden jobsets from the API response.
-      pure $ map jobsetToAPI (filter (\j -> jsHidden j == 0) jobsets)
+      result <- liftIO $ withConn pool $ \conn -> do
+        hidden <- isProjectHidden conn project
+        if hidden
+          then pure []
+          else filter (\j -> jsHidden j == 0) <$> jobsetOverview conn project
+      pure $ map jobsetToAPI result
   where
     jobsetToAPI j = APIJobset
       { ajName        = jsName j

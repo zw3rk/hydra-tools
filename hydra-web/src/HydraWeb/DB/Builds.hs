@@ -20,6 +20,9 @@ module HydraWeb.DB.Builds
   , queuedBuilds
   , latestBuildForJob
   , latestBuilds
+    -- * Row scanners (shared with DB.Queue, DB.Search)
+  , scanBuildListRow
+  , scanStepRow
   ) where
 
 import Data.Text (Text)
@@ -200,7 +203,7 @@ buildsByEval conn evalId' mfilter = do
       |] (evalId', f)
       pure $ map scanBuildListRow rows
 
--- | Fetch all unfinished builds ordered by priority.
+-- | Fetch unfinished builds ordered by priority (capped at 5000).
 -- Excludes builds from hidden projects/jobsets.
 queuedBuilds :: Connection -> IO [Build]
 queuedBuilds conn = do
@@ -216,6 +219,7 @@ queuedBuilds conn = do
     WHERE b.finished = 0
       AND j.hidden = 0 AND p.hidden = 0
     ORDER BY b.globalpriority DESC, b.id
+    LIMIT 5000
   |]
   pure $ map scanBuildListRow rows
 

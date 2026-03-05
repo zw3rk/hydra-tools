@@ -11,9 +11,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.Auth.Middleware
-  ( -- * WAI middleware
-    authMiddleware
-  , getUserFromRequest
+  ( -- * WAI request-level auth
+    getUserFromRequest
     -- * Handler-level auth helpers
   , requireAuth
   , requireSuperAdmin
@@ -30,24 +29,14 @@ import Data.Pool (Pool)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Connection)
-import Network.Wai (Middleware, Request (..), vault)
+import Network.Wai (Request (..))
 import Numeric (showHex)
 import Servant (err401, err403, ServerError (..))
-import qualified Data.Vault.Lazy as Vault
 
 import HydraWeb.Auth.Session (getSessionUser, sessionCookieName)
 import HydraWeb.DB.Auth (getAPITokenByHash, touchAPIToken, getGFUserById)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.Models.User (GFUser (..))
-
--- | WAI middleware that extracts user from session cookie or Bearer token
--- and stores it in the request vault.
-authMiddleware :: Pool Connection -> Vault.Key (Maybe GFUser) -> Middleware
-authMiddleware pool key app req respond = do
-  mUser <- getUserFromRequest pool req
-  let vault' = Vault.insert key mUser (vault req)
-      req'   = req { vault = vault' }
-  app req' respond
 
 -- | Extract the authenticated user from a request.
 -- Tries Bearer token first (for API clients), then session cookie.

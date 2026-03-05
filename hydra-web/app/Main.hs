@@ -8,8 +8,10 @@
 
 module Main (main) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
-import Data.IORef (newIORef, writeIORef)
+import Control.Exception (SomeException, try)
+import Data.IORef (newIORef)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -21,8 +23,11 @@ import System.IO (hFlush, stdout, hPutStrLn, stderr)
 import Network.HTTP.Client.TLS (newTlsManager)
 
 import HydraWeb.Auth.Encrypt (newEncryptor)
+import HydraWeb.Auth.Session (cleanupExpiredSessions)
 import HydraWeb.Config (Config (..), GitHubConfig (..), loadConfig)
 import HydraWeb.DB.Migrate (runMigrations)
+import Data.Pool (Pool)
+import Database.PostgreSQL.Simple (Connection)
 import HydraWeb.DB.Pool (createPool, withConn)
 import HydraWeb.DB.Auth (bootstrapSuperAdmins)
 import HydraWeb.DB.Installations (seedFromConfig)
@@ -77,13 +82,12 @@ main = do
                $ setTimeout 0
                  defaultSettings
 
-  -- Start the SSE listener in a background thread.
-  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub running) $ \_ -> do
-    Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg
-    hFlush stdout
-    runSettings settings (mkApp app)
-    -- Signal the listener to stop on server shutdown.
-    writeIORef running False
+  -- Start background threads: SSE listener and session cleanup.
+  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub running) $ \_ ->
+    withAsync (sessionCleanupLoop pool) $ \_ -> do
+      Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg
+      hFlush stdout
+      runSettings settings (mkApp app)
 
 -- | Parse "host:port" into components. Defaults to 127.0.0.1:4000.
 parseListenAddr :: Text -> (String, Int)
@@ -95,3 +99,15 @@ parseListenAddr addr =
     readPort p = case reads (Text.unpack p) of
       [(n, "")] -> n
       _         -> 4000
+
+-- | Periodically clean up expired sessions (every hour).
+sessionCleanupLoop :: Pool Connection -> IO ()
+sessionCleanupLoop pool = go
+  where
+    go = do
+      result <- try (cleanupExpiredSessions pool) :: IO (Either SomeException Int)
+      case result of
+        Right n | n > 0 -> hPutStrLn stderr $ "Cleaned up " ++ show n ++ " expired session(s)"
+        _               -> pure ()
+      threadDelay (3600 * 1000000)  -- 1 hour
+      go

@@ -83,10 +83,10 @@ proxyToBackend app waiReq respond = do
                       else write (Builder.byteString chunk) >> loop
               loop
           case result of
-            Left (e :: SomeException) ->
+            Left (_e :: SomeException) ->
               respond $ Wai.responseLBS status502
                 [("Content-Type", "text/plain")]
-                (LBS.fromStrict $ BS8.pack $ "proxy error: " ++ show e)
+                "bad gateway"
             Right waiResp -> pure waiResp
 
   where

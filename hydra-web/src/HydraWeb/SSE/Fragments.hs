@@ -14,14 +14,13 @@ module HydraWeb.SSE.Fragments
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection)
 import Lucid
 
-import HydraWeb.DB.Queue (navCounts, activeSteps)
-import HydraWeb.DB.Builds (queuedBuilds)
-import HydraWeb.DB.Evals (runningEvaluations)
+import HydraWeb.DB.Queue (navCounts, queueCount, activeStepCount)
+import HydraWeb.DB.Evals (runningEvalsCount)
 import HydraWeb.Models.Queue (NavCounts (..))
+import HydraWeb.View.Components (showT)
 
 -- | Render nav count badges as an OOB-swappable HTML fragment.
 -- Each badge has a unique ID that can be targeted by hx-swap-oob.
@@ -36,29 +35,25 @@ renderNavCountsBS conn = do
     span_ [id_ "nav-bridges-count"] $ toHtml (showT (ncBridgePending nc))
 
 -- | Render queue content fragment for SSE.
+-- Uses a count query instead of fetching all queued builds.
 renderQueueContentBS :: Connection -> IO ByteString
 renderQueueContentBS conn = do
-  builds <- queuedBuilds conn
-  let total = length builds
+  total <- queueCount conn
   pure $ LBS.toStrict $ renderBS $
     p_ $ toHtml ("Queue: " <> showT total <> " builds")
 
 -- | Render machines/active-steps content fragment for SSE.
+-- Uses a count query instead of fetching all active steps.
 renderMachinesContentBS :: Connection -> IO ByteString
 renderMachinesContentBS conn = do
-  steps <- activeSteps conn
-  let total = length steps
+  total <- activeStepCount conn
   pure $ LBS.toStrict $ renderBS $
     p_ $ toHtml ("Machines: " <> showT total <> " active steps")
 
 -- | Render running evaluations content fragment for SSE.
+-- Uses a count query instead of fetching all running evaluations.
 renderRunningEvalsBS :: Connection -> IO ByteString
 renderRunningEvalsBS conn = do
-  evals <- runningEvaluations conn
-  let total = length evals
+  total <- runningEvalsCount conn
   pure $ LBS.toStrict $ renderBS $
     p_ $ toHtml ("Evaluating: " <> showT total <> " jobsets")
-
--- | Show an Int as Text.
-showT :: Int -> Text.Text
-showT = Text.pack . show

@@ -10,6 +10,8 @@ module HydraWeb.DB.Migrate
   ( runMigrations
   ) where
 
+import Control.Exception (SomeException, try)
+import Data.Int (Int64)
 import Database.PostgreSQL.Simple (Connection, execute_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
@@ -137,8 +139,9 @@ runMigrations conn = do
 
   -- Allow the hydra user (used by hydra-github-bridge) to read mappings
   -- for periodic PR/jobset sync reconciliation.
-  _ <- execute_ conn [sql|
+  -- Silently ignored if the 'hydra' role doesn't exist in this DB cluster.
+  _ <- try (execute_ conn [sql|
     GRANT SELECT ON gf_org_project_map TO hydra
-  |]
+  |]) :: IO (Either SomeException Int64)
 
   pure ()

@@ -27,11 +27,12 @@ import qualified Data.Text.Encoding as TE
 -- | Opaque encryption handle wrapping the AES-256 cipher.
 newtype Encryptor = Encryptor AES256
 
--- | Create an encryptor from a 32-byte hex-encoded key.
--- Returns Nothing if the key is empty (encryption disabled) or invalid.
+-- | Create an encryptor from a 32-byte hex-encoded key (64 hex chars).
+-- Returns Nothing if the key is empty (encryption disabled), malformed, or invalid.
 newEncryptor :: Text -> Maybe Encryptor
 newEncryptor keyHex
   | keyHex == mempty = Nothing
+  | not (isValidHexKey (TE.encodeUtf8 keyHex)) = Nothing
   | otherwise =
     let keyBytes = hexDecode (TE.encodeUtf8 keyHex)
     in case cipherInit keyBytes of
@@ -44,7 +45,7 @@ encrypt :: Encryptor -> ByteString -> IO ByteString
 encrypt (Encryptor cipher) plaintext = do
   nonce <- getRandomBytes 12 :: IO ByteString
   case aeadInit AEAD_GCM cipher nonce of
-    CryptoFailed _   -> error "AES-GCM init failed"
+    CryptoFailed _   -> ioError $ userError "AES-GCM nonce init failed"
     CryptoPassed aead -> do
       let (tag, out) = aeadSimpleEncrypt (aead :: AEAD AES256) BS.empty plaintext 16
       pure $ nonce <> out <> convert tag
@@ -63,7 +64,16 @@ decrypt (Encryptor cipher) combined
          CryptoPassed aead ->
            aeadSimpleDecrypt (aead :: AEAD AES256) BS.empty ct tag
 
--- | Decode hex-encoded bytes.
+-- | Validate a hex key: must be exactly 64 hex chars (256 bits).
+isValidHexKey :: ByteString -> Bool
+isValidHexKey bs = BS.length bs == 64 && BS.all isHexChar bs
+  where
+    isHexChar w = (w >= 0x30 && w <= 0x39)
+               || (w >= 0x41 && w <= 0x46)
+               || (w >= 0x61 && w <= 0x66)
+
+-- | Decode hex-encoded bytes. Caller must validate input first
+-- (use isValidHexKey for keys, or ensure only hex chars are passed).
 hexDecode :: ByteString -> ByteString
 hexDecode = BS.pack . go . BS.unpack
   where
@@ -74,4 +84,4 @@ hexDecode = BS.pack . go . BS.unpack
       | w >= 0x30 && w <= 0x39 = w - 0x30
       | w >= 0x41 && w <= 0x46 = w - 0x41 + 10
       | w >= 0x61 && w <= 0x66 = w - 0x61 + 10
-      | otherwise              = 0
+      | otherwise              = 0  -- unreachable after validation

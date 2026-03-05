@@ -4,7 +4,6 @@
 -- | Database queries for cross-entity search.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Search
   ( SearchResults (..)
@@ -13,13 +12,12 @@ module HydraWeb.DB.Search
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Database.PostgreSQL.Simple (Connection, query, execute_)
+import Database.PostgreSQL.Simple (Connection, query, execute_, withTransaction)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
-
 import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Models.Build (Build)
+import HydraWeb.DB.Builds (scanBuildListRow)
 
 -- | Results from a cross-entity search.
 data SearchResults = SearchResults
@@ -34,11 +32,11 @@ data SearchResults = SearchResults
 search :: Connection -> Text -> Int -> IO (Maybe SearchResults)
 search conn q rawLimit
   | not (isValidQuery q) = pure Nothing
-  | otherwise = do
+  | otherwise = withTransaction conn $ do
       let limit = max 1 (min 50 rawLimit)
           pattern = "%" <> q <> "%"
 
-      -- Set a statement timeout for safety.
+      -- SET LOCAL only takes effect inside a transaction.
       _ <- execute_ conn [sql|SET LOCAL statement_timeout = 20000|]
 
       -- Search projects.
@@ -80,7 +78,7 @@ search conn q rawLimit
         ORDER BY b.id DESC
         LIMIT ?
       |] (pattern, limit)
-      let builds = map scanBuildRow brows
+      let builds = map scanBuildListRow brows
 
       -- Search builds by derivation path (excludes hidden projects/jobsets).
       drows <- query conn [sql|
@@ -97,7 +95,7 @@ search conn q rawLimit
         ORDER BY b.id DESC
         LIMIT ?
       |] (pattern, limit)
-      let buildsDrv = map scanBuildRow drows
+      let buildsDrv = map scanBuildListRow drows
 
       pure $ Just SearchResults
         { srProjects  = projects
@@ -122,13 +120,3 @@ scanSearchJobset (n, jid, p, d, e, h, t, f) =
          Nothing Nothing Nothing Nothing
          e 0 h "" 0 0 0 Nothing Nothing t f 0 0 0 0
 
--- | Scan a build list row (17 columns) using nested tuples via (:.).
-scanBuildRow :: ( (Int, Int, Int, Int, Text, Maybe Text, Text, Int, Int)
-                :. (Maybe Int, Maybe Int, Maybe Int, Maybe Int, Text, Maybe Int, Text, Text) )
-             -> Build
-scanBuildRow ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
-             :. (start, stop, cached, status, drv, isCurrent, proj, js) ) =
-  Build bid finished ts jobsetId job nixName sys prio gprio
-        start stop cached status drv isCurrent
-        proj js
-        Nothing Nothing Nothing Nothing Nothing Nothing Nothing 0

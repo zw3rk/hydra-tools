@@ -5,11 +5,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Queue
   ( queueCount
   , runningCount
+  , activeStepCount
   , navCounts
   , queueSummary
   , systemQueueSummary
@@ -22,10 +22,10 @@ import Data.Maybe (fromMaybe)
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Queue
-import HydraWeb.Models.Build (BuildStep (..))
+import HydraWeb.DB.Builds (scanStepRow)
+import HydraWeb.Models.Build (BuildStep)
 
 -- | Count of unfinished builds in the queue.
 queueCount :: Connection -> IO Int
@@ -84,6 +84,7 @@ bridgePending conn = do
         _        -> pure 0
 
 -- | Queue grouped by jobset with oldest/newest timestamps.
+-- Excludes builds from hidden projects/jobsets.
 queueSummary :: Connection -> IO [QueueSummary]
 queueSummary conn = do
   rows <- query_ conn [sql|
@@ -91,25 +92,32 @@ queueSummary conn = do
            min(b.timestamp) AS oldest, max(b.timestamp) AS newest
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
     WHERE b.finished = 0
+      AND j.hidden = 0 AND p.hidden = 0
     GROUP BY j.project, j.name
     ORDER BY queued DESC
   |]
   pure $ map (\(p, j, q, o, n) -> QueueSummary p j q (fromMaybe 0 o) (fromMaybe 0 n)) rows
 
 -- | Queue grouped by system type.
+-- Excludes builds from hidden projects/jobsets.
 systemQueueSummary :: Connection -> IO [SystemQueueRow]
 systemQueueSummary conn = do
   rows <- query_ conn [sql|
-    SELECT system, count(*) AS c
-    FROM builds
-    WHERE finished = 0
-    GROUP BY system
+    SELECT b.system, count(*) AS c
+    FROM builds b
+    JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE b.finished = 0
+      AND j.hidden = 0 AND p.hidden = 0
+    GROUP BY b.system
     ORDER BY c DESC
   |]
   pure $ map (\(s, c) -> SystemQueueRow s c) rows
 
 -- | Currently-running build steps with project/jobset info.
+-- Excludes steps from hidden projects/jobsets.
 activeSteps :: Connection -> IO [ActiveStep]
 activeSteps conn = do
   rows <- query_ conn [sql|
@@ -118,30 +126,42 @@ activeSteps conn = do
     FROM buildsteps s
     JOIN builds b ON s.build = b.id
     JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
     WHERE s.busy != 0
+      AND j.hidden = 0 AND p.hidden = 0
     ORDER BY s.machine, s.stepnr
   |]
   pure $ map (\(b, nr, sys, drv, m, st, p, j, job, busy) ->
     ActiveStep b nr sys drv m st p j job busy) rows
 
+-- | Count of currently-running build steps (for SSE fragments).
+activeStepCount :: Connection -> IO Int
+activeStepCount conn = do
+  [Only n] <- query_ conn [sql|
+    SELECT count(*)
+    FROM buildsteps
+    WHERE busy != 0
+  |]
+  pure n
+
 -- | Recent finished build steps, paginated.
+-- Excludes steps from hidden projects/jobsets.
 recentSteps :: Connection -> Int -> Int -> IO [BuildStep]
 recentSteps conn offset limit = do
   rows <- query conn [sql|
-    SELECT build, stepnr, type, drvpath, busy, status, errormsg,
-           starttime, stoptime, machine, system,
-           propagatedfrom, overhead, timesbuilt, isnondeterministic
-    FROM buildsteps
-    WHERE starttime IS NOT NULL AND stoptime IS NOT NULL
-    ORDER BY stoptime DESC
+    SELECT s.build, s.stepnr, s.type, s.drvpath, s.busy, s.status, s.errormsg,
+           s.starttime, s.stoptime, s.machine, s.system,
+           s.propagatedfrom, s.overhead, s.timesbuilt, s.isnondeterministic
+    FROM buildsteps s
+    JOIN builds b ON s.build = b.id
+    JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE s.starttime IS NOT NULL AND s.stoptime IS NOT NULL
+      AND j.hidden = 0 AND p.hidden = 0
+    ORDER BY s.stoptime DESC
     LIMIT ? OFFSET ?
   |] (limit, offset)
   pure $ map scanStepRow rows
-  where
-    scanStepRow ( (b, nr, t, drv, busy, st, err)
-                :. (start, stop, machine, sys, prop, overhead, times, nondet) ) =
-      BuildStep b nr t drv busy st err start stop machine sys
-                prop overhead times nondet
 
 -- | Recent news items for the overview page.
 newsItems :: Connection -> Int -> IO [NewsItem]
