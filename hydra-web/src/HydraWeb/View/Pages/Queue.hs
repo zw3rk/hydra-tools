@@ -15,7 +15,6 @@ module HydraWeb.View.Pages.Queue
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Lucid
 
 import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
@@ -115,11 +114,7 @@ machinesContent bp steps =
         a_ [href_ (jobsetURL bp (asProject s) (asJobset s))] $ toHtml (asJobset s)
         ":"
         toHtml (asJob s)
-      td_ $ toHtml (maybe "" (fmtTime) (asStartTime s))
-
-    stripSSH t = case Text.stripPrefix "ssh://" t of
-      Just rest -> rest
-      Nothing   -> t
+      td_ $ toHtml (maybe "" fmtTime (asStartTime s))
 
 -- | Render the recent build steps page.
 stepsPage :: Text -> [BuildStep] -> Int -> Int -> Html ()
@@ -151,7 +146,3 @@ stepsPage bp steps page _perPage = do
       td_ $ case stepStopTime s of
         Just t  -> toHtml (fmtTime t)
         Nothing -> pure ()
-
-    stripSSH t = case Text.stripPrefix "ssh://" t of
-      Just rest -> rest
-      Nothing   -> t

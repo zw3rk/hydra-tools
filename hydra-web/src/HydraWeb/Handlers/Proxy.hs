@@ -117,5 +117,5 @@ readBoundedBody req maxSize = go 0 []
 -- | Parse a ByteString as a non-negative integer.
 readInt :: BS.ByteString -> Maybe Int
 readInt bs = case BS8.readInt bs of
-  Just (n, rest) | BS.null rest -> Just n
-  _                             -> Nothing
+  Just (n, rest) | n >= 0, BS.null rest -> Just n
+  _                                     -> Nothing

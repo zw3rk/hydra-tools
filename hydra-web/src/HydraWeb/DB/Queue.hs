@@ -25,6 +25,7 @@ import Database.PostgreSQL.Simple (Only (..))
 
 import HydraWeb.Models.Queue
 import HydraWeb.DB.Builds (scanStepRow)
+import HydraWeb.DB.Evals (runningEvalsCount)
 import HydraWeb.Models.Build (BuildStep)
 
 -- | Count of unfinished builds in the queue.
@@ -49,21 +50,13 @@ navCounts conn = do
   queued  <- queueCount conn
   running <- runningCount conn
   pending <- bridgePending conn
-  evals   <- runningEvalsCount' conn
+  evals   <- runningEvalsCount conn
   pure NavCounts
     { ncQueued        = queued
     , ncRunning       = running
     , ncBridgePending = pending
     , ncRunningEvals  = evals
     }
-
--- | Count of currently-running evaluations (jobsets with starttime IS NOT NULL).
-runningEvalsCount' :: Connection -> IO Int
-runningEvalsCount' conn = do
-  [Only n] <- query_ conn [sql|
-    SELECT count(*) FROM jobsets WHERE starttime IS NOT NULL
-  |]
-  pure n
 
 -- | Count of pending bridge notifications. Returns 0 if the table doesn't exist.
 bridgePending :: Connection -> IO Int

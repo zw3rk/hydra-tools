@@ -128,7 +128,7 @@ apiLatestBuildsHandler :: Maybe Int -> Maybe Text -> Maybe Text
                        -> Maybe Text -> Maybe Text -> AppM [APIBuild]
 apiLatestBuildsHandler mNr mProject mJobset mJob mSystem = do
   pool <- asks appPool
-  let nr = fromMaybe 10 mNr
+  let nr = max 1 (min 1000 (fromMaybe 10 mNr))
   builds <- liftIO $ withConn pool $ \conn ->
     latestBuilds conn nr mProject mJobset mJob mSystem
   pure $ map buildToAPI builds
@@ -138,5 +138,5 @@ apiQueueHandler :: Maybe Int -> AppM [APIBuild]
 apiQueueHandler mNr = do
   pool <- asks appPool
   builds <- liftIO $ withConn pool queuedBuilds
-  let nr = fromMaybe 100 mNr
+  let nr = max 1 (min 1000 (fromMaybe 100 mNr))
   pure $ map buildToAPI (take nr builds)

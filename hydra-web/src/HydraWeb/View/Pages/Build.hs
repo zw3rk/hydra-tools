@@ -213,9 +213,3 @@ buildLogPage bp bid sNr drv logText = do
     "Derivation: "
     code_ $ toHtml drv
   pre_ [class_ "build-log"] $ toHtml logText
-
--- | Strip ssh:// prefix from machine names.
-stripSSH :: Text -> Text
-stripSSH t = case Text.stripPrefix "ssh://" t of
-  Just rest -> rest
-  Nothing   -> t

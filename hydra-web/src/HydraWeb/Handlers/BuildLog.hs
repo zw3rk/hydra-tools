@@ -80,7 +80,7 @@ buildLogHandler mCookie bid stepNr = do
 readBuildLog :: FilePath -> Text -> IO Text
 readBuildLog dataDir drvPath
   -- Reject paths that don't start with /nix/store/ or contain traversal sequences.
-  | not (Text.isPrefixOf "/nix/store/" drvPath) = pure "(invalid derivation path)"
+  | not (Text.isPrefixOf nixStorePrefix drvPath) = pure "(invalid derivation path)"
   | Text.isInfixOf ".." storeName               = pure "(invalid derivation path)"
   | otherwise = do
       let -- First 2 chars of hash → subdirectory
@@ -103,8 +103,9 @@ readBuildLog dataDir drvPath
             Right content -> pure $ decodeLog content
             Left _        -> pure "(no build log available)"
   where
+    nixStorePrefix = "/nix/store/"
     -- Strip /nix/store/ prefix to get "HASH-name.drv"
-    storeName = Text.drop 11 drvPath  -- len("/nix/store/") == 11
+    storeName = Text.drop (Text.length nixStorePrefix) drvPath
 
 -- | Decode a lazy ByteString as UTF-8 text, replacing invalid sequences.
 decodeLog :: LBS.ByteString -> Text

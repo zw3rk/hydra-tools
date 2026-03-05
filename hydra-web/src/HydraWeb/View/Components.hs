@@ -23,6 +23,9 @@ module HydraWeb.View.Components
   , truncateText
   , showT
 
+    -- * Text utilities
+  , stripSSH
+
     -- * URL builders
   , projectURL
   , jobsetURL
@@ -138,6 +141,10 @@ truncateText n t
 -- | Show an Int as Text.
 showT :: Int -> Text
 showT = Text.pack . show
+
+-- | Strip ssh:// prefix from machine names for display.
+stripSSH :: Text -> Text
+stripSSH t = maybe t id (Text.stripPrefix "ssh://" t)
 
 -- | Build a project URL (REST-style: /projects/:name).
 projectURL :: Text -> Text -> Text

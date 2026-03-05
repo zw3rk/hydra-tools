@@ -26,6 +26,7 @@ module HydraWeb.DB.Builds
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
@@ -170,7 +171,17 @@ getConstituents conn buildId' = do
   |] (Only buildId')
   pure $ map scanBuildListRow rows
 
+-- | Escape SQL LIKE/ILIKE metacharacters so user input is treated literally.
+escapeLike :: Text -> Text
+escapeLike = Text.concatMap esc
+  where
+    esc '%'  = "\\%"
+    esc '_'  = "\\_"
+    esc '\\' = "\\\\"
+    esc c    = Text.singleton c
+
 -- | Fetch all builds belonging to an evaluation, optionally filtered by job name.
+-- The filter is escaped to prevent ILIKE pattern injection.
 buildsByEval :: Connection -> Int -> Maybe Text -> IO [Build]
 buildsByEval conn evalId' mfilter = do
   case mfilter of
@@ -189,6 +200,7 @@ buildsByEval conn evalId' mfilter = do
       |] (Only evalId')
       pure $ map scanBuildListRow rows
     Just f -> do
+      let safeFilter = escapeLike (Text.take 200 f)
       rows <- query conn [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
@@ -200,7 +212,7 @@ buildsByEval conn evalId' mfilter = do
         JOIN jobsetevalmembers m ON m.build = b.id
         WHERE m.eval = ? AND b.job ILIKE '%' || ? || '%'
         ORDER BY b.job, b.system
-      |] (evalId', f)
+      |] (evalId', safeFilter)
       pure $ map scanBuildListRow rows
 
 -- | Fetch unfinished builds ordered by priority (capped at 5000).

@@ -37,11 +37,7 @@ import HydraWeb.Models.Eval (JobsetEval (..), EvalInfo (..))
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
 import HydraWeb.View.BuildDiff (BuildDiff (..))
-import HydraWeb.View.Components (fmtTime, fmtDuration, showT)
-
--- | Strip ssh:// prefix from machine names.
-stripSSH :: Text -> Text
-stripSSH t = fromMaybe t (Text.stripPrefix "ssh://" t)
+import HydraWeb.View.Components (fmtTime, fmtDuration, showT, stripSSH)
 
 -- | Truncate text to a maximum length.
 trunc :: Int -> Text -> Text
