@@ -12,6 +12,8 @@ module HydraWeb.Auth.Session
   , getSessionUser
   , clearSession
   , cleanupExpiredSessions
+    -- * Hex encoding
+  , bytesToHex
     -- * Constants
   , sessionCookieName
   , sessionTTL
@@ -50,7 +52,12 @@ touchInterval = 5 * 60
 generateSessionId :: IO Text
 generateSessionId = do
   bytes <- getRandomBytes 32 :: IO ByteString
-  pure $ Text.pack $ concatMap (\b -> showHex' b) $ BS.unpack bytes
+  pure $ bytesToHex bytes
+
+-- | Hex-encode a ByteString with zero-padded bytes (e.g. 0x0A → "0a").
+-- Used for session IDs, CSRF tokens, and token hashes.
+bytesToHex :: ByteString -> Text
+bytesToHex = Text.pack . concatMap showHex' . BS.unpack
   where
     showHex' b = let s = showHex b "" in if length s == 1 then '0':s else s
 

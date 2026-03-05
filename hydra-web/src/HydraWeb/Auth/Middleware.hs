@@ -30,10 +30,9 @@ import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Connection)
 import Network.Wai (Request (..))
-import Numeric (showHex)
 import Servant (err401, err403, ServerError (..))
 
-import HydraWeb.Auth.Session (getSessionUser, sessionCookieName)
+import HydraWeb.Auth.Session (getSessionUser, sessionCookieName, bytesToHex)
 import HydraWeb.DB.Auth (getAPITokenByHash, touchAPIToken, getGFUserById)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.Models.User (GFUser (..))
@@ -93,10 +92,7 @@ validateAPIToken pool rawToken = do
 hashToken :: Text -> Text
 hashToken t =
   let digest = hash (TE.encodeUtf8 t) :: Digest SHA256
-      bytes  = BS.unpack (convert digest :: ByteString)
-  in  TE.decodeUtf8 $ BS8.pack $ concatMap showHex' bytes
-  where
-    showHex' b = let s = showHex b "" in if length s == 1 then '0':s else s
+  in  bytesToHex (convert digest :: ByteString)
 
 -- ── Handler-level auth helpers ─────────────────────────────────────
 

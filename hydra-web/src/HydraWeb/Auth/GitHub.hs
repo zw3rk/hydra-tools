@@ -15,10 +15,8 @@ module HydraWeb.Auth.GitHub
 import Crypto.Random (getRandomBytes)
 import Data.Aeson (FromJSON (..), Value (..), decode, withObject, (.:), (.:?))
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Key as K
@@ -26,7 +24,7 @@ import Network.HTTP.Client
   (Manager, Request (..), parseRequest, httpLbs, responseBody,
    responseStatus, urlEncodedBody)
 import Network.HTTP.Types (statusCode)
-import Numeric (showHex)
+import HydraWeb.Auth.Session (bytesToHex)
 
 -- | User info returned by GitHub's /user endpoint.
 data GitHubUser = GitHubUser
@@ -49,9 +47,7 @@ instance FromJSON GitHubUser where
 generateOAuthState :: IO Text
 generateOAuthState = do
   bytes <- getRandomBytes 16 :: IO ByteString
-  pure $ Text.pack $ concatMap showHex' $ BS.unpack bytes
-  where
-    showHex' b = let s = showHex b "" in if length s == 1 then '0':s else s
+  pure $ bytesToHex bytes
 
 -- | Build the GitHub OAuth authorization URL.
 authorizeURL :: Text -> Text -> Text -> Text
