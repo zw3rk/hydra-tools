@@ -19,6 +19,7 @@ module HydraWeb.DB.OrgMap
   ) where
 
 import Control.Exception (SomeException, catch)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection, query, query_, execute, Only (..))
@@ -84,15 +85,20 @@ autoDetectMappings conn = do
   |] `catch` (\(_ :: SomeException) -> pure [])
   mapM_ processFlakeRow flakeRows
 
-  -- Phase 2: For projects without mappings, try parsing the project name.
-  -- Project names follow the "org-repo" convention (e.g. "zw3rk-hydra-tools").
+  -- Phase 2: For projects without mappings, try parsing the project name
+  -- using known org names from gf_github_installations.  This avoids the
+  -- ambiguity of a naive first-dash split for orgs like "input-output-hk".
+  knownOrgs <- map (\(Only o) -> o) <$>
+    (query_ conn [sql|
+      SELECT org_name FROM gf_github_installations
+    |] `catch` (\(_ :: SomeException) -> pure []))
   unmapped <- query_ conn [sql|
     SELECT p.name FROM projects p
     WHERE NOT EXISTS (
       SELECT 1 FROM gf_org_project_map m WHERE m.project_name = p.name
     )
   |] `catch` (\(_ :: SomeException) -> pure [])
-  mapM_ processNameRow unmapped
+  mapM_ (processNameRow knownOrgs) unmapped
   where
     processFlakeRow :: (Text, Text) -> IO ()
     processFlakeRow (projectName, flake) =
@@ -101,23 +107,35 @@ autoDetectMappings conn = do
           upsertMapping conn projectName org repo True
         Nothing -> pure ()
 
-    processNameRow :: Only Text -> IO ()
-    processNameRow (Only projectName) =
-      case parseProjectName projectName of
+    processNameRow :: [Text] -> Only Text -> IO ()
+    processNameRow knownOrgs (Only projectName) =
+      case parseProjectName knownOrgs projectName of
         Just (org, repo) ->
           upsertMapping conn projectName org repo True
         Nothing -> pure ()
 
--- | Parse a project name like "org-repo" or "org-repo-sub" into (org, repo).
--- The org is the first segment before "-", the repo is everything after.
--- E.g. "zw3rk-hydra-tools" → ("zw3rk", "hydra-tools").
-parseProjectName :: Text -> Maybe (Text, Text)
-parseProjectName name =
-  case Text.breakOn "-" name of
-    (org, rest)
-      | not (Text.null org) && not (Text.null rest) ->
-          Just (org, Text.drop 1 rest)  -- drop the leading "-"
-      | otherwise -> Nothing
+-- | Parse a project name into (org, repo) using known org names.
+-- Tries each known org as a prefix (e.g. "input-output-hk-devx" with
+-- known org "input-output-hk" → ("input-output-hk", "devx")).
+-- Falls back to first-dash split for single-segment orgs.
+parseProjectName :: [Text] -> Text -> Maybe (Text, Text)
+parseProjectName knownOrgs name =
+  -- First try matching against known org prefixes (handles multi-dash orgs
+  -- like "input-output-hk").
+  case listToMaybe $ mapMaybe tryOrg knownOrgs of
+    Just result -> Just result
+    -- Fallback: split on first dash for unknown orgs.
+    Nothing -> case Text.breakOn "-" name of
+      (org, rest)
+        | not (Text.null org) && not (Text.null rest) ->
+            Just (org, Text.drop 1 rest)
+        | otherwise -> Nothing
+  where
+    tryOrg :: Text -> Maybe (Text, Text)
+    tryOrg org =
+      case Text.stripPrefix (org <> "-") name of
+        Just repo | not (Text.null repo) -> Just (org, repo)
+        _ -> Nothing
 
 -- | Parse a GitHub flake URI into (org, repo).
 -- Handles formats: "github:org/repo", "github:org/repo/ref",
