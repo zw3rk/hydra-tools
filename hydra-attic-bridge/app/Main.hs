@@ -167,6 +167,12 @@ main = do
         n <- cleanupExhausted startupConn
         when (n > 0) $
           putStrLn $ "Startup cleanup: removed " ++ show n ++ " exhausted entries"
+      -- Periodic wake-up timer: re-check deferred items whose backoff
+      -- has expired.  Without this, workers sleep forever on readChan
+      -- after a transient network outage defers all in-flight items.
+      void $ forkIO $ forever $ do
+        threadDelay (5 * 60 * 1000000)  -- every 5 minutes
+        replicateM_ workerCount $ writeChan wakeChan ()
       withConnect connectInfo $ \listenConn -> do
         _ <- execute_ listenConn "LISTEN step_finished" -- (build id, step id, logpath)
         -- Kick workers once to process any backlog that exists at startup.
