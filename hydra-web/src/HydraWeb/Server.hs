@@ -12,6 +12,8 @@ module HydraWeb.Server
   ) where
 
 import Data.Text (Text)
+import qualified Network.HTTP.Types as HTTP
+import qualified Network.Wai as Wai
 import Servant
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (ssMaxAge, MaxAge(..))
@@ -52,8 +54,22 @@ import HydraWeb.Handlers.Job (jobLatestHandler, jobLatestFinishedHandler, jobLat
 import HydraWeb.SSE.Stream (streamApp)
 
 -- | Build the WAI Application from an App context.
+-- Wraps the Servant application with security response headers.
 mkApp :: App -> Application
-mkApp app = serve (Proxy @FullAPI) (server app)
+mkApp app = securityHeadersMiddleware $ serve (Proxy @FullAPI) (server app)
+
+-- | WAI middleware that injects standard security response headers.
+securityHeadersMiddleware :: Wai.Middleware
+securityHeadersMiddleware baseApp req sendResp =
+  baseApp req $ \response ->
+    sendResp $ Wai.mapResponseHeaders (++ securityHeaders) response
+  where
+    securityHeaders :: [HTTP.Header]
+    securityHeaders =
+      [ ("X-Content-Type-Options", "nosniff")
+      , ("X-Frame-Options", "DENY")
+      , ("Referrer-Policy", "strict-origin-when-cross-origin")
+      ]
 
 -- | Full server combining all route groups and static file serving.
 server :: App -> Server FullAPI
