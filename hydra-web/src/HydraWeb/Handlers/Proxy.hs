@@ -90,15 +90,14 @@ proxyToBackend app waiReq respond = do
             Right waiResp -> pure waiResp
 
   where
-    -- Only forward safe headers.
+    -- Only forward safe headers. X-Forwarded-For and X-Real-IP are excluded
+    -- to prevent client-side IP spoofing; the reverse proxy should set those.
     filterHeaders :: [Header] -> [Header]
     filterHeaders = filter (\(name, _) -> name `elem` allowedHeaders)
     allowedHeaders :: [HeaderName]
     allowedHeaders =
       [ hContentType
       , hAuthorization
-      , "X-Forwarded-For"
-      , "X-Real-IP"
       , "Accept"
       ]
 

@@ -108,6 +108,7 @@ sessionCleanupLoop pool = go
       result <- try (cleanupExpiredSessions pool) :: IO (Either SomeException Int)
       case result of
         Right n | n > 0 -> hPutStrLn stderr $ "Cleaned up " ++ show n ++ " expired session(s)"
-        _               -> pure ()
+        Left e          -> hPutStrLn stderr $ "Session cleanup error: " ++ show e
+        Right _         -> pure ()
       threadDelay (3600 * 1000000)  -- 1 hour
       go

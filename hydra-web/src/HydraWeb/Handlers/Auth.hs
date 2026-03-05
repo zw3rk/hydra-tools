@@ -16,6 +16,7 @@ module HydraWeb.Handlers.Auth
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
+import qualified Data.ByteArray as BA
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
@@ -62,17 +63,20 @@ handleGitHubAuth = do
 -- Validates the CSRF state parameter against the hydra_oauth_state cookie.
 handleGitHubCallback :: Maybe Text -> Maybe Text -> Maybe Text -> AppM (Html ())
 handleGitHubCallback mCookie mCode mState = do
-  code  <- maybe (throwError err400 { errBody = "missing code" }) pure mCode
-  state <- maybe (throwError err400 { errBody = "missing state" }) pure mState
+  code  <- maybe (throwError err400 { errBody = "authentication failed" }) pure mCode
+  state <- maybe (throwError err400 { errBody = "authentication failed" }) pure mState
 
   -- Validate CSRF state: the state param must match the hydra_oauth_state cookie.
+  -- Uses constant-time comparison to prevent timing attacks on the state value.
   let mCookieState = mCookie >>= extractOAuthState
   case mCookieState of
     Nothing -> throwError err403
-      { errBody = "CSRF validation failed: missing state cookie" }
+      { errBody = "authentication failed" }
     Just cookieState
-      | cookieState /= state -> throwError err403
-          { errBody = "CSRF validation failed: state mismatch" }
+      | Text.null cookieState || Text.null state -> throwError err403
+          { errBody = "authentication failed" }
+      | not (BA.constEq (TE.encodeUtf8 cookieState) (TE.encodeUtf8 state)) ->
+          throwError err403 { errBody = "authentication failed" }
       | otherwise -> pure ()
 
   cfg <- asks appConfig
@@ -86,11 +90,11 @@ handleGitHubCallback mCookie mCode mState = do
   let callbackURL = cfgBaseURL cfg <> bp <> "/auth/github/callback"
   mgr <- asks appHttpManager
   mToken <- liftIO $ exchangeCode mgr (ghClientID gh) (ghClientSecret gh) code callbackURL
-  token <- maybe (throwError err500 { errBody = "token exchange failed" }) pure mToken
+  token <- maybe (throwError err500 { errBody = "authentication failed" }) pure mToken
 
   -- Fetch GitHub user info.
   mGHUser <- liftIO $ fetchGitHubUser mgr token
-  ghUser  <- maybe (throwError err500 { errBody = "user fetch failed" }) pure mGHUser
+  ghUser  <- maybe (throwError err500 { errBody = "authentication failed" }) pure mGHUser
 
   -- Upsert user in database.
   userId <- liftIO $ withConn pool $ \conn -> do
@@ -114,7 +118,7 @@ handleGitHubCallback mCookie mCode mState = do
         [ ("Location", TE.encodeUtf8 (bp <> "/"))
         , ("Set-Cookie", sessionCookieName <> "=" <> TE.encodeUtf8 sid
             <> "; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Strict")
-        , ("Set-Cookie", "hydra_oauth_state=; Path=/; Max-Age=0; HttpOnly")
+        , ("Set-Cookie", "hydra_oauth_state=; Path=/; Max-Age=0; HttpOnly; Secure")
         ]
     , errBody = ""
     }
@@ -142,11 +146,14 @@ handleLogout mCookie = do
 
 -- | Extract the hydra_oauth_state value from a raw Cookie header.
 -- Parses "hydra_oauth_state=<value>; ..." from the cookie string.
+-- Returns Nothing if the value is missing or empty.
 extractOAuthState :: Text -> Maybe Text
 extractOAuthState cookieStr =
-  let pairs = map parsePair $ splitCookies cookieStr
-  in  lookup ("hydra_oauth_state" :: Text) pairs
+  case lookup ("hydra_oauth_state" :: Text) pairs of
+    Just v | not (Text.null v) -> Just v
+    _                          -> Nothing
   where
-    splitCookies = map (Text.strip) . Text.splitOn ";"
+    pairs = map parsePair $ splitCookies cookieStr
+    splitCookies = map Text.strip . Text.splitOn ";"
     parsePair s = case Text.breakOn "=" s of
       (name, rest) -> (name, Text.drop 1 rest)

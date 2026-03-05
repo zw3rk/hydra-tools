@@ -11,6 +11,7 @@ module HydraWeb.Handlers.Jobset
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Lucid
 import Servant (err404)
@@ -34,7 +35,7 @@ jobsetHandler mCookie project jobset mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  let page    = min 10000 (max 1 (maybe 1 id mPage))
+  let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
   -- Look up the jobset and project hidden status; return 404 if not visible.

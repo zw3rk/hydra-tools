@@ -13,6 +13,7 @@ module HydraWeb.Handlers.Eval
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection)
 import Lucid
@@ -103,7 +104,7 @@ latestEvalsHandler :: Maybe Text -> Maybe Int -> AppM (Html ())
 latestEvalsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  let page    = min 10000 (max 1 (maybe 1 id mPage))
+  let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
   (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do

@@ -8,9 +8,9 @@ module HydraWeb.View.Pager
   ( pager
   ) where
 
-import Data.Text (Text)
-import qualified Data.Text as Text
 import Lucid
+
+import HydraWeb.View.Components (showT)
 
 -- | Render pagination controls if there are more items than perPage.
 pager :: Int -> Int -> Int -> Html ()
@@ -24,6 +24,3 @@ pager total page perPage
       if page * perPage < total
         then a_ [href_ ("?page=" <> showT (page + 1))] "Next \xBB"
         else pure ()
-
-showT :: Int -> Text
-showT = Text.pack . show

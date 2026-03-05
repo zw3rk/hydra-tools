@@ -18,6 +18,7 @@ import Lucid
 
 import HydraWeb.Models.Queue (NavCounts (..))
 import HydraWeb.Models.User (GFUser (..))
+import HydraWeb.View.Components (showT)
 
 -- | Data passed to every page render: title, nav counts, optional user.
 data PageData = PageData
@@ -85,7 +86,3 @@ navBadge count' cls
 -- | Prepend the base path to a relative URL.
 url :: PageData -> Text -> Text
 url pd path = pdBasePath pd <> path
-
--- | Show an Int as Text.
-showT :: Int -> Text
-showT = Text.pack . show

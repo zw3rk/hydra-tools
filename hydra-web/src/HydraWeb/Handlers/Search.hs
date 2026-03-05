@@ -29,7 +29,8 @@ searchHandler mCookie mQuery = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  let q = maybe "" Text.strip mQuery
+  -- Cap query at 200 chars to prevent excessive DB load.
+  let q = Text.take 200 $ maybe "" Text.strip mQuery
   (mResults, counts) <- liftIO $ withConn pool $ \conn -> do
     nc <- navCounts conn
     if Text.null q
