@@ -28,11 +28,11 @@ import System.Process
 import Text.Read (readMaybe)
 
 -- | Maximum number of retries before permanently deleting an entry.
--- At 1.5^20 * 10 min ≈ 33 hours for the last retry.  Entries beyond
+-- At 1.5^10 * 10 min ≈ 9.6 hours for the last retry.  Entries beyond
 -- this threshold will never succeed (the store path was garbage
 -- collected from all builders).
 maxRetries :: Int
-maxRetries = 20
+maxRetries = 10
 
 -- | Push a store path to attic.  On success the row is deleted;
 -- on failure an exponential backoff is applied.

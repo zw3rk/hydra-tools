@@ -23,9 +23,20 @@ import HydraWeb.View.Components (fmtTime, showT, shortPath)
 import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
 -- | Full bridges page with SSE live-update wrapper.
+-- Includes a script to preserve the active tab across SSE content swaps.
 bridgesPage :: Text -> BridgeStatus -> Html ()
 bridgesPage bp status = do
   h1_ "Bridge Status"
+  -- Track active tab and restore it after SSE replaces the content.
+  script_ ("var _activeTab='github';\
+           \document.addEventListener('htmx:afterSwap',function(e){\
+           \if(e.detail.target.id==='bridge-content'){\
+           \var g=document.getElementById('tab-github');\
+           \var a=document.getElementById('tab-attic');\
+           \var gb=document.getElementById('tab-github-btn');\
+           \var ab=document.getElementById('tab-attic-btn');\
+           \if(_activeTab==='attic'){g.style.display='none';a.style.display='';gb.className='';ab.className='active';}\
+           \}});" :: Text)
   div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $
     div_ [id_ "bridge-content", sseSwap_ "bridge-update", hxSwap_ "innerHTML"] $
       bridgesContent status
@@ -45,10 +56,10 @@ bridgesContent status = do
           Just at | absPending at > 0 -> " (" <> showT (absPending at) <> ")"
           _ -> ""
     button_ [ role_ "tab", id_ "tab-github-btn", class_ "active"
-            , onclick_ "document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
+            , onclick_ "_activeTab='github';document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
             ] (toHtml ghLabel)
     button_ [ role_ "tab", id_ "tab-attic-btn"
-            , onclick_ "document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
+            , onclick_ "_activeTab='attic';document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
             ] (toHtml atLabel)
 
   -- GitHub tab panel (shown by default).
@@ -68,19 +79,23 @@ bridgesContent status = do
 renderBridgesContentBS :: BridgeStatus -> ByteString
 renderBridgesContentBS = LBS.toStrict . renderBS . bridgesContent
 
+-- ── Shared summary ──────────────────────────────────────────────────
+
+-- | Consistent summary line used by both GitHub and Attic tabs.
+bridgeSummary :: Int -> Int -> Int -> Html ()
+bridgeSummary total pending failed = p_ $ do
+  "Total: "
+  strong_ (toHtml $ showT total)
+  " | Pending: "
+  strong_ (toHtml $ showT pending)
+  " | Failed: "
+  strong_ (toHtml $ showT failed)
+
 -- ── GitHub rendering ─────────────────────────────────────────────────
 
 renderGitHub :: GitHubBridgeStatus -> Html ()
 renderGitHub gh = do
-  p_ $ do
-    "Total: "
-    strong_ (toHtml $ showT (ghsTotal gh))
-    " | Sent: "
-    strong_ (toHtml $ showT (ghsSent gh))
-    " | Pending: "
-    strong_ (toHtml $ showT (ghsPending gh))
-    " | Failed: "
-    strong_ (toHtml $ showT (ghsFailed gh))
+  bridgeSummary (ghsTotal gh) (ghsPending gh) (ghsFailed gh)
 
   if null (ghsByRepo gh)
     then p_ "No unsent notifications."
@@ -123,15 +138,7 @@ renderRecentRow r = tr_ $ do
 
 renderAttic :: AtticBridgeStatus -> Html ()
 renderAttic attic = do
-  p_ $ do
-    "Total: "
-    strong_ (toHtml $ showT (absTotal attic))
-    " | Pending: "
-    strong_ (toHtml $ showT (absPending attic))
-    " | Waiting: "
-    strong_ (toHtml $ showT (absWaiting attic))
-    " | Failed: "
-    strong_ (toHtml $ showT (absFailed attic))
+  bridgeSummary (absTotal attic) (absPending attic) (absFailed attic)
 
   if null (absRecentActive attic)
     then pure ()
