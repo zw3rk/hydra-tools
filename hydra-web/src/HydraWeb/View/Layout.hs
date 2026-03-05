@@ -68,7 +68,7 @@ pageLayout pd content = doctypehtml_ $ do
               toHtml (gfuGitHubLogin user)
             li_ $ a_ [href_ (url pd "/logout"), class_ "nav-signin"] "Sign out"
           Nothing ->
-            li_ $ a_ [href_ (url pd "/login"), class_ "nav-signin"] "Sign in"
+            li_ $ a_ [href_ (url pd "/auth/github"), class_ "nav-signin"] "Sign in"
 
     main_ [class_ "container"] content
 
