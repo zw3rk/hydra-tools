@@ -33,6 +33,7 @@ import HydraWeb.DB.Auth (bootstrapSuperAdmins)
 import HydraWeb.DB.Installations (seedFromConfig)
 import HydraWeb.DB.OrgMap (autoDetectMappings)
 import HydraWeb.SSE.Hub (newHub)
+import HydraWeb.GitHub.RepoCheck (repoVisibilityLoop)
 import HydraWeb.SSE.Listener (listenAndBroadcast)
 import HydraWeb.Server (mkApp)
 import HydraWeb.Types (App (..))
@@ -82,12 +83,23 @@ main = do
                $ setTimeout 0
                  defaultSettings
 
-  -- Start background threads: SSE listener and session cleanup.
+  -- Conditionally start the repo visibility background checker.
+  -- Only runs when GitHub App credentials are configured.
+  let ghCfg = cfgGitHub cfg
+      withRepoVisibility action
+        | ghAppID ghCfg > 0 && not (null (ghAppKeyFile ghCfg)) =
+            withAsync (repoVisibilityLoop pool mgr 3600
+                        (ghAppKeyFile ghCfg) "hydra-web" (ghAppID ghCfg)) $ \_ ->
+              action
+        | otherwise = action
+
+  -- Start background threads: SSE listener, session cleanup, and repo visibility.
   withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub running) $ \_ ->
-    withAsync (sessionCleanupLoop pool) $ \_ -> do
-      Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg
-      hFlush stdout
-      runSettings settings (mkApp app)
+    withAsync (sessionCleanupLoop pool) $ \_ ->
+      withRepoVisibility $ do
+        Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg
+        hFlush stdout
+        runSettings settings (mkApp app)
 
 -- | Parse "host:port" into components. Defaults to 127.0.0.1:4000.
 parseListenAddr :: Text -> (String, Int)

@@ -24,7 +24,7 @@ import HydraWeb.DB.OrgMap (lookupByOrgRepo)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Visibility (canSeeProject, isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
@@ -44,13 +44,14 @@ orgRepoHandler mCookie org repo = do
         case mp of
           Nothing -> pure Nothing
           Just project -> do
+            accessible <- isProjectAccessible conn projectName mUser
             js <- jobsetOverview conn projectName
             nc <- navCounts conn
-            pure $ Just (project, js, nc)
+            pure $ Just (project, accessible, js, nc)
   case result of
     Nothing -> throwError err404
-    Just (project, jobsets, counts)
-      | not (canSeeProject mUser project) -> throwError err404
+    Just (project, accessible, jobsets, counts)
+      | not accessible -> throwError err404
       | otherwise -> do
           -- Filter hidden jobsets for non-admin users.
           let visibleJs = if isSuperAdmin mUser

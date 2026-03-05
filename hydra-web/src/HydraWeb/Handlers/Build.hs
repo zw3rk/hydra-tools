@@ -21,10 +21,9 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds
-import HydraWeb.DB.Projects (isProjectHidden)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (Build (..))
-import HydraWeb.Visibility (isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildPage)
 import HydraWeb.View.Components (showT)
@@ -41,8 +40,8 @@ buildHandler mCookie bid = do
     case mBuild of
       Nothing -> pure Nothing
       Just build -> do
-        hidden <- isProjectHidden conn (buildProject build)
-        if hidden && not (isSuperAdmin mUser)
+        accessible <- isProjectAccessible conn (buildProject build) mUser
+        if not accessible
           then pure Nothing
           else do
             steps    <- getBuildSteps conn bid

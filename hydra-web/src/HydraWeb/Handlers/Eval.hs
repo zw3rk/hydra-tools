@@ -26,10 +26,9 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
 import HydraWeb.DB.Builds (buildsByEval)
-import HydraWeb.DB.Projects (isProjectHidden)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Eval (JobsetEval (..))
-import HydraWeb.Visibility (isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
 import HydraWeb.View.BuildDiff (BuildDiff, computeBuildDiff)
@@ -57,8 +56,8 @@ evalHandler mCookie eid = do
     case mEval of
       Nothing -> pure Nothing
       Just eval -> do
-        hidden <- isProjectHidden conn (evalProject eval)
-        if hidden && not (isSuperAdmin mUser)
+        accessible <- isProjectAccessible conn (evalProject eval) mUser
+        if not accessible
           then pure Nothing
           else do
             inputs  <- getEvalInputs conn eid
@@ -89,8 +88,8 @@ evalTabHandler mCookie eid tabName = do
     case mEval of
       Nothing -> pure Nothing
       Just eval -> do
-        hidden <- isProjectHidden conn (evalProject eval)
-        if hidden && not (isSuperAdmin mUser)
+        accessible <- isProjectAccessible conn (evalProject eval) mUser
+        if not accessible
           then pure Nothing
           else do
             diff <- loadBuildDiff conn eval

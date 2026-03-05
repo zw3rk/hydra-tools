@@ -21,6 +21,7 @@ common common
       , bz2
       , bytestring
       , containers
+      , github-rest
       , crypton
       , http-client
       , http-client-tls
@@ -66,6 +67,9 @@ library
       , HydraWeb.DB.OrgMap
         -- Visibility
       , HydraWeb.Visibility
+      , HydraWeb.DB.RepoVisibility
+        -- GitHub
+      , HydraWeb.GitHub.RepoCheck
         -- Models
       , HydraWeb.Models.Project
       , HydraWeb.Models.Build

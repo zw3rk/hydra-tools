@@ -22,7 +22,7 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Visibility (canSeeProject, isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
@@ -33,15 +33,16 @@ projectHandler mCookie name = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (mProject, jobsets, counts) <- liftIO $ withConn pool $ \conn -> do
+  (mProject, accessible, jobsets, counts) <- liftIO $ withConn pool $ \conn -> do
     mp <- getProject conn name
+    acc <- isProjectAccessible conn name mUser
     js <- jobsetOverview conn name
     nc <- navCounts conn
-    pure (mp, js, nc)
+    pure (mp, acc, js, nc)
   case mProject of
     Nothing -> throwError err404
     Just project
-      | not (canSeeProject mUser project) -> throwError err404
+      | not accessible -> throwError err404
       | otherwise -> do
           -- Filter hidden jobsets for non-admin users.
           let visibleJs = if isSuperAdmin mUser

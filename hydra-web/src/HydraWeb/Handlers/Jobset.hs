@@ -20,11 +20,11 @@ import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Projects (getJobset, isProjectHidden)
+import HydraWeb.DB.Projects (getJobset)
 import HydraWeb.DB.Evals (jobsetEvals, allJobsetEvalsCount)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Project (Jobset (..))
-import HydraWeb.Visibility (canSeeJobset)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Jobset (jobsetPage)
 
@@ -44,13 +44,15 @@ jobsetHandler mCookie project jobset mPage = do
     case mJs of
       Nothing -> pure Nothing
       Just js -> do
-        projHid <- isProjectHidden conn project
-        pure $ Just (js, projHid)
+        accessible <- isProjectAccessible conn project mUser
+        pure $ Just (js, accessible)
   case mResult of
     Nothing -> throwError err404
-    Just (js, projHid)
-      | not (canSeeJobset mUser (if projHid then 1 else 0) (jsHidden js)) ->
-          throwError err404
+    Just (js, accessible)
+      -- Project-level check (includes hidden flag + repo privacy).
+      | not accessible -> throwError err404
+      -- Jobset-level hidden flag check (super-admin bypass).
+      | jsHidden js /= 0 && not (isSuperAdmin mUser) -> throwError err404
       | otherwise -> do
           (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
             es <- jobsetEvals conn (jsId js) offset perPage

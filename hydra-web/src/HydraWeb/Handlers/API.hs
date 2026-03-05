@@ -25,7 +25,8 @@ import GHC.Generics (Generic)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Projects (jobsetOverview, isProjectHidden)
+import HydraWeb.DB.Projects (jobsetOverview)
+import HydraWeb.Visibility (isProjectAccessible)
 import HydraWeb.DB.Queue (queueCount)
 import HydraWeb.DB.Builds (queuedBuilds, latestBuilds)
 import HydraWeb.Models.Project (Jobset (..))
@@ -101,8 +102,9 @@ apiJobsetsHandler mProject = do
     then pure []
     else do
       result <- liftIO $ withConn pool $ \conn -> do
-        hidden <- isProjectHidden conn project
-        if hidden
+        -- API has no cookie/user context, so pass Nothing (anonymous).
+        accessible <- isProjectAccessible conn project Nothing
+        if not accessible
           then pure []
           else filter (\j -> jsHidden j == 0) <$> jobsetOverview conn project
       pure $ map jobsetToAPI result

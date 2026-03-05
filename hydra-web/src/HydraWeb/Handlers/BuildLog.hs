@@ -28,10 +28,10 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (getBuildStep)
-import HydraWeb.DB.Projects (isProjectHiddenByBuild)
+import HydraWeb.DB.Projects (getProjectNameByBuild)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (BuildStep (stepDrvPath))
-import HydraWeb.Visibility (isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildLogPage)
 import HydraWeb.View.Components (showT)
@@ -48,8 +48,11 @@ buildLogHandler mCookie bid stepNr = do
   mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     -- Check project visibility before fetching the step.
-    hidden <- isProjectHiddenByBuild conn bid
-    if hidden && not (isSuperAdmin mUser)
+    mProjName <- getProjectNameByBuild conn bid
+    accessible <- case mProjName of
+      Nothing -> pure False
+      Just pn -> isProjectAccessible conn pn mUser
+    if not accessible
       then pure Nothing
       else do
         mStep <- getBuildStep conn bid stepNr

@@ -14,6 +14,7 @@ module HydraWeb.DB.Projects
   , jobsetOverview
   , isProjectHidden
   , isProjectHiddenByBuild
+  , getProjectNameByBuild
   ) where
 
 import Data.Text (Text)
@@ -139,6 +140,20 @@ isProjectHiddenByBuild conn buildId' = do
   case rows of
     []          -> pure True
     (Only h):_ -> pure (h /= (0 :: Int))
+
+-- | Get the project name for a build by its ID. Returns Nothing if the build
+-- doesn't exist or has no associated project.
+getProjectNameByBuild :: Connection -> Int -> IO (Maybe Text)
+getProjectNameByBuild conn buildId' = do
+  rows <- query conn [sql|
+    SELECT j.project
+    FROM builds b
+    JOIN jobsets j ON j.id = b.jobset_id
+    WHERE b.id = ?
+  |] (Only buildId')
+  case rows of
+    []         -> pure Nothing
+    (Only p):_ -> pure (Just p)
 
 -- | Scan a full jobset row (25 columns) into a Jobset value.
 -- Uses nested tuples via (:.) to work around postgresql-simple's
