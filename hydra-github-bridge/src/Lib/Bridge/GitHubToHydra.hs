@@ -31,6 +31,8 @@ import Data.Aeson qualified as Aeson
 import Data.Char (isNumber)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
@@ -50,23 +52,32 @@ import Servant.Server (serveWithContext)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-app :: ClientEnv -> Connection -> GitHubKey -> Application
-app env conn key =
+app :: Set Text -> ClientEnv -> Connection -> GitHubKey -> Application
+app orgs env conn key =
   serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint env conn)
+    (singleEndpoint orgs env conn)
 
-singleEndpoint :: ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint env conn =
-  (pushHook conn)
+singleEndpoint :: Set Text -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
+singleEndpoint orgs env conn =
+  (pushHook orgs conn)
     :<|> issueCommentHook
-    :<|> (pullRequestHook conn)
-    :<|> (checkSuiteHook env conn)
-    :<|> (checkRunHook conn)
+    :<|> (pullRequestHook orgs conn)
+    :<|> (checkSuiteHook orgs env conn)
+    :<|> (checkRunHook orgs conn)
 
-pushHook :: Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
+-- | Check if a repo's org is in the allowed set. Extracts the org from
+-- "org/repo" format and checks membership. Returns True if allowed.
+isOrgAllowed :: Set Text -> Text -> Bool
+isOrgAllowed orgs repoName =
+  let (org, _) = splitRepo repoName
+  in Set.member org orgs
+
+pushHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
+  | not (isOrgAllowed orgs repoName) = liftIO $
+      putStrLn $ "Ignoring push from non-allowed org: " ++ Text.unpack repoName
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
     Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
     "0000000000000000000000000000000000000000" == headSha =
@@ -122,7 +133,7 @@ pushHook conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, ev
         do
           putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
           Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pushHook _conn _ (_, ev) = liftIO $ do
+pushHook _orgs _conn _ (_, ev) = liftIO $ do
   putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
   print $ (fromJust . evPushHeadSha) ev
 
@@ -144,8 +155,9 @@ issueCommentHook _ (_, ev) = liftIO $ do
   putStrLn "An issue comment was posted:"
   print $ (whIssueCommentBody . evIssueCommentPayload) ev
 
-pullRequestHook :: Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
 pullRequestHook
+  orgs
   conn
   _
   ( _,
@@ -155,6 +167,8 @@ pullRequestHook
         evPullReqRepo = HookRepository {whRepoFullName = repoName}
       }
     )
+    | not (isOrgAllowed orgs repoName) = liftIO $
+        putStrLn $ "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
     | action
         `elem` [ PullRequestOpenedAction,
                  PullRequestReopenedAction,
@@ -226,7 +240,7 @@ pullRequestHook
           liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pullRequestHook conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
+pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
   let repoName = whRepoFullName (evPullReqRepo ev)
       projName = escapeHydraName repoName
       jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
@@ -252,52 +266,56 @@ pullRequestHook conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClo
   liftIO $ do
     putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
     Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _ _ (_, ev) =
+pullRequestHook _orgs _ _ (_, ev) =
   liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
-checkSuiteHook :: ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
+checkSuiteHook :: Set Text -> ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook orgs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
   let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
       repoName = whRepoFullName $ evCheckSuiteRepository ev
       projName = escapeHydraName repoName
 
-  forM_ prs $ \pr -> do
-    let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+  if not (isOrgAllowed orgs repoName)
+    then putStrLn $ "Ignoring check-suite from non-allowed org: " ++ Text.unpack repoName
+    else forM_ prs $ \pr -> do
+      let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-    jobset <-
-      (flip runClientM env $ Hydra.getJobset projName jobsetName)
-        >>= either (die . show) return
-        >>= \response -> case Aeson.fromJSON response of
-          Aeson.Error e -> die $ show e
-          Aeson.Success v -> return v
+      jobset <-
+        (flip runClientM env $ Hydra.getJobset projName jobsetName)
+          >>= either (die . show) return
+          >>= \response -> case Aeson.fromJSON response of
+            Aeson.Error e -> die $ show e
+            Aeson.Success v -> return v
 
-    putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-    Hydra.writeCommand conn $
-      Hydra.UpdateJobset repoName projName jobsetName $
-        jobset
-          { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
-          }
-checkSuiteHook _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
+      putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+      Hydra.writeCommand conn $
+        Hydra.UpdateJobset repoName projName jobsetName $
+          jobset
+            { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
+            }
+checkSuiteHook _ _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
-checkRunHook :: Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
-checkRunHook conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
+checkRunHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
+checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
   let checkRun = evCheckRunCheckRun ev
       checkRunName = whCheckRunName checkRun
       repoName = whRepoFullName $ evCheckRunRepository ev
       projName = escapeHydraName repoName
       prs = whCheckRunPullRequests checkRun
 
-  if "ci/eval" `Text.isPrefixOf` checkRunName
-    then forM_ prs $ \pr -> do
-      let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+  if not (isOrgAllowed orgs repoName)
+    then putStrLn $ "Ignoring check-run from non-allowed org: " ++ Text.unpack repoName
+    else if "ci/eval" `Text.isPrefixOf` checkRunName
+      then forM_ prs $ \pr -> do
+        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-      putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-      Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
-    else do
-      let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
-      putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
-      Hydra.writeCommand conn $ Hydra.RestartBuild externalId
-checkRunHook _ _ (_, ev) =
+        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
+      else do
+        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
+        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+        Hydra.writeCommand conn $ Hydra.RestartBuild externalId
+checkRunHook _orgs _ _ (_, ev) =
   liftIO . putStrLn $
     "Unhandled checkRunEvent with action: "
       ++ show (evCheckRunAction ev)

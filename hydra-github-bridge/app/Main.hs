@@ -17,6 +17,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (find)
+import Data.Set qualified as Set
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -162,10 +163,14 @@ main = do
   syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
 
-  -- Authenticate to GitHub
+  -- Authenticate to GitHub and derive the set of allowed orgs from
+  -- configured installations. Only webhooks from these orgs will be processed.
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+  ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
   ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
   ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent >>= newIORef
+  let allowedOrgs = Set.fromList $ map (Text.pack . fst) ghAppInstallIds
+  putStrLn $ "Allowed orgs: " ++ show (Set.toList allowedOrgs)
 
   putStrLn $ "Connecting to Hydra at " <> host
   env <- hydraClientEnv (Text.pack host) api_user api_pass
@@ -211,7 +216,7 @@ main = do
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app (hceClientEnv env) conn (gitHubKey ghKey)),
+        run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
       -- Periodically prune stale notifications for old commits that
       -- have already been superseded by newer evaluations.  Only marks
       -- a payload as sent when a later payload for the same
