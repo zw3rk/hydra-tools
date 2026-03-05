@@ -201,6 +201,7 @@ buildsByEval conn evalId' mfilter = do
       pure $ map scanBuildListRow rows
 
 -- | Fetch all unfinished builds ordered by priority.
+-- Excludes builds from hidden projects/jobsets.
 queuedBuilds :: Connection -> IO [Build]
 queuedBuilds conn = do
   rows <- query_ conn [sql|
@@ -211,12 +212,15 @@ queuedBuilds conn = do
            j.project, j.name
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
+    JOIN projects p ON p.name = j.project
     WHERE b.finished = 0
+      AND j.hidden = 0 AND p.hidden = 0
     ORDER BY b.globalpriority DESC, b.id
   |]
   pure $ map scanBuildListRow rows
 
 -- | Find the latest succeeded build for a job, optionally filtered by system.
+-- Excludes builds from hidden projects/jobsets.
 latestBuildForJob :: Connection -> Text -> Text -> Text
                   -> Maybe Text -> IO (Maybe Build)
 latestBuildForJob conn project jobset job mSystem = do
@@ -229,8 +233,10 @@ latestBuildForJob conn project jobset job mSystem = do
              j.project, j.name
       FROM builds b
       JOIN jobsets j ON j.id = b.jobset_id
+      JOIN projects p ON p.name = j.project
       WHERE j.project = ? AND j.name = ? AND b.job = ?
         AND b.finished = 1 AND b.buildstatus = 0
+        AND j.hidden = 0 AND p.hidden = 0
       ORDER BY b.id DESC LIMIT 1
     |] (project, jobset, job)
     Just sys -> query conn [sql|
@@ -241,8 +247,10 @@ latestBuildForJob conn project jobset job mSystem = do
              j.project, j.name
       FROM builds b
       JOIN jobsets j ON j.id = b.jobset_id
+      JOIN projects p ON p.name = j.project
       WHERE j.project = ? AND j.name = ? AND b.job = ? AND b.system = ?
         AND b.finished = 1 AND b.buildstatus = 0
+        AND j.hidden = 0 AND p.hidden = 0
       ORDER BY b.id DESC LIMIT 1
     |] (project, jobset, job, sys)
   case rows of
@@ -251,12 +259,13 @@ latestBuildForJob conn project jobset job mSystem = do
 
 -- | Fetch recently finished builds with optional filters.
 -- Used by the JSON API /api/latestbuilds endpoint.
+-- Excludes builds from hidden projects/jobsets.
 latestBuilds :: Connection -> Int -> Maybe Text -> Maybe Text
              -> Maybe Text -> Maybe Text -> IO [Build]
 latestBuilds conn nr mProject mJobset mJob mSystem = do
   let limit = max 1 (min 1000 nr)
   -- Build WHERE clause dynamically based on provided filters.
-  -- We always require finished=1. Additional filters are optional.
+  -- We always require finished=1 and non-hidden project/jobset.
   rows <- case (mProject, mJobset, mJob, mSystem) of
     (Nothing, _, _, _) -> query conn [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
@@ -266,7 +275,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (Only limit)
     (Just p, Nothing, _, _) -> query conn [sql|
@@ -277,7 +288,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1 AND j.project = ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (p, limit)
     (Just p, Just js, Nothing, Nothing) -> query conn [sql|
@@ -288,7 +301,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1 AND j.project = ? AND j.name = ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (p, js, limit)
     (Just p, Just js, Just job, Nothing) -> query conn [sql|
@@ -299,7 +314,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (p, js, job, limit)
     (Just p, Just js, Just job, Just sys) -> query conn [sql|
@@ -310,7 +327,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ? AND b.system = ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (p, js, job, sys, limit)
     _ -> query conn [sql|
@@ -321,7 +340,9 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.finished = 1
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
       |] (Only limit)
   pure $ map scanBuildListRow rows

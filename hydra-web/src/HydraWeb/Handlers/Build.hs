@@ -21,36 +21,44 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds
+import HydraWeb.DB.Projects (isProjectHidden)
 import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Visibility (isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildPage)
 import HydraWeb.View.Components (showT)
 
 -- | Render the build detail page with steps, outputs, products, etc.
+-- Returns 404 if the build's parent project is hidden and user is not super-admin.
 buildHandler :: Maybe Text -> Int -> AppM (Html ())
 buildHandler mCookie bid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     mBuild <- getBuild conn bid
     case mBuild of
       Nothing -> pure Nothing
       Just build -> do
-        steps    <- getBuildSteps conn bid
-        outputs  <- getBuildOutputs conn bid
-        products <- getBuildProducts conn bid
-        metrics  <- getBuildMetrics conn bid
-        inputs   <- getBuildInputs conn bid
-        evalIDs  <- getBuildEvals conn bid
-        constits <- getConstituents conn bid
-        nc       <- navCounts conn
-        pure $ Just (build, steps, outputs, products, metrics,
-                     inputs, evalIDs, constits, nc)
+        hidden <- isProjectHidden conn (buildProject build)
+        if hidden && not (isSuperAdmin mUser)
+          then pure Nothing
+          else do
+            steps    <- getBuildSteps conn bid
+            outputs  <- getBuildOutputs conn bid
+            products <- getBuildProducts conn bid
+            metrics  <- getBuildMetrics conn bid
+            inputs   <- getBuildInputs conn bid
+            evalIDs  <- getBuildEvals conn bid
+            constits <- getConstituents conn bid
+            nc       <- navCounts conn
+            pure $ Just (build, steps, outputs, products, metrics,
+                         inputs, evalIDs, constits, nc)
   case result of
     Nothing -> throwError err404
     Just (build, steps, outputs, products, metrics,
           inputs, evalIDs, constits, counts) -> do
-      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = "Build #" <> showT bid
             , pdBasePath = bp

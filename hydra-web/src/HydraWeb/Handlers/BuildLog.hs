@@ -28,8 +28,10 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (getBuildStep)
+import HydraWeb.DB.Projects (isProjectHiddenByBuild)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (BuildStep (stepDrvPath))
+import HydraWeb.Visibility (isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildLogPage)
 import HydraWeb.View.Components (showT)
@@ -37,18 +39,25 @@ import HydraWeb.View.Components (showT)
 -- | Serve the build log for a given build step.
 -- Locates the log file under <hydraDataDir>/build-logs/XX/YY.bz2
 -- where XX is the first 2 chars of the nix store hash and YY is the rest.
+-- Returns 404 if the build's parent project is hidden and user is not super-admin.
 buildLogHandler :: Maybe Text -> Int -> Int -> AppM (Html ())
 buildLogHandler mCookie bid stepNr = do
   pool    <- asks appPool
   bp      <- asks (cfgBasePath . appConfig)
   dataDir <- asks (cfgHydraDataDir . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
-    mStep <- getBuildStep conn bid stepNr
-    case mStep of
-      Nothing -> pure Nothing
-      Just step -> do
-        nc <- navCounts conn
-        pure $ Just (step, nc)
+    -- Check project visibility before fetching the step.
+    hidden <- isProjectHiddenByBuild conn bid
+    if hidden && not (isSuperAdmin mUser)
+      then pure Nothing
+      else do
+        mStep <- getBuildStep conn bid stepNr
+        case mStep of
+          Nothing -> pure Nothing
+          Just step -> do
+            nc <- navCounts conn
+            pure $ Just (step, nc)
   case result of
     Nothing -> throwError err404
     Just (step, counts) -> do
@@ -56,7 +65,6 @@ buildLogHandler mCookie bid stepNr = do
         Nothing -> throwError err404
         Just drv -> do
           logText <- liftIO $ readBuildLog dataDir drv
-          mUser <- liftIO $ getOptionalUser pool mCookie
           let pd = PageData
                 { pdTitle    = "Build #" <> showT bid <> " step " <> showT stepNr <> " log"
                 , pdBasePath = bp

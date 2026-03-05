@@ -64,6 +64,8 @@ library
       , HydraWeb.DB.Bridges
       , HydraWeb.DB.Installations
       , HydraWeb.DB.OrgMap
+        -- Visibility
+      , HydraWeb.Visibility
         -- Models
       , HydraWeb.Models.Project
       , HydraWeb.Models.Build

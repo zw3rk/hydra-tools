@@ -25,8 +25,10 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
 import HydraWeb.DB.Builds (buildsByEval)
+import HydraWeb.DB.Projects (isProjectHidden)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Eval (JobsetEval (..))
+import HydraWeb.Visibility (isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
 import HydraWeb.View.BuildDiff (BuildDiff, computeBuildDiff)
@@ -43,24 +45,29 @@ loadBuildDiff conn eval = do
   pure $ computeBuildDiff curBuilds prevBuilds
 
 -- | Render the eval detail page with build diff.
+-- Returns 404 if the eval's parent project is hidden and user is not super-admin.
 evalHandler :: Maybe Text -> Int -> AppM (Html ())
 evalHandler mCookie eid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     mEval <- getEval conn eid
     case mEval of
       Nothing -> pure Nothing
       Just eval -> do
-        inputs  <- getEvalInputs conn eid
-        evalErr <- getEvalError conn eid
-        diff    <- loadBuildDiff conn eval
-        nc      <- navCounts conn
-        pure $ Just (eval, inputs, evalErr, diff, nc)
+        hidden <- isProjectHidden conn (evalProject eval)
+        if hidden && not (isSuperAdmin mUser)
+          then pure Nothing
+          else do
+            inputs  <- getEvalInputs conn eid
+            evalErr <- getEvalError conn eid
+            diff    <- loadBuildDiff conn eval
+            nc      <- navCounts conn
+            pure $ Just (eval, inputs, evalErr, diff, nc)
   case result of
     Nothing -> throwError err404
     Just (eval, inputs, evalErr, diff, counts) -> do
-      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = "Evaluation #" <> showT eid
             , pdBasePath = bp
@@ -70,17 +77,23 @@ evalHandler mCookie eid = do
       pure $ pageLayout pd $ evalPage bp eval inputs evalErr diff
 
 -- | Render an eval tab partial (HTMX response).
-evalTabHandler :: Int -> Text -> AppM (Html ())
-evalTabHandler eid tabName = do
+-- Returns 404 if the eval's parent project is hidden and user is not super-admin.
+evalTabHandler :: Maybe Text -> Int -> Text -> AppM (Html ())
+evalTabHandler mCookie eid tabName = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     mEval <- getEval conn eid
     case mEval of
       Nothing -> pure Nothing
       Just eval -> do
-        diff <- loadBuildDiff conn eval
-        pure $ Just diff
+        hidden <- isProjectHidden conn (evalProject eval)
+        if hidden && not (isSuperAdmin mUser)
+          then pure Nothing
+          else do
+            diff <- loadBuildDiff conn eval
+            pure $ Just diff
   case result of
     Nothing -> throwError err404
     Just diff -> pure $ evalTabContent bp tabName diff

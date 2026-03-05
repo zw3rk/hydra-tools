@@ -92,6 +92,7 @@ buildToAPI b = APIBuild
   }
 
 -- | GET /api/jobsets?project=... — jobset overview as JSON.
+-- Filters out hidden jobsets (jsHidden=1) from the response.
 apiJobsetsHandler :: Maybe Text -> AppM [APIJobset]
 apiJobsetsHandler mProject = do
   pool <- asks appPool
@@ -101,7 +102,8 @@ apiJobsetsHandler mProject = do
     else do
       jobsets <- liftIO $ withConn pool $ \conn ->
         jobsetOverview conn project
-      pure $ map jobsetToAPI jobsets
+      -- Exclude hidden jobsets from the API response.
+      pure $ map jobsetToAPI (filter (\j -> jsHidden j == 0) jobsets)
   where
     jobsetToAPI j = APIJobset
       { ajName        = jsName j

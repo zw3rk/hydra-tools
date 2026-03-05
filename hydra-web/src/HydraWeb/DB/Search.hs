@@ -64,7 +64,7 @@ search conn q rawLimit
       |] (pattern, pattern)
       let jobsets = map scanSearchJobset jrows
 
-      -- Search builds by output path.
+      -- Search builds by output path (excludes hidden projects/jobsets).
       brows <- query conn [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
@@ -73,14 +73,16 @@ search conn q rawLimit
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         JOIN buildoutputs bo ON bo.build = b.id
         WHERE bo.path ILIKE ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
       |] (pattern, limit)
       let builds = map scanBuildRow brows
 
-      -- Search builds by derivation path.
+      -- Search builds by derivation path (excludes hidden projects/jobsets).
       drows <- query conn [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
@@ -89,7 +91,9 @@ search conn q rawLimit
                j.project, j.name
         FROM builds b
         JOIN jobsets j ON j.id = b.jobset_id
+        JOIN projects p ON p.name = j.project
         WHERE b.drvpath ILIKE ?
+          AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
       |] (pattern, limit)

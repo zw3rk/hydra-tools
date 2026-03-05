@@ -190,6 +190,7 @@ allJobsetEvalsCount conn jobsetId' = do
   pure n
 
 -- | Fetch the most recent evaluations across all jobsets (for /evals page).
+-- Excludes evals from hidden projects/jobsets.
 latestEvals :: Connection -> Int -> Int -> IO [EvalInfo]
 latestEvals conn offset limit = do
   rows <- query conn [sql|
@@ -200,7 +201,9 @@ latestEvals conn offset limit = do
            j.project, j.name
     FROM jobsetevals e
     JOIN jobsets j ON j.id = e.jobset_id
+    JOIN projects p ON p.name = j.project
     WHERE e.hasnewbuilds = 1
+      AND j.hidden = 0 AND p.hidden = 0
     ORDER BY e.id DESC
     LIMIT ? OFFSET ?
   |] (limit, offset)
@@ -209,10 +212,16 @@ latestEvals conn offset limit = do
   pure $ map simpleEvalInfo evals
 
 -- | Total count of evals with new builds (for pagination on /evals).
+-- Excludes evals from hidden projects/jobsets.
 latestEvalsCount :: Connection -> IO Int
 latestEvalsCount conn = do
   [Only n] <- query_ conn [sql|
-    SELECT count(*) FROM jobsetevals WHERE hasnewbuilds = 1
+    SELECT count(*)
+    FROM jobsetevals e
+    JOIN jobsets j ON j.id = e.jobset_id
+    JOIN projects p ON p.name = j.project
+    WHERE e.hasnewbuilds = 1
+      AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
 
@@ -239,6 +248,7 @@ computeChangedInputs current prev =
               || jeiDependency input /= jeiDependency p
 
 -- | Fetch currently-running evaluations (jobsets with starttime set).
+-- Excludes evals from hidden projects/jobsets.
 runningEvaluations :: Connection -> IO [RunningEval]
 runningEvaluations conn = do
   rows <- query_ conn [sql|
@@ -246,17 +256,24 @@ runningEvaluations conn = do
            extract(epoch from now())::int - j.starttime,
            j.flake, j.id
     FROM jobsets j
+    JOIN projects p ON p.name = j.project
     WHERE j.starttime IS NOT NULL
+      AND j.hidden = 0 AND p.hidden = 0
     ORDER BY j.starttime ASC
   |]
   pure $ map (\(name, proj, start, dur, flake, jid) ->
     RunningEval name proj start dur flake jid) rows
 
 -- | Count of currently-running evaluations (for nav badge).
+-- Excludes hidden projects/jobsets.
 runningEvalsCount :: Connection -> IO Int
 runningEvalsCount conn = do
   [Only n] <- query_ conn [sql|
-    SELECT count(*) FROM jobsets WHERE starttime IS NOT NULL
+    SELECT count(*)
+    FROM jobsets j
+    JOIN projects p ON p.name = j.project
+    WHERE j.starttime IS NOT NULL
+      AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
 

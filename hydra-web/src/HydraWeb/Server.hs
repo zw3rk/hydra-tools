@@ -95,7 +95,7 @@ htmlServer mCookie =
         :<|> projectHandler mCookie
         :<|> jobsetHandler mCookie
         :<|> evalHandler mCookie
-        :<|> evalTabHandler           -- HTMX partial: no full page layout
+        :<|> evalTabHandler mCookie   -- HTMX partial: needs cookie for visibility check
         :<|> buildHandler mCookie
         :<|> buildLogHandler mCookie
         :<|> queueHandler mCookie

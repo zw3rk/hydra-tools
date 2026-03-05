@@ -21,11 +21,13 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
-import HydraWeb.Models.Project (Project (..))
+import HydraWeb.Models.Project (Project (..), Jobset (..))
+import HydraWeb.Visibility (canSeeProject, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
 -- | Render the project page with jobset overview.
+-- Returns 404 if the project is hidden and the user is not a super-admin.
 projectHandler :: Maybe Text -> Text -> AppM (Html ())
 projectHandler mCookie name = do
   pool <- asks appPool
@@ -38,11 +40,17 @@ projectHandler mCookie name = do
     pure (mp, js, nc)
   case mProject of
     Nothing -> throwError err404
-    Just project -> do
-      let pd = PageData
-            { pdTitle    = projDisplayName project
-            , pdBasePath = bp
-            , pdCounts   = counts
-            , pdUser     = mUser
-            }
-      pure $ pageLayout pd $ projectPage bp project jobsets
+    Just project
+      | not (canSeeProject mUser project) -> throwError err404
+      | otherwise -> do
+          -- Filter hidden jobsets for non-admin users.
+          let visibleJs = if isSuperAdmin mUser
+                            then jobsets
+                            else filter (\j -> jsHidden j == 0) jobsets
+              pd = PageData
+                { pdTitle    = projDisplayName project
+                , pdBasePath = bp
+                , pdCounts   = counts
+                , pdUser     = mUser
+                }
+          pure $ pageLayout pd $ projectPage bp project visibleJs

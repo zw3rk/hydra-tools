@@ -23,15 +23,18 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.OrgMap (lookupByOrgRepo)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
-import HydraWeb.Models.Project (Project (..))
+import HydraWeb.Models.Project (Project (..), Jobset (..))
+import HydraWeb.Visibility (canSeeProject, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
 -- | GET /:org/:repo — lookup org/repo mapping and render project page.
+-- Returns 404 if the project is hidden and user is not super-admin.
 orgRepoHandler :: Maybe Text -> Text -> Text -> AppM (Html ())
 orgRepoHandler mCookie org repo = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     mProjectName <- lookupByOrgRepo conn org repo
     case mProjectName of
@@ -46,12 +49,17 @@ orgRepoHandler mCookie org repo = do
             pure $ Just (project, js, nc)
   case result of
     Nothing -> throwError err404
-    Just (project, jobsets, counts) -> do
-      mUser <- liftIO $ getOptionalUser pool mCookie
-      let pd = PageData
-            { pdTitle    = projDisplayName project
-            , pdBasePath = bp
-            , pdCounts   = counts
-            , pdUser     = mUser
-            }
-      pure $ pageLayout pd $ projectPage bp project jobsets
+    Just (project, jobsets, counts)
+      | not (canSeeProject mUser project) -> throwError err404
+      | otherwise -> do
+          -- Filter hidden jobsets for non-admin users.
+          let visibleJs = if isSuperAdmin mUser
+                            then jobsets
+                            else filter (\j -> jsHidden j == 0) jobsets
+              pd = PageData
+                { pdTitle    = projDisplayName project
+                , pdBasePath = bp
+                , pdCounts   = counts
+                , pdUser     = mUser
+                }
+          pure $ pageLayout pd $ projectPage bp project visibleJs
