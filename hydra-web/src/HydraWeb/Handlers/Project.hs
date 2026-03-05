@@ -17,6 +17,7 @@ import Control.Monad.Error.Class (throwError)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
@@ -25,10 +26,11 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
 -- | Render the project page with jobset overview.
-projectHandler :: Text -> AppM (Html ())
-projectHandler name = do
+projectHandler :: Maybe Text -> Text -> AppM (Html ())
+projectHandler mCookie name = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   (mProject, jobsets, counts) <- liftIO $ withConn pool $ \conn -> do
     mp <- getProject conn name
     js <- jobsetOverview conn name
@@ -41,6 +43,6 @@ projectHandler name = do
             { pdTitle    = projDisplayName project
             , pdBasePath = bp
             , pdCounts   = counts
-            , pdUser     = Nothing
+            , pdUser     = mUser
             }
       pure $ pageLayout pd $ projectPage bp project jobsets

@@ -32,7 +32,12 @@ import HydraWeb.Handlers.Job (ShieldBadge)
 
 -- | The main application API — all dynamic routes.
 -- Uses REST-style pluralized resource names.
-type HydraWebAPI =
+-- The Cookie header is threaded at the top level so all page handlers
+-- can resolve the logged-in user for the navigation bar.
+type HydraWebAPI = Header "Cookie" Text :> HydraWebRoutes
+
+-- | Inner routes, separated for type-level clarity.
+type HydraWebRoutes =
   -- GET / — overview page (also serves as project list)
        Get '[HTML] (Html ())
   -- GET /projects — explicit project list
@@ -158,7 +163,8 @@ type StreamAPI =
 
 -- | Org/repo catch-all — must be last before StaticAPI.
 -- Allows /:org/:repo URLs to resolve to a project page.
-type OrgRepoAPI = Capture "org" Text :> Capture "repo" Text :> Get '[HTML] (Html ())
+-- Cookie header for nav bar user display.
+type OrgRepoAPI = Header "Cookie" Text :> Capture "org" Text :> Capture "repo" Text :> Get '[HTML] (Html ())
 
 -- | Reverse proxy for write operations to Hydra backend (Raw WAI app).
 type ProxyAPI = "api" :> Raw

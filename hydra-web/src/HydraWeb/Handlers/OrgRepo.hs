@@ -18,6 +18,7 @@ import Servant (err404)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.OrgMap (lookupByOrgRepo)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
@@ -27,8 +28,8 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
 
 -- | GET /:org/:repo — lookup org/repo mapping and render project page.
-orgRepoHandler :: Text -> Text -> AppM (Html ())
-orgRepoHandler org repo = do
+orgRepoHandler :: Maybe Text -> Text -> Text -> AppM (Html ())
+orgRepoHandler mCookie org repo = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   result <- liftIO $ withConn pool $ \conn -> do
@@ -46,10 +47,11 @@ orgRepoHandler org repo = do
   case result of
     Nothing -> throwError err404
     Just (project, jobsets, counts) -> do
+      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = projDisplayName project
             , pdBasePath = bp
             , pdCounts   = counts
-            , pdUser     = Nothing
+            , pdUser     = mUser
             }
       pure $ pageLayout pd $ projectPage bp project jobsets

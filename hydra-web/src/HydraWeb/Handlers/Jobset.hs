@@ -17,6 +17,7 @@ import Servant (err404)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getJobset)
 import HydraWeb.DB.Evals (jobsetEvals, allJobsetEvalsCount)
@@ -26,8 +27,8 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Jobset (jobsetPage)
 
 -- | Render the jobset page with paginated evaluations.
-jobsetHandler :: Text -> Text -> Maybe Int -> AppM (Html ())
-jobsetHandler project jobset mPage = do
+jobsetHandler :: Maybe Text -> Text -> Text -> Maybe Int -> AppM (Html ())
+jobsetHandler mCookie project jobset mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   let page    = max 1 (maybe 1 id mPage)
@@ -45,10 +46,11 @@ jobsetHandler project jobset mPage = do
   case mJs of
     Nothing -> throwError err404
     Just js -> do
+      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = project <> ":" <> jsName js
             , pdBasePath = bp
             , pdCounts   = counts
-            , pdUser     = Nothing
+            , pdUser     = mUser
             }
       pure $ pageLayout pd $ jobsetPage bp js evals total page perPage

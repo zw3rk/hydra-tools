@@ -25,6 +25,7 @@ import qualified Codec.Compression.BZip as BZip
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (getBuildStep)
 import HydraWeb.DB.Queue (navCounts)
@@ -36,8 +37,8 @@ import HydraWeb.View.Components (showT)
 -- | Serve the build log for a given build step.
 -- Locates the log file under <hydraDataDir>/build-logs/XX/YY.bz2
 -- where XX is the first 2 chars of the nix store hash and YY is the rest.
-buildLogHandler :: Int -> Int -> AppM (Html ())
-buildLogHandler bid stepNr = do
+buildLogHandler :: Maybe Text -> Int -> Int -> AppM (Html ())
+buildLogHandler mCookie bid stepNr = do
   pool    <- asks appPool
   bp      <- asks (cfgBasePath . appConfig)
   dataDir <- asks (cfgHydraDataDir . appConfig)
@@ -55,11 +56,12 @@ buildLogHandler bid stepNr = do
         Nothing -> throwError err404
         Just drv -> do
           logText <- liftIO $ readBuildLog dataDir drv
+          mUser <- liftIO $ getOptionalUser pool mCookie
           let pd = PageData
                 { pdTitle    = "Build #" <> showT bid <> " step " <> showT stepNr <> " log"
                 , pdBasePath = bp
                 , pdCounts   = counts
-                , pdUser     = Nothing
+                , pdUser     = mUser
                 }
           pure $ pageLayout pd $
             buildLogPage bp bid stepNr drv logText

@@ -20,6 +20,7 @@ import Servant (err404)
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
@@ -42,8 +43,8 @@ loadBuildDiff conn eval = do
   pure $ computeBuildDiff curBuilds prevBuilds
 
 -- | Render the eval detail page with build diff.
-evalHandler :: Int -> AppM (Html ())
-evalHandler eid = do
+evalHandler :: Maybe Text -> Int -> AppM (Html ())
+evalHandler mCookie eid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   result <- liftIO $ withConn pool $ \conn -> do
@@ -59,11 +60,12 @@ evalHandler eid = do
   case result of
     Nothing -> throwError err404
     Just (eval, inputs, evalErr, diff, counts) -> do
+      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = "Evaluation #" <> showT eid
             , pdBasePath = bp
             , pdCounts   = counts
-            , pdUser     = Nothing
+            , pdUser     = mUser
             }
       pure $ pageLayout pd $ evalPage bp eval inputs evalErr diff
 
@@ -84,8 +86,8 @@ evalTabHandler eid tabName = do
     Just diff -> pure $ evalTabContent bp tabName diff
 
 -- | Render the latest evaluations list page (GET /evals).
-latestEvalsHandler :: Maybe Int -> AppM (Html ())
-latestEvalsHandler mPage = do
+latestEvalsHandler :: Maybe Text -> Maybe Int -> AppM (Html ())
+latestEvalsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   let page    = max 1 (maybe 1 id mPage)
@@ -96,10 +98,11 @@ latestEvalsHandler mPage = do
     tc <- latestEvalsCount conn
     nc <- navCounts conn
     pure (es, tc, nc)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   let pd = PageData
         { pdTitle    = "Latest Evaluations"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = mUser
         }
   pure $ pageLayout pd $ latestEvalsPage bp evals total page perPage

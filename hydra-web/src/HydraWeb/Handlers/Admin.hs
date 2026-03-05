@@ -24,6 +24,7 @@ import qualified Data.Text.Encoding as TE
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (requireSuperAdmin)
+import HydraWeb.Models.User (GFUser (..))
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Auth (listGFUsers)
 import HydraWeb.DB.Installations
@@ -57,18 +58,18 @@ adminServer cookie =
   :<|> orgMapDetectHandler cookie
 
 -- | Verify super-admin access, returning the user or throwing 401/403.
-guardAdmin :: Maybe Text -> AppM ()
+guardAdmin :: Maybe Text -> AppM GFUser
 guardAdmin cookie = do
   pool <- asks appPool
   result <- liftIO $ requireSuperAdmin pool cookie
   case result of
     Left err  -> throwError err
-    Right _   -> pure ()
+    Right u   -> pure u
 
 -- | GET /admin — render the admin dashboard (user management).
 adminHandler :: Maybe Text -> AppM (Html ())
 adminHandler cookie = do
-  guardAdmin cookie
+  user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   (users, counts) <- liftIO $ withConn pool $ \conn -> do
@@ -79,14 +80,14 @@ adminHandler cookie = do
         { pdTitle    = "Admin Dashboard"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = Just user
         }
   pure $ pageLayout pd $ adminPage bp users
 
 -- | GET /admin/installations — list all GitHub App installations.
 installationsHandler :: Maybe Text -> AppM (Html ())
 installationsHandler cookie = do
-  guardAdmin cookie
+  user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   (installs, counts) <- liftIO $ withConn pool $ \conn -> do
@@ -97,14 +98,14 @@ installationsHandler cookie = do
         { pdTitle    = "GitHub Installations"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = Just user
         }
   pure $ pageLayout pd $ installationsPage bp installs
 
 -- | POST /admin/installations — add a new installation.
 installationsPostHandler :: Maybe Text -> [(Text, Text)] -> AppM (Html ())
 installationsPostHandler cookie formData = do
-  guardAdmin cookie
+  _ <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   let mOrg = lookup "org_name" formData
@@ -119,7 +120,7 @@ installationsPostHandler cookie formData = do
 -- | POST /admin/installations/:id/toggle — toggle enabled state.
 installationToggleHandler :: Maybe Text -> Int -> AppM (Html ())
 installationToggleHandler cookie instId' = do
-  guardAdmin cookie
+  _ <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   liftIO $ withConn pool $ \conn ->
@@ -129,7 +130,7 @@ installationToggleHandler cookie instId' = do
 -- | POST /admin/installations/:id/delete — delete an installation.
 installationDeleteHandler :: Maybe Text -> Int -> AppM (Html ())
 installationDeleteHandler cookie instId' = do
-  guardAdmin cookie
+  _ <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   liftIO $ withConn pool $ \conn ->
@@ -139,7 +140,7 @@ installationDeleteHandler cookie instId' = do
 -- | GET /admin/org-map — list all org/repo mappings.
 orgMapHandler :: Maybe Text -> AppM (Html ())
 orgMapHandler cookie = do
-  guardAdmin cookie
+  user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   (mappings, counts) <- liftIO $ withConn pool $ \conn -> do
@@ -150,14 +151,14 @@ orgMapHandler cookie = do
         { pdTitle    = "Org/Repo Mappings"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = Just user
         }
   pure $ pageLayout pd $ orgMapPage bp mappings
 
 -- | POST /admin/org-map — add or update a mapping.
 orgMapPostHandler :: Maybe Text -> [(Text, Text)] -> AppM (Html ())
 orgMapPostHandler cookie formData = do
-  guardAdmin cookie
+  _ <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   let mProject = lookup "project_name" formData
@@ -174,7 +175,7 @@ orgMapPostHandler cookie formData = do
 -- | POST /admin/org-map/detect — auto-detect mappings from flake URIs.
 orgMapDetectHandler :: Maybe Text -> AppM (Html ())
 orgMapDetectHandler cookie = do
-  guardAdmin cookie
+  _ <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   liftIO $ withConn pool autoDetectMappings

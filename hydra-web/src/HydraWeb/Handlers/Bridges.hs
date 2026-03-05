@@ -13,8 +13,11 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Lucid (Html)
 
+import Data.Text (Text)
+
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Bridges (bridgeFullStatus)
 import HydraWeb.DB.Queue (navCounts)
@@ -22,10 +25,11 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Bridges (bridgesPage)
 
 -- | GET /bridges — render the bridge status page with live SSE wrapper.
-bridgesHandler :: AppM (Html ())
-bridgesHandler = do
+bridgesHandler :: Maybe Text -> AppM (Html ())
+bridgesHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   (status, counts) <- liftIO $ withConn pool $ \conn -> do
     s  <- bridgeFullStatus conn
     nc <- navCounts conn
@@ -34,6 +38,6 @@ bridgesHandler = do
         { pdTitle    = "Bridge Status"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = mUser
         }
   pure $ pageLayout pd $ bridgesPage bp status

@@ -16,6 +16,7 @@ import Lucid
 
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Search (search)
 import HydraWeb.DB.Queue (navCounts)
@@ -23,10 +24,11 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Search (searchPage)
 
 -- | Render the search page, optionally with results if a query is provided.
-searchHandler :: Maybe Text -> AppM (Html ())
-searchHandler mQuery = do
+searchHandler :: Maybe Text -> Maybe Text -> AppM (Html ())
+searchHandler mCookie mQuery = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   let q = maybe "" Text.strip mQuery
   (mResults, counts) <- liftIO $ withConn pool $ \conn -> do
     nc <- navCounts conn
@@ -39,6 +41,6 @@ searchHandler mQuery = do
         { pdTitle    = "Search"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = mUser
         }
   pure $ pageLayout pd $ searchPage bp q mResults

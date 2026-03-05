@@ -14,8 +14,11 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Lucid
 
+import Data.Text (Text)
+
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (visibleProjects)
 import HydraWeb.DB.Queue (navCounts, newsItems)
@@ -23,10 +26,11 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Overview (overviewPage)
 
 -- | Render the overview page with all visible projects, metric cards, and news.
-overviewHandler :: AppM (Html ())
-overviewHandler = do
+overviewHandler :: Maybe Text -> AppM (Html ())
+overviewHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   (projects, counts, news) <- liftIO $ withConn pool $ \conn -> do
     ps <- visibleProjects conn
     nc <- navCounts conn
@@ -36,6 +40,6 @@ overviewHandler = do
         { pdTitle    = "Overview"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = mUser
         }
   pure $ pageLayout pd $ overviewPage bp counts projects news

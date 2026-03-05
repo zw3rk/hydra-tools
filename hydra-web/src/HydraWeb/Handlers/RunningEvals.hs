@@ -12,8 +12,11 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Lucid (Html)
 
+import Data.Text (Text)
+
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (runningEvaluations)
 import HydraWeb.DB.Queue (navCounts)
@@ -21,10 +24,11 @@ import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.RunningEvals (runningEvalsPage)
 
 -- | GET /running-evals — render the running evaluations page.
-runningEvalsHandler :: AppM (Html ())
-runningEvalsHandler = do
+runningEvalsHandler :: Maybe Text -> AppM (Html ())
+runningEvalsHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
+  mUser <- liftIO $ getOptionalUser pool mCookie
   (evals, counts) <- liftIO $ withConn pool $ \conn -> do
     es <- runningEvaluations conn
     nc <- navCounts conn
@@ -33,6 +37,6 @@ runningEvalsHandler = do
         { pdTitle    = "Running Evaluations"
         , pdBasePath = bp
         , pdCounts   = counts
-        , pdUser     = Nothing
+        , pdUser     = mUser
         }
   pure $ pageLayout pd $ runningEvalsPage bp evals

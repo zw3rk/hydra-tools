@@ -69,24 +69,27 @@ server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> staticServer (cfgStaticDir $ appConfig app)
         :<|> hoistServer (Proxy @OrgRepoAPI) (runAppM app) orgRepoHandler
 
--- | HTML page handlers, wired in the same order as HydraWebAPI.
+-- | HTML page handlers, wired in the same order as HydraWebRoutes.
+-- The Cookie header is received once and threaded to each handler
+-- for nav bar user display.
 htmlServer :: ServerT HydraWebAPI AppM
-htmlServer = overviewHandler
-        :<|> overviewHandler          -- /projects — same handler as overview
-        :<|> projectHandler
-        :<|> jobsetHandler
-        :<|> evalHandler
-        :<|> evalTabHandler
-        :<|> buildHandler
-        :<|> buildLogHandler
-        :<|> queueHandler
-        :<|> queueSummaryHandler
-        :<|> machinesHandler
-        :<|> stepsHandler
-        :<|> latestEvalsHandler
-        :<|> searchHandler
-        :<|> bridgesHandler
-        :<|> runningEvalsHandler
+htmlServer mCookie =
+             overviewHandler mCookie
+        :<|> overviewHandler mCookie  -- /projects — same handler as overview
+        :<|> projectHandler mCookie
+        :<|> jobsetHandler mCookie
+        :<|> evalHandler mCookie
+        :<|> evalTabHandler           -- HTMX partial: no full page layout
+        :<|> buildHandler mCookie
+        :<|> buildLogHandler mCookie
+        :<|> queueHandler mCookie
+        :<|> queueSummaryHandler mCookie
+        :<|> machinesHandler mCookie
+        :<|> stepsHandler mCookie
+        :<|> latestEvalsHandler mCookie
+        :<|> searchHandler mCookie
+        :<|> bridgesHandler mCookie
+        :<|> runningEvalsHandler mCookie
         :<|> robotsHandler
 
 -- | Legacy redirect handlers (301 permanent redirects).

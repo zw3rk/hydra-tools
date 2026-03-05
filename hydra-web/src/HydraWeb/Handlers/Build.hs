@@ -14,8 +14,11 @@ import Control.Monad.Error.Class (throwError)
 import Lucid
 import Servant (err404)
 
+import Data.Text (Text)
+
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
+import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds
 import HydraWeb.DB.Queue (navCounts)
@@ -24,8 +27,8 @@ import HydraWeb.View.Pages.Build (buildPage)
 import HydraWeb.View.Components (showT)
 
 -- | Render the build detail page with steps, outputs, products, etc.
-buildHandler :: Int -> AppM (Html ())
-buildHandler bid = do
+buildHandler :: Maybe Text -> Int -> AppM (Html ())
+buildHandler mCookie bid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   result <- liftIO $ withConn pool $ \conn -> do
@@ -47,11 +50,12 @@ buildHandler bid = do
     Nothing -> throwError err404
     Just (build, steps, outputs, products, metrics,
           inputs, evalIDs, constits, counts) -> do
+      mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = "Build #" <> showT bid
             , pdBasePath = bp
             , pdCounts   = counts
-            , pdUser     = Nothing
+            , pdUser     = mUser
             }
       pure $ pageLayout pd $
         buildPage bp build steps outputs products metrics inputs evalIDs constits
