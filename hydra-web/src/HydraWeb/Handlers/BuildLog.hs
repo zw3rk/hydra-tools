@@ -68,29 +68,35 @@ buildLogHandler mCookie bid stepNr = do
 
 -- | Read a build log from the Hydra data directory.
 -- Tries bzip2-compressed first, falls back to uncompressed plain text.
+-- Validates the derivation path to prevent directory traversal attacks.
 readBuildLog :: FilePath -> Text -> IO Text
-readBuildLog dataDir drvPath = do
-  let -- Strip /nix/store/ prefix to get "HASH-name.drv"
-      storeName = Text.drop 11 drvPath  -- len("/nix/store/") == 11
-      -- First 2 chars of hash → subdirectory
-      subDir    = Text.take 2 storeName
-      -- Remaining chars → filename
-      fileName  = Text.drop 2 storeName
-      basePath  = dataDir <> "/build-logs/" <> Text.unpack subDir
-                  <> "/" <> Text.unpack fileName
-      bzPath    = basePath <> ".bz2"
-  -- Try bzip2-compressed log first.
-  result <- try (LBS.readFile bzPath) :: IO (Either SomeException LBS.ByteString)
-  case result of
-    Right compressed -> do
-      let decompressed = BZip.decompress compressed
-      pure $ decodeLog decompressed
-    Left _ -> do
-      -- Fall back to uncompressed log (Rust queue runner may write plain text).
-      plain <- try (LBS.readFile basePath) :: IO (Either SomeException LBS.ByteString)
-      case plain of
-        Right content -> pure $ decodeLog content
-        Left _        -> pure "(no build log available)"
+readBuildLog dataDir drvPath
+  -- Reject paths that don't start with /nix/store/ or contain traversal sequences.
+  | not (Text.isPrefixOf "/nix/store/" drvPath) = pure "(invalid derivation path)"
+  | Text.isInfixOf ".." storeName               = pure "(invalid derivation path)"
+  | otherwise = do
+      let -- First 2 chars of hash → subdirectory
+          subDir    = Text.take 2 storeName
+          -- Remaining chars → filename
+          fileName  = Text.drop 2 storeName
+          basePath  = dataDir <> "/build-logs/" <> Text.unpack subDir
+                      <> "/" <> Text.unpack fileName
+          bzPath    = basePath <> ".bz2"
+      -- Try bzip2-compressed log first.
+      result <- try (LBS.readFile bzPath) :: IO (Either SomeException LBS.ByteString)
+      case result of
+        Right compressed -> do
+          let decompressed = BZip.decompress compressed
+          pure $ decodeLog decompressed
+        Left _ -> do
+          -- Fall back to uncompressed log (Rust queue runner may write plain text).
+          plain <- try (LBS.readFile basePath) :: IO (Either SomeException LBS.ByteString)
+          case plain of
+            Right content -> pure $ decodeLog content
+            Left _        -> pure "(no build log available)"
+  where
+    -- Strip /nix/store/ prefix to get "HASH-name.drv"
+    storeName = Text.drop 11 drvPath  -- len("/nix/store/") == 11
 
 -- | Decode a lazy ByteString as UTF-8 text, replacing invalid sequences.
 decodeLog :: LBS.ByteString -> Text
