@@ -31,21 +31,19 @@ jobsetHandler :: Maybe Text -> Text -> Text -> Maybe Int -> AppM (Html ())
 jobsetHandler mCookie project jobset mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  let page    = max 1 (maybe 1 id mPage)
+  let page    = min 10000 (max 1 (maybe 1 id mPage))
       perPage = 20
       offset  = (page - 1) * perPage
-  (mJs, evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
-    mj <- getJobset conn project jobset
-    case mj of
-      Nothing -> pure (Nothing, [], 0, error "unreachable")
-      Just js -> do
-        es <- jobsetEvals conn (jsId js) offset perPage
-        tc <- allJobsetEvalsCount conn (jsId js)
-        nc <- navCounts conn
-        pure (Just js, es, tc, nc)
+  -- Look up the jobset first; return 404 early if it doesn't exist.
+  mJs <- liftIO $ withConn pool $ \conn -> getJobset conn project jobset
   case mJs of
     Nothing -> throwError err404
     Just js -> do
+      (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
+        es <- jobsetEvals conn (jsId js) offset perPage
+        tc <- allJobsetEvalsCount conn (jsId js)
+        nc <- navCounts conn
+        pure (es, tc, nc)
       mUser <- liftIO $ getOptionalUser pool mCookie
       let pd = PageData
             { pdTitle    = project <> ":" <> jsName js
