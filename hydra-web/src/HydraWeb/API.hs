@@ -49,6 +49,8 @@ type HydraWebAPI =
        :> Get '[HTML] (Html ())
   -- GET /build/:id (flat — IDs are globally unique)
   :<|> "build" :> Capture "id" Int :> Get '[HTML] (Html ())
+  -- GET /build/:id/nixlog/:stepnr — build step log viewer
+  :<|> "build" :> Capture "id" Int :> "nixlog" :> Capture "stepnr" Int :> Get '[HTML] (Html ())
   -- GET /queue
   :<|> "queue" :> Get '[HTML] (Html ())
   -- GET /queue-summary

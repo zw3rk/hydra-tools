@@ -32,6 +32,7 @@ data Config = Config
   , cfgSessionSecret   :: !Text          -- ^ HYDRA_WEB_SESSION_SECRET
   , cfgEncryptionKey   :: !Text          -- ^ HYDRA_WEB_ENCRYPTION_KEY (AES-256-GCM)
   , cfgSuperAdmins     :: ![Text]        -- ^ HYDRA_WEB_SUPER_ADMINS (comma-separated)
+  , cfgHydraDataDir    :: !FilePath      -- ^ HYDRA_WEB_HYDRA_DATA_DIR (default "/var/lib/hydra")
   , cfgGitHub          :: !GitHubConfig  -- ^ GitHub App/OAuth settings
   } deriving (Show)
 
@@ -54,6 +55,7 @@ loadConfig = do
   dbURL      <- envOr "HYDRA_WEB_DATABASE_URL" "postgres://hydra-web@/hydra?host=/run/postgresql"
   backend    <- envOr "HYDRA_WEB_HYDRA_BACKEND" "http://127.0.0.1:3000"
   staticDir  <- envOrStr "HYDRA_WEB_STATIC_DIR" "static"
+  dataDir    <- envOrStr "HYDRA_WEB_HYDRA_DATA_DIR" "/var/lib/hydra"
   secret     <- envOr "HYDRA_WEB_SESSION_SECRET" ""
   encKey     <- envOr "HYDRA_WEB_ENCRYPTION_KEY" ""
   admins     <- parseSuperAdmins <$> envOr "HYDRA_WEB_SUPER_ADMINS" ""
@@ -68,6 +70,7 @@ loadConfig = do
     , cfgSessionSecret   = secret
     , cfgEncryptionKey   = encKey
     , cfgSuperAdmins     = admins
+    , cfgHydraDataDir    = dataDir
     , cfgGitHub          = gh
     }
 

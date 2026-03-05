@@ -18,6 +18,7 @@ common common
       , hydra-lib
       , aeson
       , async
+      , bz2
       , bytestring
       , containers
       , crypton
@@ -84,6 +85,7 @@ library
       , HydraWeb.Handlers.Auth
       , HydraWeb.Handlers.Profile
       , HydraWeb.Handlers.Admin
+      , HydraWeb.Handlers.BuildLog
       , HydraWeb.Handlers.Proxy
       , HydraWeb.Handlers.Redirect
       , HydraWeb.Handlers.OrgRepo

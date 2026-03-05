@@ -469,6 +469,15 @@
           };
         };
 
+        hydraDataDir = mkOption {
+          type = types.str;
+          default = "/var/lib/hydra";
+          description = ''
+            Path to the Hydra data directory containing build-logs/.
+            Build logs are read from <hydraDataDir>/build-logs/.
+          '';
+        };
+
         environmentFile = mkOption {
           type = types.nullOr types.path;
           default = null;
@@ -528,6 +537,7 @@
               HYDRA_WEB_DATABASE_URL = cfg.databaseURL;
               HYDRA_WEB_HYDRA_BACKEND = cfg.hydraBackendURL;
               HYDRA_WEB_STATIC_DIR = "${cfg.package}/share/hydra-web/static";
+              HYDRA_WEB_HYDRA_DATA_DIR = cfg.hydraDataDir;
               HYDRA_WEB_GITHUB_CLIENT_ID = cfg.github.clientID;
             }
             // lib.optionalAttrs (cfg.basePath != "") {

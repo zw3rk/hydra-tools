@@ -26,6 +26,7 @@ import HydraWeb.Handlers.Project (projectHandler)
 import HydraWeb.Handlers.Jobset (jobsetHandler)
 import HydraWeb.Handlers.Eval (evalHandler, evalTabHandler, latestEvalsHandler)
 import HydraWeb.Handlers.Build (buildHandler)
+import HydraWeb.Handlers.BuildLog (buildLogHandler)
 import HydraWeb.Handlers.Queue (queueHandler, queueSummaryHandler, machinesHandler, stepsHandler)
 import HydraWeb.Handlers.Search (searchHandler)
 import HydraWeb.Handlers.Bridges (bridgesHandler)
@@ -77,6 +78,7 @@ htmlServer = overviewHandler
         :<|> evalHandler
         :<|> evalTabHandler
         :<|> buildHandler
+        :<|> buildLogHandler
         :<|> queueHandler
         :<|> queueSummaryHandler
         :<|> machinesHandler

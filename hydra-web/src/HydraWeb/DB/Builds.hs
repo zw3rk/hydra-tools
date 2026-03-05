@@ -11,6 +11,7 @@ module HydraWeb.DB.Builds
   , getBuildOutputs
   , getBuildProducts
   , getBuildSteps
+  , getBuildStep
   , getBuildMetrics
   , getBuildInputs
   , getBuildEvals
@@ -107,6 +108,20 @@ getBuildSteps conn buildId' = do
     ORDER BY stepnr DESC
   |] (Only buildId')
   pure $ map scanStepRow rows
+
+-- | Fetch a single build step by build ID and step number.
+getBuildStep :: Connection -> Int -> Int -> IO (Maybe BuildStep)
+getBuildStep conn buildId' stepNr' = do
+  rows <- query conn [sql|
+    SELECT build, stepnr, type, drvpath, busy, status, errormsg,
+           starttime, stoptime, machine, system,
+           propagatedfrom, overhead, timesbuilt, isnondeterministic
+    FROM buildsteps
+    WHERE build = ? AND stepnr = ?
+  |] (buildId', stepNr')
+  case rows of
+    []    -> pure Nothing
+    (r:_) -> pure $ Just (scanStepRow r)
 
 -- | Fetch metrics for a build, ordered by name.
 getBuildMetrics :: Connection -> Int -> IO [BuildMetric]

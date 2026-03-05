@@ -7,6 +7,7 @@
 
 module HydraWeb.View.Pages.Build
   ( buildPage
+  , buildLogPage
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -102,7 +103,7 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits = do
   -- Build steps (timeline style).
   renderSection "Build Steps" steps $ \ss ->
     div_ [class_ "timeline"] $
-      mapM_ renderTimelineStep ss
+      mapM_ (renderTimelineStep bp (buildId build)) ss
 
   -- Build inputs.
   renderSection "Inputs" inputs $ \is ->
@@ -150,9 +151,9 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits = do
           td_ $ toHtml (fromMaybe "" (bmUnit m))
           ) ms
 
--- | Render a build step as a timeline item.
-renderTimelineStep :: BuildStep -> Html ()
-renderTimelineStep s = do
+-- | Render a build step as a timeline item with optional log link.
+renderTimelineStep :: Text -> Int -> BuildStep -> Html ()
+renderTimelineStep bp bid s = do
   let cls = case stepStatus s of
         Just 0  -> "success"
         Just 1  -> "failed"
@@ -165,6 +166,14 @@ renderTimelineStep s = do
       toHtml (stepStatusText s)
       " on "
       toHtml (stripSSH (stepMachine s))
+      -- Show log link for completed steps that have a derivation path.
+      case (stepStatus s, stepDrvPath s) of
+        (Just _, Just _) -> do
+          " "
+          a_ [href_ (bp <> "/build/" <> showT bid <> "/nixlog/" <> showT (stepNr s))
+             , class_ "log-link"
+             ] "log"
+        _ -> pure ()
     div_ $ do
       case (stepStartTime s, stepStopTime s) of
         (Just start, Just stop) -> toHtml (fmtDuration (stop - start))
@@ -191,6 +200,19 @@ maybeDt _ Nothing  = pure ()
 maybeDt label (Just v) = do
   dt_ $ toHtml label
   dd_ $ toHtml v
+
+-- | Render the build log page with breadcrumb and log output.
+buildLogPage :: Text -> Int -> Int -> Text -> Text -> Html ()
+buildLogPage bp bid sNr drv logText = do
+  breadcrumb [ ("Projects", bp <> "/")
+             , ("Build #" <> showT bid, bp <> "/build/" <> showT bid)
+             , ("Step #" <> showT sNr <> " log", "")
+             ]
+  h1_ $ toHtml ("Build #" <> showT bid <> " \x2014 step " <> showT sNr <> " log")
+  p_ $ do
+    "Derivation: "
+    code_ $ toHtml drv
+  pre_ [class_ "build-log"] $ toHtml logText
 
 -- | Strip ssh:// prefix from machine names.
 stripSSH :: Text -> Text
