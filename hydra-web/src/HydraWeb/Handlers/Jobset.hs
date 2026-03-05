@@ -65,4 +65,5 @@ jobsetHandler mCookie project jobset mPage = do
                 , pdCounts   = counts
                 , pdUser     = mUser
                 }
-          pure $ pageLayout pd $ jobsetPage bp js evals total page perPage
+          let isAuth = case mUser of { Just _ -> True; Nothing -> False }
+          pure $ pageLayout pd $ jobsetPage bp js evals total page perPage isAuth

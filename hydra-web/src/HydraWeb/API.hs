@@ -13,6 +13,7 @@ module HydraWeb.API
   , AuthAPI
   , ProfileAPI
   , AdminAPI
+  , ActionsAPI
   , ProxyAPI
   , JSONAPI
   , JobAPI
@@ -144,6 +145,15 @@ type AdminAPI = Header "Cookie" Text :>
   :<|> "admin" :> "org-map" :> "detect" :> Post '[HTML] (Html ())
   )
 
+-- | User actions that modify state (POST endpoints).
+-- Cookie header required for authentication.
+type ActionsAPI = Header "Cookie" Text :>
+  (    "projects" :> Capture "name" Text :> "jobsets" :> Capture "js" Text
+       :> "trigger" :> Post '[PlainText] NoContent
+  :<|> "build" :> Capture "id" Int :> "restart"
+       :> Post '[PlainText] NoContent
+  )
+
 -- | SSE stream endpoints (Raw WAI apps for long-lived connections).
 type StreamAPI =
   -- GET /stream/global — nav count updates
@@ -184,6 +194,7 @@ type FullAPI =
   :<|> AuthAPI
   :<|> ProfileAPI
   :<|> AdminAPI
+  :<|> ActionsAPI
   :<|> JSONAPI
   :<|> JobAPI
   :<|> StreamAPI

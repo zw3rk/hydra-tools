@@ -19,9 +19,10 @@ import HydraWeb.Models.Build
 import HydraWeb.View.Components
 
 -- | Render the build detail page with status hero and timeline.
+-- When @showActions@ is True, a "Restart Build" button is shown for finished builds.
 buildPage :: Text -> Build -> [BuildStep] -> [BuildOutput] -> [BuildProduct]
-          -> [BuildMetric] -> [BuildInput] -> [Int] -> [Build] -> Html ()
-buildPage bp build steps outputs products metrics inputs evalIDs constits = do
+          -> [BuildMetric] -> [BuildInput] -> [Int] -> [Build] -> Bool -> Html ()
+buildPage bp build steps outputs products metrics inputs evalIDs constits showActions = do
   -- Breadcrumb: Home / Project / Jobset / Build #N
   breadcrumb [ ("Projects", bp <> "/")
              , (buildProject build, projectURL bp (buildProject build))
@@ -38,6 +39,14 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits = do
       toHtml (buildJob build)
       " \x2014 "
       toHtml (buildSystem build)
+
+  -- Restart button for finished builds (authenticated users only).
+  if showActions && buildFinished build == 1
+    then form_ [ method_ "POST"
+               , action_ (bp <> "/build/" <> showT (buildId build) <> "/restart")
+               ] $
+      button_ [type_ "submit", class_ "btn outline"] "Restart Build"
+    else pure ()
 
   -- Build summary.
   dl_ [class_ "build-summary"] $ do

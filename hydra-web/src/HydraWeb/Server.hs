@@ -44,6 +44,7 @@ import HydraWeb.Handlers.OrgRepo (orgRepoHandler)
 import HydraWeb.Handlers.Auth (handleLogin, handleGitHubAuth, handleGitHubCallback, handleLogout)
 import HydraWeb.Handlers.Profile (profileHandler)
 import HydraWeb.Handlers.Admin (adminServer)
+import HydraWeb.Handlers.Actions (triggerEvalHandler, restartBuildHandler)
 
 -- API handlers
 import HydraWeb.Handlers.Proxy (proxyToBackend)
@@ -78,6 +79,7 @@ server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> hoistServer (Proxy @AuthAPI) (runAppM app) authServer
         :<|> hoistServer (Proxy @ProfileAPI) (runAppM app) profileHandler
         :<|> hoistServer (Proxy @AdminAPI) (runAppM app) adminServer
+        :<|> hoistServer (Proxy @ActionsAPI) (runAppM app) actionsServer
         :<|> hoistServer (Proxy @JSONAPI) (runAppM app) jsonServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
         :<|> streamServer app
@@ -112,6 +114,12 @@ htmlServer mCookie =
 legacyServer :: ServerT LegacyRedirectAPI AppM
 legacyServer = legacyProjectRedirect
           :<|> legacyJobsetRedirect
+
+-- | User action handlers (POST endpoints for trigger/restart).
+actionsServer :: ServerT ActionsAPI AppM
+actionsServer mCookie =
+         triggerEvalHandler mCookie
+    :<|> restartBuildHandler mCookie
 
 -- | JSON API handlers, wired in the same order as JSONAPI.
 jsonServer :: ServerT JSONAPI AppM

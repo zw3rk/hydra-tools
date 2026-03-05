@@ -19,8 +19,9 @@ import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, s
 import HydraWeb.View.Pager (pager)
 
 -- | Render the jobset page content with breadcrumbs and progress bars.
-jobsetPage :: Text -> Jobset -> [EvalInfo] -> Int -> Int -> Int -> Html ()
-jobsetPage bp js evals total page perPage = do
+-- When @showActions@ is True, a "Trigger Evaluation" button is shown.
+jobsetPage :: Text -> Jobset -> [EvalInfo] -> Int -> Int -> Int -> Bool -> Html ()
+jobsetPage bp js evals total page perPage showActions = do
   -- Breadcrumb: Home / Project / Jobset
   breadcrumb [ ("Projects", bp <> "/")
              , (jsProject js, projectURL bp (jsProject js))
@@ -32,6 +33,14 @@ jobsetPage bp js evals total page perPage = do
     case jsDescription js of
       Just d  -> p_ $ toHtml d
       Nothing -> pure ()
+
+  -- Trigger evaluation button (authenticated users only).
+  if showActions
+    then form_ [ method_ "POST"
+               , action_ (bp <> "/projects/" <> jsProject js <> "/jobsets/" <> jsName js <> "/trigger")
+               ] $
+      button_ [type_ "submit", class_ "btn outline"] "Trigger Evaluation"
+    else pure ()
 
   -- Overall progress bar.
   progressBar (jsNrSucceeded js) (jsNrFailed js) (jsNrScheduled js)

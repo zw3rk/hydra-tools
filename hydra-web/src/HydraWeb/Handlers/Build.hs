@@ -64,5 +64,6 @@ buildHandler mCookie bid = do
             , pdCounts   = counts
             , pdUser     = mUser
             }
+      let isAuth = case mUser of { Just _ -> True; Nothing -> False }
       pure $ pageLayout pd $
-        buildPage bp build steps outputs products metrics inputs evalIDs constits
+        buildPage bp build steps outputs products metrics inputs evalIDs constits isAuth

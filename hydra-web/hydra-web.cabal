@@ -55,6 +55,7 @@ library
       , HydraWeb.Server
         -- Database
       , HydraWeb.DB.Pool
+      , HydraWeb.DB.Actions
       , HydraWeb.DB.Projects
       , HydraWeb.DB.Builds
       , HydraWeb.DB.Evals
@@ -90,6 +91,7 @@ library
       , HydraWeb.Handlers.Bridges
       , HydraWeb.Handlers.Auth
       , HydraWeb.Handlers.Profile
+      , HydraWeb.Handlers.Actions
       , HydraWeb.Handlers.Admin
       , HydraWeb.Handlers.BuildLog
       , HydraWeb.Handlers.Proxy

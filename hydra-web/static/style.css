@@ -505,6 +505,27 @@ dl.eval-info dt, dl.build-summary dt {
   border-bottom-color: var(--hw-text-muted);
 }
 
+/* ── Action Buttons ───────────────────────────────────────── */
+.btn {
+  display: inline-block;
+  padding: 0.4em 0.8em;
+  border-radius: var(--hw-radius-sm);
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn.outline {
+  background: transparent;
+  border: 1px solid var(--hw-primary);
+  color: var(--hw-primary);
+}
+
+.btn.outline:hover {
+  background: var(--hw-primary);
+  color: #fff;
+}
+
 .inline-form {
   display: inline;
 }
