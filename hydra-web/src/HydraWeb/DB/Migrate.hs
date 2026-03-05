@@ -144,15 +144,8 @@ runMigrations conn = do
     GRANT SELECT ON gf_org_project_map TO hydra
   |]) :: IO (Either SomeException Int64)
 
-  -- Allow hydra-web to trigger evaluations (UPDATE triggertime on jobsets)
-  -- and restart builds (UPDATE finished/buildstatus on builds).
-  -- The tables are owned by the hydra user; hydra-web needs write access
-  -- for user-triggered actions.
-  _ <- try (execute_ conn [sql|
-    GRANT UPDATE ON jobsets TO "hydra-web"
-  |]) :: IO (Either SomeException Int64)
-  _ <- try (execute_ conn [sql|
-    GRANT UPDATE ON builds TO "hydra-web"
-  |]) :: IO (Either SomeException Int64)
+  -- NOTE: UPDATE grants on hydra-owned tables (jobsets, builds) are handled
+  -- in web-service-hydra.nix postgresql.postStart, which runs as the postgres
+  -- superuser.  hydra-web cannot grant itself permissions on those tables.
 
   pure ()
