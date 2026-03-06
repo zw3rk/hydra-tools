@@ -107,10 +107,8 @@ library
       , HydraWeb.SSE.Hub
       , HydraWeb.SSE.Listener
       , HydraWeb.SSE.Stream
-      , HydraWeb.SSE.Fragments
         -- Views
       , HydraWeb.View.Layout
-      , HydraWeb.View.Render
       , HydraWeb.View.Components
       , HydraWeb.View.HTMX
       , HydraWeb.View.Pager

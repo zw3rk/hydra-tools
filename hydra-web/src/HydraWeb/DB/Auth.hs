@@ -9,9 +9,7 @@ module HydraWeb.DB.Auth
   ( -- * Users
     upsertGFUser
   , getGFUserById
-  , getGFUserByGitHubLogin
   , listGFUsers
-  , setSuperAdmin
   , bootstrapSuperAdmins
     -- * Sessions
   , createSession
@@ -21,13 +19,10 @@ module HydraWeb.DB.Auth
   , deleteExpiredSessions
     -- * GitHub tokens
   , upsertGitHubToken
-  , getGitHubToken
     -- * API tokens
-  , createAPIToken
   , getAPITokenByHash
   , touchAPIToken
   , listAPITokens
-  , deleteAPIToken
   ) where
 
 import Data.ByteString (ByteString)
@@ -71,20 +66,6 @@ getGFUserById conn uid = do
     []    -> Nothing
     (r:_) -> Just (scanUser r)
 
--- | Fetch a user by GitHub login.
-getGFUserByGitHubLogin :: Connection -> Text -> IO (Maybe GFUser)
-getGFUserByGitHubLogin conn login = do
-  rows <- query conn [sql|
-    SELECT id, github_id, github_login, display_name, email, avatar_url,
-           is_super_admin,
-           EXTRACT(EPOCH FROM created_at)::int,
-           EXTRACT(EPOCH FROM updated_at)::int
-    FROM gf_users WHERE github_login = ?
-  |] (Only login)
-  pure $ case rows of
-    []    -> Nothing
-    (r:_) -> Just (scanUser r)
-
 -- | List all users ordered by login.
 listGFUsers :: Connection -> IO [GFUser]
 listGFUsers conn = do
@@ -101,14 +82,6 @@ scanUser :: (Int, Int, Text, Maybe Text, Maybe Text, Maybe Text, Bool, Int, Int)
          -> GFUser
 scanUser (uid, ghId, login, dn, email, avatar, admin, created, updated) =
   GFUser uid ghId login dn email avatar admin created updated
-
--- | Set/unset super-admin flag for a user.
-setSuperAdmin :: Connection -> Int -> Bool -> IO ()
-setSuperAdmin conn uid isAdmin = do
-  _ <- execute conn [sql|
-    UPDATE gf_users SET is_super_admin = ?, updated_at = now() WHERE id = ?
-  |] (isAdmin, uid)
-  pure ()
 
 -- | Ensure a list of GitHub logins are super-admins.
 -- Used on startup for HYDRA_WEB_SUPER_ADMINS env var.
@@ -190,28 +163,7 @@ upsertGitHubToken conn userId encToken = do
   |] (userId, Binary encToken)
   pure ()
 
--- | Get the encrypted GitHub token for a user.
--- Uses Binary wrapper to read bytea column as raw bytes.
-getGitHubToken :: Connection -> Int -> IO (Maybe ByteString)
-getGitHubToken conn userId = do
-  rows <- query conn [sql|
-    SELECT access_token_enc FROM gf_github_tokens WHERE user_id = ?
-  |] (Only userId)
-  pure $ case rows of
-    []                    -> Nothing
-    (Only (Binary t):_)   -> Just t
-
 -- ── API tokens ───────────────────────────────────────────────────────
-
--- | Create a new API token. Returns the token's internal ID.
-createAPIToken :: Connection -> Int -> Text -> Text -> Text -> IO Int
-createAPIToken conn userId label tokenHash tokenPrefix = do
-  [Only tid] <- query conn [sql|
-    INSERT INTO gf_api_tokens (user_id, label, token_hash, token_prefix)
-    VALUES (?, ?, ?, ?)
-    RETURNING id
-  |] (userId, label, tokenHash, tokenPrefix)
-  pure tid
 
 -- | Look up an API token by its SHA-256 hash, if not expired.
 getAPITokenByHash :: Connection -> Text -> IO (Maybe (Int, Int))
@@ -245,10 +197,3 @@ listAPITokens conn userId = do
   |] (Only userId)
   pure [GFAPIToken i u l h p c lu e | (i, u, l, h, p, c, lu, e) <- rows]
 
--- | Delete an API token.
-deleteAPIToken :: Connection -> Int -> Int -> IO ()
-deleteAPIToken conn tokenId userId = do
-  _ <- execute conn [sql|
-    DELETE FROM gf_api_tokens WHERE id = ? AND user_id = ?
-  |] (tokenId, userId)
-  pure ()

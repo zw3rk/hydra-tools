@@ -8,12 +8,10 @@
 
 module HydraWeb.DB.Projects
   ( visibleProjects
-  , allProjects
   , getProject
   , getJobset
   , jobsetOverview
   , isProjectHidden
-  , isProjectHiddenByBuild
   , getProjectNameByBuild
   ) where
 
@@ -32,20 +30,6 @@ visibleProjects conn = do
     SELECT name, displayname, description, enabled, hidden, owner, homepage
     FROM projects
     WHERE hidden = 0
-    ORDER BY enabled DESC, name
-  |]
-  pure $ map toProject rows
-  where
-    toProject (name, displayname, desc, enabled, hidden, owner, homepage) =
-      Project name displayname desc enabled hidden owner homepage
-             Nothing Nothing Nothing []
-
--- | Fetch all projects (including hidden).
-allProjects :: Connection -> IO [Project]
-allProjects conn = do
-  rows <- query_ conn [sql|
-    SELECT name, displayname, description, enabled, hidden, owner, homepage
-    FROM projects
     ORDER BY enabled DESC, name
   |]
   pure $ map toProject rows
@@ -124,21 +108,6 @@ isProjectHidden conn name = do
   |] (Only name)
   case rows of
     []          -> pure True   -- Non-existent projects are treated as hidden
-    (Only h):_ -> pure (h /= (0 :: Int))
-
--- | Look up whether a build's parent project is hidden (by build ID).
--- Returns True if hidden or if the build/project does not exist.
-isProjectHiddenByBuild :: Connection -> Int -> IO Bool
-isProjectHiddenByBuild conn buildId' = do
-  rows <- query conn [sql|
-    SELECT p.hidden
-    FROM builds b
-    JOIN jobsets j ON j.id = b.jobset_id
-    JOIN projects p ON p.name = j.project
-    WHERE b.id = ?
-  |] (Only buildId')
-  case rows of
-    []          -> pure True
     (Only h):_ -> pure (h /= (0 :: Int))
 
 -- | Get the project name for a build by its ID. Returns Nothing if the build

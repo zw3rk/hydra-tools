@@ -11,10 +11,8 @@ module HydraWeb.SSE.Hub
   ( Hub
   , Topic (..)
   , newHub
-  , subscribe
   , subscribeTopics
   , unsubscribe
-  , broadcast
   , broadcastTo
   ) where
 
@@ -55,12 +53,6 @@ newHub = do
   subs   <- newTVarIO Map.empty
   pure Hub { hubNextId = nextId, hubSubs = subs }
 
--- | Register a new subscriber interested in all topics (backward-compatible).
--- Returns a (subscriberId, queue) pair.
-subscribe :: Hub -> IO (Int, TBQueue BS.ByteString)
-subscribe hub = subscribeTopics hub (Set.fromList
-  [TopicGlobal, TopicBridges, TopicQueue, TopicMachines, TopicRunningEvals])
-
 -- | Register a subscriber interested in specific topics.
 -- TopicGlobal is always included automatically.
 subscribeTopics :: Hub -> Set Topic -> IO (Int, TBQueue BS.ByteString)
@@ -76,17 +68,6 @@ subscribeTopics hub topics = atomically $ do
 unsubscribe :: Hub -> Int -> IO ()
 unsubscribe hub sid = atomically $
   modifyTVar' (hubSubs hub) (Map.delete sid)
-
--- | Broadcast a message to ALL subscribers (ignoring topic filtering).
--- Used for backward-compatible broadcasts.
-broadcast :: Hub -> BS.ByteString -> IO ()
-broadcast hub msg = atomically $ do
-  subs <- readTVar (hubSubs hub)
-  mapM_ (tryWrite . subQueue) (Map.elems subs)
-  where
-    tryWrite q = do
-      full <- isFullTBQueue q
-      if full then pure () else writeTBQueue q msg
 
 -- | Broadcast a message only to subscribers of a specific topic.
 broadcastTo :: Hub -> Topic -> BS.ByteString -> IO ()

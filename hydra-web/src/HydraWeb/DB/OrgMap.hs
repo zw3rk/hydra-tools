@@ -15,7 +15,6 @@ module HydraWeb.DB.OrgMap
   , listMappings
   , autoDetectMappings
   , upsertMapping
-  , deleteMapping
   ) where
 
 import Control.Exception (SomeException, catch)
@@ -166,10 +165,3 @@ upsertMapping conn projectName org repo autoDetected = do
   |] (projectName, org, repo, autoDetected)
   pure ()
 
--- | Delete an org/repo mapping by project name.
-deleteMapping :: Connection -> Text -> IO ()
-deleteMapping conn projectName = do
-  _ <- execute conn [sql|
-    DELETE FROM gf_org_project_map WHERE project_name = ?
-  |] (Only projectName)
-  pure ()

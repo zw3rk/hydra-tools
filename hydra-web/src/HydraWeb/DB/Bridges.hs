@@ -10,8 +10,6 @@
 
 module HydraWeb.DB.Bridges
   ( bridgeFullStatus
-  , gitHubBridgeStatus
-  , atticBridgeStatus
   ) where
 
 import Control.Exception (try)
