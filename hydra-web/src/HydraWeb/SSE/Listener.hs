@@ -1,10 +1,10 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | SSE broadcaster with two concurrent loops:
--- 1. PostgreSQL LISTEN for real-time bridge notifications
--- 2. Periodic polling for queue/machines/evals/nav counts
--- Both loops broadcast to topic-specific subscribers via the Hub.
+-- | SSE broadcaster for bridge status updates.
+-- Two concurrent loops both broadcast to TopicBridges:
+-- 1. PostgreSQL LISTEN — real-time on github_status/step_finished
+-- 2. Periodic poll — 30-second heartbeat for subscribers
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -29,9 +29,7 @@ import System.Timeout (timeout)
 import HydraWeb.DB.Bridges (bridgeFullStatus)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.SSE.Hub (Hub, Topic (..), broadcastTo)
-import HydraWeb.View.Pages.Bridges (renderBridgesContentBS)
-import HydraWeb.SSE.Fragments (renderNavCountsBS, renderQueueContentBS,
-                                renderMachinesContentBS, renderRunningEvalsBS)
+import HydraWeb.View.Pages.Bridges (renderGitHubDataBS, renderAtticDataBS)
 
 -- | Start both the PG LISTEN loop and the polling loop. Blocks until shutdown.
 listenAndBroadcast :: Text -> Pool Connection -> Hub -> IORef Bool -> IO ()
@@ -69,15 +67,15 @@ listenSession dbURL pool hub running =
     -- Send an initial broadcast so clients get data immediately.
     broadcastBridgeStatus pool hub
 
-    -- Main notification loop with 10s heartbeat timeout.
+    -- Main notification loop with 30s heartbeat timeout.
     let go = do
           alive <- readIORef running
           if not alive then pure ()
           else do
-            mNotif <- timeout (10 * 1000000) (getNotification listenConn)
+            mNotif <- timeout (30 * 1000000) (getNotification listenConn)
             case mNotif of
               Nothing -> do
-                -- Heartbeat — broadcast unconditionally.
+                -- Heartbeat — broadcast bridge status periodically.
                 broadcastBridgeStatus pool hub
                 go
               Just _notif -> do
@@ -85,9 +83,6 @@ listenSession dbURL pool hub running =
                 threadDelay (500 * 1000)
                 drainNotifications listenConn
                 broadcastBridgeStatus pool hub
-                -- Also piggyback queue/machines updates on step_finished.
-                broadcastQueueStatus pool hub
-                broadcastMachinesStatus pool hub
                 go
     go
 
@@ -101,8 +96,10 @@ drainNotifications conn = do
 
 -- ── Global polling loop ───────────────────────────────────────────────
 
--- | Periodic polling loop for nav counts, queue, machines, and running evals.
--- Runs every 10 seconds.
+-- | Periodic polling loop for bridge status updates.
+-- Queue and machines pages no longer use SSE (they were replacing
+-- full tables with single-line count summaries — a regression).
+-- Runs every 30 seconds.
 globalPollLoop :: Pool Connection -> Hub -> IORef Bool -> IO ()
 globalPollLoop pool hub running = loop
   where
@@ -110,58 +107,26 @@ globalPollLoop pool hub running = loop
       alive <- readIORef running
       if not alive then pure ()
       else do
-        -- Poll and broadcast all topic-specific content.
-        result <- try $ do
-          broadcastNavCounts pool hub
-          broadcastQueueStatus pool hub
-          broadcastMachinesStatus pool hub
-          broadcastRunningEvals pool hub
+        result <- try $ broadcastBridgeStatus pool hub
         case result of
           Right () -> pure ()
           Left (e :: SomeException) ->
             hPutStrLn stderr $ "Poll loop error: " ++ show e
 
-        -- Sleep 10 seconds between polls.
-        threadDelay (10 * 1000000)
+        threadDelay (30 * 1000000)
         loop
 
 -- ── Broadcast helpers ─────────────────────────────────────────────────
 
 -- | Query and broadcast bridge status to TopicBridges subscribers.
+-- Sends two separate SSE events — one for each tab — so that tab
+-- structure and display state are never disturbed.
 broadcastBridgeStatus :: Pool Connection -> Hub -> IO ()
 broadcastBridgeStatus pool hub = do
   status <- withConn pool bridgeFullStatus
-  let html = renderBridgesContentBS status
-      sseMsg = formatSSE "bridge-update" html
-  broadcastTo hub TopicBridges sseMsg
+  broadcastTo hub TopicBridges (formatSSE "github-bridge-update" (renderGitHubDataBS status))
+  broadcastTo hub TopicBridges (formatSSE "attic-bridge-update" (renderAtticDataBS status))
 
--- | Query and broadcast nav counts to TopicGlobal (all subscribers).
-broadcastNavCounts :: Pool Connection -> Hub -> IO ()
-broadcastNavCounts pool hub = do
-  bs <- withConn pool renderNavCountsBS
-  let sseMsg = formatSSE "nav-update" bs
-  broadcastTo hub TopicGlobal sseMsg
-
--- | Query and broadcast queue status to TopicQueue subscribers.
-broadcastQueueStatus :: Pool Connection -> Hub -> IO ()
-broadcastQueueStatus pool hub = do
-  bs <- withConn pool renderQueueContentBS
-  let sseMsg = formatSSE "queue-update" bs
-  broadcastTo hub TopicQueue sseMsg
-
--- | Query and broadcast machine status to TopicMachines subscribers.
-broadcastMachinesStatus :: Pool Connection -> Hub -> IO ()
-broadcastMachinesStatus pool hub = do
-  bs <- withConn pool renderMachinesContentBS
-  let sseMsg = formatSSE "machines-update" bs
-  broadcastTo hub TopicMachines sseMsg
-
--- | Query and broadcast running evals to TopicRunningEvals subscribers.
-broadcastRunningEvals :: Pool Connection -> Hub -> IO ()
-broadcastRunningEvals pool hub = do
-  bs <- withConn pool renderRunningEvalsBS
-  let sseMsg = formatSSE "running-evals-update" bs
-  broadcastTo hub TopicRunningEvals sseMsg
 
 -- | Format an HTML fragment as an SSE event.
 -- event: <eventName>\ndata: <line1>\ndata: <line2>\n...\n\n

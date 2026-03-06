@@ -1,16 +1,17 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Bridge status page and reusable content partial.
--- The content partial is also used by the SSE broadcaster to push
--- live updates without a full page reload.
+-- | Bridge status page with client-side tabs.
+-- Tab buttons and panel wrappers live outside the SSE zone so they are
+-- never replaced.  Each tab panel has its own SSE target that only
+-- replaces the data inside the panel, preserving tab state.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module HydraWeb.View.Pages.Bridges
   ( bridgesPage
-  , bridgesContent
-  , renderBridgesContentBS
+  , renderGitHubDataBS
+  , renderAtticDataBS
   ) where
 
 import Data.ByteString (ByteString)
@@ -22,30 +23,14 @@ import HydraWeb.Models.Bridge
 import HydraWeb.View.Components (fmtTime, showT, shortPath)
 import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
--- | Full bridges page with SSE live-update wrapper.
--- Includes a script to preserve the active tab across SSE content swaps.
+-- | Full bridges page.  Tab buttons and panel structure are rendered
+-- here (never replaced by SSE).  Only the data divs inside each panel
+-- are swapped live.
 bridgesPage :: Text -> BridgeStatus -> Html ()
 bridgesPage bp status = do
   h1_ "Bridge Status"
-  -- Track active tab and restore it after SSE replaces the content.
-  script_ ("var _activeTab='github';\
-           \document.addEventListener('htmx:afterSwap',function(e){\
-           \if(e.detail.target.id==='bridge-content'){\
-           \var g=document.getElementById('tab-github');\
-           \var a=document.getElementById('tab-attic');\
-           \var gb=document.getElementById('tab-github-btn');\
-           \var ab=document.getElementById('tab-attic-btn');\
-           \if(_activeTab==='attic'){g.style.display='none';a.style.display='';gb.className='';ab.className='active';}\
-           \}});" :: Text)
-  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $
-    div_ [id_ "bridge-content", sseSwap_ "bridge-update", hxSwap_ "innerHTML"] $
-      bridgesContent status
 
--- | Reusable content partial for both initial render and SSE updates.
--- Uses client-side tabs to switch between GitHub and Attic sections.
-bridgesContent :: BridgeStatus -> Html ()
-bridgesContent status = do
-  -- Tab buttons with pending counts in labels.
+  -- Tab buttons — outside the SSE zone, never replaced.
   div_ [role_ "tablist"] $ do
     let ghLabel = "GitHub" <> ghBadge
         ghBadge = case bsGitHub status of
@@ -56,45 +41,30 @@ bridgesContent status = do
           Just at | absPending at > 0 -> " (" <> showT (absPending at) <> ")"
           _ -> ""
     button_ [ role_ "tab", id_ "tab-github-btn", class_ "active"
-            , onclick_ "_activeTab='github';document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
+            , onclick_ "document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
             ] (toHtml ghLabel)
     button_ [ role_ "tab", id_ "tab-attic-btn"
-            , onclick_ "_activeTab='attic';document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
+            , onclick_ "document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
             ] (toHtml atLabel)
 
-  -- GitHub tab panel (shown by default).
-  div_ [id_ "tab-github"] $
-    case bsGitHub status of
-      Nothing -> p_ "GitHub bridge tables not found. Bridge may not be deployed."
-      Just gh -> renderGitHub gh
+  -- SSE connection — wraps both panels but only targets the inner data divs.
+  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $ do
+    -- GitHub tab panel (shown by default).
+    div_ [id_ "tab-github"] $
+      div_ [id_ "github-data", sseSwap_ "github-bridge-update", hxSwap_ "innerHTML"] $
+        githubData (bsGitHub status)
 
-  -- Attic tab panel (hidden by default).
-  div_ [id_ "tab-attic", style_ "display:none"] $
-    case bsAttic status of
-      Nothing -> p_ "Attic bridge table not found. Bridge may not be deployed."
-      Just attic -> renderAttic attic
-
--- | Render the bridges content partial to a strict ByteString.
--- Used by the SSE broadcaster.
-renderBridgesContentBS :: BridgeStatus -> ByteString
-renderBridgesContentBS = LBS.toStrict . renderBS . bridgesContent
-
--- ── Shared summary ──────────────────────────────────────────────────
-
--- | Consistent summary line used by both GitHub and Attic tabs.
-bridgeSummary :: Int -> Int -> Int -> Html ()
-bridgeSummary total pending failed = p_ $ do
-  "Total: "
-  strong_ (toHtml $ showT total)
-  " | Pending: "
-  strong_ (toHtml $ showT pending)
-  " | Failed: "
-  strong_ (toHtml $ showT failed)
+    -- Attic tab panel (hidden by default).
+    div_ [id_ "tab-attic", style_ "display:none"] $
+      div_ [id_ "attic-data", sseSwap_ "attic-bridge-update", hxSwap_ "innerHTML"] $
+        atticData (bsAttic status)
 
 -- ── GitHub rendering ─────────────────────────────────────────────────
 
-renderGitHub :: GitHubBridgeStatus -> Html ()
-renderGitHub gh = do
+-- | Render GitHub bridge data (the inner content of the GitHub tab).
+githubData :: Maybe GitHubBridgeStatus -> Html ()
+githubData Nothing = p_ "GitHub bridge tables not found. Bridge may not be deployed."
+githubData (Just gh) = do
   bridgeSummary (ghsTotal gh) (ghsPending gh) (ghsFailed gh)
 
   if null (ghsByRepo gh)
@@ -120,24 +90,16 @@ renderGitHub gh = do
           th_ "Sent"
         tbody_ $ mapM_ renderRecentRow (ghsRecentSent gh)
 
-renderRepoRow :: GitHubRepoRow -> Html ()
-renderRepoRow r = tr_ $ do
-  td_ (toHtml $ grrOwner r)
-  td_ (toHtml $ grrRepo r)
-  td_ (toHtml $ showT (grrPending r))
-  td_ (toHtml $ showT (grrFailed r))
-
-renderRecentRow :: GitHubRecentSend -> Html ()
-renderRecentRow r = tr_ $ do
-  td_ (toHtml $ grsOwner r)
-  td_ (toHtml $ grsRepo r)
-  td_ (toHtml $ grsName r)
-  td_ (toHtml $ fmtTime (grsSent r))
+-- | Render GitHub data to a strict ByteString for SSE broadcasting.
+renderGitHubDataBS :: BridgeStatus -> ByteString
+renderGitHubDataBS = LBS.toStrict . renderBS . githubData . bsGitHub
 
 -- ── Attic rendering ──────────────────────────────────────────────────
 
-renderAttic :: AtticBridgeStatus -> Html ()
-renderAttic attic = do
+-- | Render Attic bridge data (the inner content of the Attic tab).
+atticData :: Maybe AtticBridgeStatus -> Html ()
+atticData Nothing = p_ "Attic bridge table not found. Bridge may not be deployed."
+atticData (Just attic) = do
   bridgeSummary (absTotal attic) (absPending attic) (absFailed attic)
 
   if null (absRecentActive attic)
@@ -151,6 +113,36 @@ renderAttic attic = do
           th_ "Last Attempt"
           th_ "Tries"
         tbody_ $ mapM_ renderQueueItem (absRecentActive attic)
+
+-- | Render Attic data to a strict ByteString for SSE broadcasting.
+renderAtticDataBS :: BridgeStatus -> ByteString
+renderAtticDataBS = LBS.toStrict . renderBS . atticData . bsAttic
+
+-- ── Shared ───────────────────────────────────────────────────────────
+
+-- | Consistent summary line: Total / Pending / Failed.
+bridgeSummary :: Int -> Int -> Int -> Html ()
+bridgeSummary total pending failed = p_ $ do
+  "Total: "
+  strong_ (toHtml $ showT total)
+  " | Pending: "
+  strong_ (toHtml $ showT pending)
+  " | Failed: "
+  strong_ (toHtml $ showT failed)
+
+renderRepoRow :: GitHubRepoRow -> Html ()
+renderRepoRow r = tr_ $ do
+  td_ (toHtml $ grrOwner r)
+  td_ (toHtml $ grrRepo r)
+  td_ (toHtml $ showT (grrPending r))
+  td_ (toHtml $ showT (grrFailed r))
+
+renderRecentRow :: GitHubRecentSend -> Html ()
+renderRecentRow r = tr_ $ do
+  td_ (toHtml $ grsOwner r)
+  td_ (toHtml $ grsRepo r)
+  td_ (toHtml $ grsName r)
+  td_ (toHtml $ fmtTime (grsSent r))
 
 renderQueueItem :: AtticQueueItem -> Html ()
 renderQueueItem item = tr_ $ do

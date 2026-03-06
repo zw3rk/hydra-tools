@@ -20,18 +20,13 @@ import Lucid
 import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
 import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
 import HydraWeb.View.Components
-import HydraWeb.View.HTMX (hxExt_, sseConnect_, sseSwap_, hxSwap_)
 
--- | Render the full queue list page with SSE live updates.
+-- | Render the full queue list page.
 queuePage :: Text -> [Build] -> Int -> Html ()
 queuePage bp builds total = do
   h1_ $ toHtml ("Build Queue (" <> showT total <> ")")
   p_ $ a_ [href_ (bp <> "/queue-summary")] "View queue summary"
-
-  -- SSE live-update wrapper.
-  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/queue")] $
-    div_ [id_ "queue-content", sseSwap_ "queue-update", hxSwap_ "innerHTML"] $
-      queueContent bp builds
+  queueContent bp builds
 
 -- | Queue content partial (for both initial render and SSE updates).
 queueContent :: Text -> [Build] -> Html ()
@@ -82,14 +77,11 @@ queueSummaryPage bp summary systems total = do
       td_ $ toHtml (fmtTime (qsOldest s))
       td_ $ toHtml (fmtTime (qsNewest s))
 
--- | Render the machines/active steps page with SSE live updates.
+-- | Render the machines/active steps page.
 machinesPage :: Text -> [ActiveStep] -> Html ()
 machinesPage bp steps = do
   h1_ "Machine Status"
-
-  div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/machines")] $
-    div_ [id_ "machines-content", sseSwap_ "machines-update", hxSwap_ "innerHTML"] $
-      machinesContent bp steps
+  machinesContent bp steps
 
 -- | Machines content partial (for both initial render and SSE updates).
 machinesContent :: Text -> [ActiveStep] -> Html ()
