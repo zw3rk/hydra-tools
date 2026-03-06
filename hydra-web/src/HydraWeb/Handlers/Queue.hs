@@ -52,19 +52,21 @@ queueHandler mCookie = do
   pure $ pageLayout pd $ queuePage bp builds total
 
 -- | Render queue summary by jobset and system (GET /queue-summary).
+-- Derives the total from visible summary rows to avoid leaking the
+-- existence of private-repo builds via count discrepancy.
 queueSummaryHandler :: Maybe Text -> AppM (Html ())
 queueSummaryHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (summary, systems, total, counts) <- liftIO $ withConn pool $ \conn -> do
+  (summary, systems, counts) <- liftIO $ withConn pool $ \conn -> do
     s  <- queueSummary conn
     visible <- filterByProjectAccess conn mUser qsProject s
     sy <- systemQueueSummary conn
-    t  <- queueCount conn
     nc <- navCounts conn
-    pure (visible, sy, t, nc)
-  let pd = PageData
+    pure (visible, sy, nc)
+  let total = sum (map qsQueued summary)
+      pd = PageData
         { pdTitle    = "Queue Summary"
         , pdBasePath = bp
         , pdCounts   = counts

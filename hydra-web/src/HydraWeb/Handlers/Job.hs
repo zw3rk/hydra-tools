@@ -29,6 +29,7 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (latestBuildForJob)
 import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Visibility (isProjectAccessible)
 
 -- | Shields.io badge response format.
 data ShieldBadge = ShieldBadge
@@ -54,13 +55,17 @@ redirect302 url = throwError err302
   }
 
 -- | Redirect to the latest successful build for a job.
+-- Returns 404 if the project is not accessible (hidden or private repo).
 -- GET /job/:project/:jobset/:job/latest
 jobLatestHandler :: Text -> Text -> Text -> AppM ShieldBadge
 jobLatestHandler project jobset job = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  mBuild <- liftIO $ withConn pool $ \conn ->
-    latestBuildForJob conn project jobset job Nothing
+  mBuild <- liftIO $ withConn pool $ \conn -> do
+    accessible <- isProjectAccessible conn project Nothing
+    if not accessible
+      then pure Nothing
+      else latestBuildForJob conn project jobset job Nothing
   case mBuild of
     Nothing    -> throwError err404
     Just build -> redirect302 (bp <> "/build/" <> Text.pack (show (buildId build)))
@@ -71,24 +76,32 @@ jobLatestFinishedHandler :: Text -> Text -> Text -> AppM ShieldBadge
 jobLatestFinishedHandler = jobLatestHandler
 
 -- | Redirect to the latest build for a specific system.
+-- Returns 404 if the project is not accessible (hidden or private repo).
 -- GET /job/:project/:jobset/:job/latest-for/:system
 jobLatestForSystemHandler :: Text -> Text -> Text -> Text -> AppM ShieldBadge
 jobLatestForSystemHandler project jobset job system = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  mBuild <- liftIO $ withConn pool $ \conn ->
-    latestBuildForJob conn project jobset job (Just system)
+  mBuild <- liftIO $ withConn pool $ \conn -> do
+    accessible <- isProjectAccessible conn project Nothing
+    if not accessible
+      then pure Nothing
+      else latestBuildForJob conn project jobset job (Just system)
   case mBuild of
     Nothing    -> throwError err404
     Just build -> redirect302 (bp <> "/build/" <> Text.pack (show (buildId build)))
 
 -- | Return a shields.io-compatible badge for the latest build status.
+-- Returns "unknown" if the project is not accessible (hidden or private repo).
 -- GET /job/:project/:jobset/:job/shield
 jobShieldHandler :: Text -> Text -> Text -> AppM ShieldBadge
 jobShieldHandler project jobset job = do
   pool <- asks appPool
-  mBuild <- liftIO $ withConn pool $ \conn ->
-    latestBuildForJob conn project jobset job Nothing
+  mBuild <- liftIO $ withConn pool $ \conn -> do
+    accessible <- isProjectAccessible conn project Nothing
+    if not accessible
+      then pure Nothing
+      else latestBuildForJob conn project jobset job Nothing
   pure $ case mBuild of
     Nothing -> ShieldBadge 1 "hydra build" "unknown" "lightgrey"
     Just build -> case buildStatus build of
