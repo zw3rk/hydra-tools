@@ -24,7 +24,7 @@ import Network.HTTP.Client.TLS (newTlsManager)
 
 import HydraWeb.Auth.Encrypt (newEncryptor)
 import HydraWeb.Auth.Session (cleanupExpiredSessions)
-import HydraWeb.Config (Config (..), GitHubConfig (..), loadConfig)
+import HydraWeb.Config (Config (..), GitHubConfig (..), loadConfig, validateConfig)
 import HydraWeb.DB.Migrate (runMigrations)
 import Data.Pool (Pool)
 import Database.PostgreSQL.Simple (Connection)
@@ -42,6 +42,7 @@ import HydraWeb.Types (App (..))
 main :: IO ()
 main = do
   cfg  <- loadConfig
+  validateConfig cfg
   pool <- createPool (cfgDatabaseURL cfg)
   hub  <- newHub
   mgr  <- newTlsManager

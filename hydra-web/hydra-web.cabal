@@ -21,6 +21,7 @@ common common
       , bz2
       , bytestring
       , containers
+      , directory
       , github-rest
       , crypton
       , http-client

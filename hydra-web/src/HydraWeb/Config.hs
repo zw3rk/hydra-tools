@@ -10,6 +10,7 @@ module HydraWeb.Config
   ( Config (..)
   , GitHubConfig (..)
   , loadConfig
+  , validateConfig
     -- * Parsing helpers (exported for testing)
   , parseInstallationIDs
   , parseSuperAdmins
@@ -18,7 +19,10 @@ module HydraWeb.Config
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 import Text.Read (readMaybe)
 
 -- | Application configuration. All fields correspond to HYDRA_WEB_* env vars.
@@ -70,6 +74,37 @@ loadConfig = do
     , cfgHydraDataDir    = dataDir
     , cfgGitHub          = gh
     }
+
+-- | Validate configuration at startup. Exits with a clear error message
+-- if any critical settings are invalid. Warnings are printed to stderr
+-- but do not prevent startup.
+validateConfig :: Config -> IO ()
+validateConfig cfg = do
+  -- Database URL must be non-empty.
+  if Text.null (cfgDatabaseURL cfg)
+    then die "HYDRA_WEB_DATABASE_URL is empty"
+    else pure ()
+
+  -- Encryption key: if provided, must be exactly 64 hex chars (32 bytes for AES-256-GCM).
+  let key = cfgEncryptionKey cfg
+  if not (Text.null key) && Text.length key /= 64
+    then die $ "HYDRA_WEB_ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes), got "
+             ++ show (Text.length key)
+    else pure ()
+
+  -- If GitHub App ID is configured, the key file must exist.
+  let ghCfg = cfgGitHub cfg
+  if ghAppID ghCfg > 0 && not (null (ghAppKeyFile ghCfg))
+    then do
+      exists <- doesFileExist (ghAppKeyFile ghCfg)
+      if not exists
+        then die $ "HYDRA_WEB_GITHUB_APP_KEY_FILE not found: " ++ ghAppKeyFile ghCfg
+        else pure ()
+    else pure ()
+  where
+    die msg = do
+      hPutStrLn stderr $ "Config error: " ++ msg
+      exitFailure
 
 loadGitHubConfig :: IO GitHubConfig
 loadGitHubConfig = do
