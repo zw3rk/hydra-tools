@@ -12,6 +12,7 @@ module HydraWeb.Types
   , runAppM
   ) where
 
+import Control.Concurrent.STM (TVar)
 import Control.Monad.Error.Class (MonadError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
@@ -24,16 +25,19 @@ import Network.HTTP.Client (Manager)
 
 import HydraWeb.Auth.Encrypt (Encryptor)
 import HydraWeb.Config (Config)
+import HydraWeb.Models.Queue (NavCounts)
 import HydraWeb.SSE.Hub (Hub)
 
 -- | Shared application context, threaded through all handlers via ReaderT.
--- No global mutable state: everything is in this record.
+-- The only mutable state is 'appNavCounts', a TVar refreshed every ~10 seconds
+-- by the background polling loop. This avoids 4 COUNT(*) queries per page load.
 data App = App
   { appPool        :: !(Pool Connection)   -- ^ Database connection pool
   , appConfig      :: !Config              -- ^ Environment-based configuration
   , appSSEHub      :: !(Maybe Hub)         -- ^ SSE broadcast hub (Nothing if SSE disabled)
   , appEncryptor   :: !(Maybe Encryptor)   -- ^ AES-GCM encryption (Nothing if disabled)
   , appHttpManager :: !Manager             -- ^ HTTP client manager for GitHub API
+  , appNavCounts   :: !(TVar NavCounts)    -- ^ Cached nav badge counts, refreshed by SSE poller
   }
 
 -- | Handler monad: ReaderT App over Servant's Handler.

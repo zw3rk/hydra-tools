@@ -8,6 +8,7 @@ module HydraWeb.Handlers.Project
   ( projectHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
@@ -20,7 +21,6 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
@@ -34,13 +34,13 @@ projectHandler mCookie name = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (mProject, accessible, jobsets, counts, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  (mProject, accessible, jobsets, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
     mp <- getProject conn name
     acc <- isProjectAccessible conn name mUser
     js <- jobsetOverview conn name
-    nc <- navCounts conn
     mor <- lookupByProject conn name
-    pure (mp, acc, js, nc, mor)
+    pure (mp, acc, js, mor)
   case mProject of
     Nothing -> throwError err404
     Just project

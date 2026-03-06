@@ -9,6 +9,7 @@ module HydraWeb.Handlers.Profile
   ( profileHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -20,7 +21,6 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (requireAuth)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Auth (listAPITokens)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.User (GFUser (..))
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Profile (profilePage)
@@ -37,10 +37,9 @@ profileHandler cookie = do
     Left err  -> throwError err
     Right u   -> pure u
   -- Fetch the user's API tokens and nav counts.
-  (tokens, counts) <- liftIO $ withConn pool $ \conn -> do
-    ts <- listAPITokens conn (gfuId user)
-    nc <- navCounts conn
-    pure (ts, nc)
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  tokens <- liftIO $ withConn pool $ \conn ->
+    listAPITokens conn (gfuId user)
   let pd = PageData
         { pdTitle    = "Profile"
         , pdBasePath = bp

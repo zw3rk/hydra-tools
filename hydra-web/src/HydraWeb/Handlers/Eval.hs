@@ -10,6 +10,7 @@ module HydraWeb.Handlers.Eval
   , latestEvalsHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
@@ -26,7 +27,6 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
 import HydraWeb.DB.Builds (buildsByEval)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Eval (JobsetEval (..), EvalInfo (..))
 import HydraWeb.Visibility (isProjectAccessible, filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -51,6 +51,7 @@ evalHandler mCookie eid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
     mEval <- getEval conn eid
     case mEval of
@@ -63,11 +64,10 @@ evalHandler mCookie eid = do
             inputs  <- getEvalInputs conn eid
             evalErr <- getEvalError conn eid
             diff    <- loadBuildDiff conn eval
-            nc      <- navCounts conn
-            pure $ Just (eval, inputs, evalErr, diff, nc)
+            pure $ Just (eval, inputs, evalErr, diff)
   case result of
     Nothing -> throwError err404
-    Just (eval, inputs, evalErr, diff, counts) -> do
+    Just (eval, inputs, evalErr, diff) -> do
       let pd = PageData
             { pdTitle    = "Evaluation #" <> showT eid
             , pdBasePath = bp
@@ -107,12 +107,12 @@ latestEvalsHandler mCookie mPage = do
       perPage = 20
       offset  = (page - 1) * perPage
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  (evals, total) <- liftIO $ withConn pool $ \conn -> do
     es <- latestEvals conn offset perPage
     visible <- filterByProjectAccess conn mUser (evalProject . eiEval) es
     tc <- latestEvalsCount conn
-    nc <- navCounts conn
-    pure (visible, tc, nc)
+    pure (visible, tc)
   let pd = PageData
         { pdTitle    = "Latest Evaluations"
         , pdBasePath = bp

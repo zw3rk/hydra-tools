@@ -11,6 +11,7 @@ module HydraWeb.Handlers.Queue
   , stepsHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Maybe (fromMaybe)
@@ -23,7 +24,7 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (queuedBuilds)
-import HydraWeb.DB.Queue
+import HydraWeb.DB.Queue (queueSummary, systemQueueSummary, activeSteps, recentSteps)
 import HydraWeb.Models.Build (Build (..))
 import HydraWeb.Models.Queue (ActiveStep (..), QueueSummary (..))
 import HydraWeb.Visibility (filterByProjectAccess)
@@ -37,11 +38,10 @@ queueHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (builds, counts) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  builds <- liftIO $ withConn pool $ \conn -> do
     bs <- queuedBuilds conn
-    visible <- filterByProjectAccess conn mUser buildProject bs
-    nc <- navCounts conn
-    pure (visible, nc)
+    filterByProjectAccess conn mUser buildProject bs
   let total = length builds
       pd = PageData
         { pdTitle    = "Build Queue (" <> showT total <> ")"
@@ -59,12 +59,12 @@ queueSummaryHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (summary, systems, counts) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  (summary, systems) <- liftIO $ withConn pool $ \conn -> do
     s  <- queueSummary conn
     visible <- filterByProjectAccess conn mUser qsProject s
     sy <- systemQueueSummary conn
-    nc <- navCounts conn
-    pure (visible, sy, nc)
+    pure (visible, sy)
   let total = sum (map qsQueued summary)
       pd = PageData
         { pdTitle    = "Queue Summary"
@@ -80,11 +80,10 @@ machinesHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (steps, counts) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  steps <- liftIO $ withConn pool $ \conn -> do
     s  <- activeSteps conn
-    visible <- filterByProjectAccess conn mUser asProject s
-    nc <- navCounts conn
-    pure (visible, nc)
+    filterByProjectAccess conn mUser asProject s
   let pd = PageData
         { pdTitle    = "Machine Status"
         , pdBasePath = bp
@@ -99,15 +98,15 @@ stepsHandler mCookie mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
-  (steps, counts) <- liftIO $ withConn pool $ \conn -> do
+  steps <- liftIO $ withConn pool $ \conn -> do
     s  <- recentSteps conn offset perPage
     -- Phase 2: filter by repo privacy (project name is the first element).
     visible <- filterByProjectAccess conn mUser fst s
-    nc <- navCounts conn
-    pure (map snd visible, nc)
+    pure (map snd visible)
   let pd = PageData
         { pdTitle    = "Latest Build Steps"
         , pdBasePath = bp

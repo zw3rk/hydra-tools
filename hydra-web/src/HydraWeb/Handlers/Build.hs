@@ -8,6 +8,7 @@ module HydraWeb.Handlers.Build
   ( buildHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
@@ -21,7 +22,6 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (Build (..))
 import HydraWeb.Visibility (isProjectAccessible, isAuthenticated)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -35,6 +35,7 @@ buildHandler mCookie bid = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
     mBuild <- getBuild conn bid
     case mBuild of
@@ -51,13 +52,12 @@ buildHandler mCookie bid = do
             inputs   <- getBuildInputs conn bid
             evalIDs  <- getBuildEvals conn bid
             constits <- getConstituents conn bid
-            nc       <- navCounts conn
             pure $ Just (build, steps, outputs, products, metrics,
-                         inputs, evalIDs, constits, nc)
+                         inputs, evalIDs, constits)
   case result of
     Nothing -> throwError err404
     Just (build, steps, outputs, products, metrics,
-          inputs, evalIDs, constits, counts) -> do
+          inputs, evalIDs, constits) -> do
       let pd = PageData
             { pdTitle    = "Build #" <> showT bid
             , pdBasePath = bp

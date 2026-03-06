@@ -9,6 +9,7 @@ module HydraWeb.Handlers.Bridges
   ( bridgesHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Lucid (Html)
@@ -20,7 +21,6 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Bridges (bridgeFullStatus)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Bridge (BridgeStatus (..), GitHubBridgeStatus (..),
                                GitHubRepoRow (..), GitHubRecentSend (..))
 import HydraWeb.Visibility (filterByRepoAccess)
@@ -35,12 +35,11 @@ bridgesHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (filtered, counts) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  filtered <- liftIO $ withConn pool $ \conn -> do
     s  <- bridgeFullStatus conn
     -- Filter GitHub bridge data by (owner, repo) → project visibility.
-    fs <- filterGitHubBridge conn mUser s
-    nc <- navCounts conn
-    pure (fs, nc)
+    filterGitHubBridge conn mUser s
   let pd = PageData
         { pdTitle    = "Bridge Status"
         , pdBasePath = bp

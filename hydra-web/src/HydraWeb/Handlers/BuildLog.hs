@@ -10,6 +10,7 @@ module HydraWeb.Handlers.BuildLog
   ( buildLogHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Exception (try, SomeException)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -29,7 +30,6 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (getBuildStep)
 import HydraWeb.DB.Projects (getProjectNameByBuild)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (BuildStep (stepDrvPath))
 import HydraWeb.Visibility (isProjectAccessible)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -46,6 +46,7 @@ buildLogHandler mCookie bid stepNr = do
   bp      <- asks (cfgBasePath . appConfig)
   dataDir <- asks (cfgHydraDataDir . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
     -- Check project visibility before fetching the step.
     mProjName <- getProjectNameByBuild conn bid
@@ -56,14 +57,10 @@ buildLogHandler mCookie bid stepNr = do
       then pure Nothing
       else do
         mStep <- getBuildStep conn bid stepNr
-        case mStep of
-          Nothing -> pure Nothing
-          Just step -> do
-            nc <- navCounts conn
-            pure $ Just (step, nc)
+        pure mStep
   case result of
     Nothing -> throwError err404
-    Just (step, counts) -> do
+    Just step -> do
       case stepDrvPath step of
         Nothing -> throwError err404
         Just drv -> do

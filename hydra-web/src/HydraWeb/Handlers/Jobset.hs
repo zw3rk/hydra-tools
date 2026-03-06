@@ -8,6 +8,7 @@ module HydraWeb.Handlers.Jobset
   ( jobsetHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
@@ -22,7 +23,6 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getJobset)
 import HydraWeb.DB.Evals (jobsetEvals, allJobsetEvalsCount)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.Models.Project (Jobset (..))
 import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin, isAuthenticated)
@@ -36,6 +36,7 @@ jobsetHandler mCookie project jobset mPage = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
@@ -51,12 +52,11 @@ jobsetHandler mCookie project jobset mPage = do
           else do
             es  <- jobsetEvals conn (jsId js) offset perPage
             tc  <- allJobsetEvalsCount conn (jsId js)
-            nc  <- navCounts conn
             mor <- lookupByProject conn project
-            pure $ Just (js, es, tc, nc, mor)
+            pure $ Just (js, es, tc, mor)
   case mResult of
     Nothing -> throwError err404
-    Just (js, evals, total, counts, mOrgRepo) -> do
+    Just (js, evals, total, mOrgRepo) -> do
       let pd = PageData
             { pdTitle    = project <> ":" <> jsName js
             , pdBasePath = bp

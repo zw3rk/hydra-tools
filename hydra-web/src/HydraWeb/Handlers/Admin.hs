@@ -10,6 +10,7 @@ module HydraWeb.Handlers.Admin
   ( adminServer
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -31,7 +32,6 @@ import HydraWeb.DB.Installations
   (listInstallations, insertInstallation, toggleInstallation, deleteInstallation)
 import HydraWeb.DB.OrgMap
   (listMappings, upsertMapping, autoDetectMappings)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Admin (adminPage, installationsPage, orgMapPage)
 
@@ -72,10 +72,8 @@ adminHandler cookie = do
   user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  (users, counts) <- liftIO $ withConn pool $ \conn -> do
-    us <- listGFUsers conn
-    nc <- navCounts conn
-    pure (us, nc)
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  users <- liftIO $ withConn pool listGFUsers
   let pd = PageData
         { pdTitle    = "Admin Dashboard"
         , pdBasePath = bp
@@ -90,10 +88,8 @@ installationsHandler cookie = do
   user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  (installs, counts) <- liftIO $ withConn pool $ \conn -> do
-    is <- listInstallations conn
-    nc <- navCounts conn
-    pure (is, nc)
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  installs <- liftIO $ withConn pool listInstallations
   let pd = PageData
         { pdTitle    = "GitHub Installations"
         , pdBasePath = bp
@@ -143,10 +139,8 @@ orgMapHandler cookie = do
   user <- guardAdmin cookie
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
-  (mappings, counts) <- liftIO $ withConn pool $ \conn -> do
-    ms <- listMappings conn
-    nc <- navCounts conn
-    pure (ms, nc)
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  mappings <- liftIO $ withConn pool listMappings
   let pd = PageData
         { pdTitle    = "Org/Repo Mappings"
         , pdBasePath = bp

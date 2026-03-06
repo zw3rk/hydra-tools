@@ -9,6 +9,7 @@ module HydraWeb.Handlers.OrgRepo
   ( orgRepoHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -22,7 +23,6 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.OrgMap (lookupByOrgRepo)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -35,6 +35,7 @@ orgRepoHandler mCookie org repo = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
     mProjectName <- lookupByOrgRepo conn org repo
     case mProjectName of
@@ -46,11 +47,10 @@ orgRepoHandler mCookie org repo = do
           Just project -> do
             accessible <- isProjectAccessible conn projectName mUser
             js <- jobsetOverview conn projectName
-            nc <- navCounts conn
-            pure $ Just (project, accessible, js, nc)
+            pure $ Just (project, accessible, js)
   case result of
     Nothing -> throwError err404
-    Just (project, accessible, jobsets, counts)
+    Just (project, accessible, jobsets)
       | not accessible -> throwError err404
       | otherwise -> do
           -- Filter hidden jobsets for non-admin users.

@@ -8,6 +8,7 @@ module HydraWeb.Handlers.Search
   ( searchHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
@@ -19,7 +20,6 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Search (search, SearchResults (..))
-import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Models.Build (Build (..))
 import HydraWeb.Visibility (filterByProjectAccess)
@@ -32,25 +32,23 @@ searchHandler mCookie mQuery = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
   -- Cap query at 200 chars to prevent excessive DB load.
   let q = Text.take 200 $ maybe "" Text.strip mQuery
-  (mResults, counts) <- liftIO $ withConn pool $ \conn -> do
-    nc <- navCounts conn
-    if Text.null q
-      then pure (Nothing, nc)
-      else do
-        mr <- search conn q 10
-        -- Post-filter search results by Phase 2 (private repo) visibility.
-        filtered <- case mr of
-          Nothing -> pure Nothing
-          Just sr -> do
-            ps <- filterByProjectAccess conn mUser projName (srProjects sr)
-            js <- filterByProjectAccess conn mUser jsProject (srJobsets sr)
-            bs <- filterByProjectAccess conn mUser buildProject (srBuilds sr)
-            ds <- filterByProjectAccess conn mUser buildProject (srBuildsDrv sr)
-            pure $ Just sr { srProjects = ps, srJobsets = js
-                           , srBuilds = bs, srBuildsDrv = ds }
-        pure (filtered, nc)
+  mResults <- if Text.null q
+    then pure Nothing
+    else liftIO $ withConn pool $ \conn -> do
+      mr <- search conn q 10
+      -- Post-filter search results by Phase 2 (private repo) visibility.
+      case mr of
+        Nothing -> pure Nothing
+        Just sr -> do
+          ps <- filterByProjectAccess conn mUser projName (srProjects sr)
+          js <- filterByProjectAccess conn mUser jsProject (srJobsets sr)
+          bs <- filterByProjectAccess conn mUser buildProject (srBuilds sr)
+          ds <- filterByProjectAccess conn mUser buildProject (srBuildsDrv sr)
+          pure $ Just sr { srProjects = ps, srJobsets = js
+                         , srBuilds = bs, srBuildsDrv = ds }
   let pd = PageData
         { pdTitle    = "Search"
         , pdBasePath = bp

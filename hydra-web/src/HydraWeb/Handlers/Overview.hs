@@ -9,6 +9,7 @@ module HydraWeb.Handlers.Overview
   ( overviewHandler
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Exception (SomeException, catch)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -21,7 +22,7 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (visibleProjects)
-import HydraWeb.DB.Queue (navCounts, newsItems)
+import HydraWeb.DB.Queue (newsItems)
 import HydraWeb.Models.Project (Project (..))
 import HydraWeb.Visibility (filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -33,14 +34,14 @@ overviewHandler mCookie = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (projects, counts, news) <- liftIO $ withConn pool $ \conn -> do
+  counts <- liftIO . readTVarIO =<< asks appNavCounts
+  (projects, news) <- liftIO $ withConn pool $ \conn -> do
     ps <- visibleProjects conn
     -- Post-filter by repo privacy: anonymous users should not see
     -- projects whose GitHub repo is private.
     visible <- filterByProjectAccess conn mUser projName ps
-    nc <- navCounts conn
     ni <- newsItems conn 5 `catch` (\(_ :: SomeException) -> pure [])
-    pure (visible, nc, ni)
+    pure (visible, ni)
   let pd = PageData
         { pdTitle    = "Overview"
         , pdBasePath = bp

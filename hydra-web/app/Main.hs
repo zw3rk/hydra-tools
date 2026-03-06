@@ -10,6 +10,7 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.STM (newTVarIO)
 import Control.Exception (SomeException, try)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -31,6 +32,7 @@ import HydraWeb.DB.Pool (createPool, withConn)
 import HydraWeb.DB.Auth (bootstrapSuperAdmins)
 import HydraWeb.DB.Installations (seedFromConfig)
 import HydraWeb.DB.OrgMap (autoDetectMappings)
+import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.SSE.Hub (newHub)
 import HydraWeb.GitHub.RepoCheck (repoVisibilityLoop)
 import HydraWeb.SSE.Listener (listenAndBroadcast)
@@ -64,12 +66,17 @@ main = do
   -- Initialize encryption (Nothing if key is empty).
   let mEnc = newEncryptor (cfgEncryptionKey cfg)
 
+  -- Populate initial nav counts; refreshed every ~10s by the polling loop.
+  nc0 <- withConn pool navCounts
+  navCountsVar <- newTVarIO nc0
+
   let app = App
         { appPool        = pool
         , appConfig      = cfg
         , appSSEHub      = Just hub
         , appEncryptor   = mEnc
         , appHttpManager = mgr
+        , appNavCounts   = navCountsVar
         }
 
   let (host, port) = parseListenAddr (cfgListenAddr cfg)
@@ -90,7 +97,7 @@ main = do
         | otherwise = action
 
   -- Start background threads: SSE listener, session cleanup, and repo visibility.
-  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub) $ \_ ->
+  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub navCountsVar) $ \_ ->
     withAsync (sessionCleanupLoop pool) $ \_ ->
       withRepoVisibility $ do
         Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg

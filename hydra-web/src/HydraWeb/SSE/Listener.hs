@@ -1,10 +1,10 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | SSE broadcaster for bridge status updates.
+-- | SSE broadcaster for bridge status updates and nav-count refresher.
 -- Two concurrent loops both broadcast to TopicBridges:
 -- 1. PostgreSQL LISTEN — real-time on github_status/step_finished
--- 2. Periodic poll — 30-second heartbeat for subscribers
+-- 2. Periodic poll — 10-second nav-count refresh + 30-second bridge heartbeat
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -14,6 +14,7 @@ module HydraWeb.SSE.Listener
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.STM (TVar, atomically, writeTVar)
 import Control.Exception (SomeException, try, bracket)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
@@ -27,15 +28,18 @@ import System.Timeout (timeout)
 
 import HydraWeb.DB.Bridges (bridgeFullStatus)
 import HydraWeb.DB.Pool (withConn)
+import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.Models.Queue (NavCounts)
 import HydraWeb.SSE.Hub (Hub, Topic (..), broadcastTo)
 import HydraWeb.View.Pages.Bridges (renderGitHubDataBS, renderAtticDataBS)
 
 -- | Start both the PG LISTEN loop and the polling loop. Blocks forever.
 -- Shutdown is handled by the parent thread via 'withAsync' cancellation.
-listenAndBroadcast :: Text -> Pool Connection -> Hub -> IO ()
-listenAndBroadcast dbURL pool hub =
+-- Also refreshes the shared nav-counts TVar every ~10 seconds.
+listenAndBroadcast :: Text -> Pool Connection -> Hub -> TVar NavCounts -> IO ()
+listenAndBroadcast dbURL pool hub navVar =
   withAsync (pgListenLoop dbURL pool hub) $ \_ ->
-    globalPollLoop pool hub
+    globalPollLoop pool hub navVar
 
 -- ── PostgreSQL LISTEN loop ────────────────────────────────────────────
 
@@ -91,22 +95,39 @@ drainNotifications conn = do
 
 -- ── Global polling loop ───────────────────────────────────────────────
 
--- | Periodic polling loop for bridge status updates.
--- Queue and machines pages no longer use SSE (they were replacing
--- full tables with single-line count summaries — a regression).
--- Runs every 30 seconds; shutdown via async cancellation.
-globalPollLoop :: Pool Connection -> Hub -> IO ()
-globalPollLoop pool hub = loop
+-- | Periodic polling loop: refreshes nav-counts every ~10s and bridge
+-- status every ~30s. The nav-count refresh is cheap (4 COUNT queries)
+-- and keeps the TVar fresh for all handlers. Bridge status is heavier
+-- so it runs at 3× the nav-count interval.
+globalPollLoop :: Pool Connection -> Hub -> TVar NavCounts -> IO ()
+globalPollLoop pool hub navVar = loop (0 :: Int)
   where
-    loop = do
-      result <- try $ broadcastBridgeStatus pool hub
+    loop tick = do
+      -- Refresh nav counts every tick (~10s).
+      result <- try $ refreshNavCounts pool navVar
       case result of
         Right () -> pure ()
         Left (e :: SomeException) ->
-          hPutStrLn stderr $ "Poll loop error: " ++ show e
+          hPutStrLn stderr $ "Nav-count refresh error: " ++ show e
 
-      threadDelay (30 * 1000000)
-      loop
+      -- Broadcast bridge status every 3rd tick (~30s).
+      if tick `mod` 3 == 0
+        then do
+          bResult <- try $ broadcastBridgeStatus pool hub
+          case bResult of
+            Right () -> pure ()
+            Left (e :: SomeException) ->
+              hPutStrLn stderr $ "Poll loop error: " ++ show e
+        else pure ()
+
+      threadDelay (10 * 1000000)
+      loop (tick + 1)
+
+-- | Query fresh nav counts and write them to the shared TVar.
+refreshNavCounts :: Pool Connection -> TVar NavCounts -> IO ()
+refreshNavCounts pool navVar = do
+  nc <- withConn pool navCounts
+  atomically $ writeTVar navVar nc
 
 -- ── Broadcast helpers ─────────────────────────────────────────────────
 
