@@ -21,6 +21,8 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Evals (runningEvaluations, queuedEvaluations)
 import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.Models.Eval (RunningEval (..), QueuedEval (..))
+import HydraWeb.Visibility (filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.RunningEvals (runningEvalsPage)
 
@@ -32,7 +34,9 @@ runningEvalsHandler mCookie = do
   mUser <- liftIO $ getOptionalUser pool mCookie
   (evals, queued, counts) <- liftIO $ withConn pool $ \conn -> do
     es <- runningEvaluations conn
+      >>= filterByProjectAccess conn mUser reProject
     qs <- queuedEvaluations conn
+      >>= filterByProjectAccess conn mUser qeProject
     nc <- navCounts conn
     pure (es, qs, nc)
   let pd = PageData

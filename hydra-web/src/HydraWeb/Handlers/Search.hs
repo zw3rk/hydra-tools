@@ -18,8 +18,11 @@ import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Search (search)
+import HydraWeb.DB.Search (search, SearchResults (..))
 import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.Models.Project (Project (..), Jobset (..))
+import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Visibility (filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Search (searchPage)
 
@@ -37,7 +40,17 @@ searchHandler mCookie mQuery = do
       then pure (Nothing, nc)
       else do
         mr <- search conn q 10
-        pure (mr, nc)
+        -- Post-filter search results by Phase 2 (private repo) visibility.
+        filtered <- case mr of
+          Nothing -> pure Nothing
+          Just sr -> do
+            ps <- filterByProjectAccess conn mUser projName (srProjects sr)
+            js <- filterByProjectAccess conn mUser jsProject (srJobsets sr)
+            bs <- filterByProjectAccess conn mUser buildProject (srBuilds sr)
+            ds <- filterByProjectAccess conn mUser buildProject (srBuildsDrv sr)
+            pure $ Just sr { srProjects = ps, srJobsets = js
+                           , srBuilds = bs, srBuildsDrv = ds }
+        pure (filtered, nc)
   let pd = PageData
         { pdTitle    = "Search"
         , pdBasePath = bp

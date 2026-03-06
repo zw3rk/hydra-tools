@@ -12,6 +12,7 @@ module HydraWeb.Visibility
   ( isSuperAdmin
   , isProjectAccessible
   , filterByProjectAccess
+  , filterByRepoAccess
   ) where
 
 import Data.Text (Text)
@@ -19,6 +20,7 @@ import qualified Data.Map.Strict as Map
 import Database.PostgreSQL.Simple (Connection)
 
 import HydraWeb.DB.Projects (isProjectHidden)
+import HydraWeb.DB.OrgMap (lookupByOrgRepo)
 import HydraWeb.DB.RepoVisibility (lookupProjectRepo, getRepoVisibility)
 import HydraWeb.Models.User (GFUser (..))
 
@@ -69,6 +71,29 @@ filterByProjectAccess conn mUser getProject items = do
       accessMap <- Map.traverseWithKey
         (\projName () -> isProjectAccessible conn projName mUser) projects
       pure [item | item <- items, Map.findWithDefault False (getProject item) accessMap]
+
+-- | Filter items by GitHub (owner, repo) visibility.
+-- Maps each unique (owner, repo) → Hydra project name via gf_org_project_map,
+-- then checks project accessibility. Items with no project mapping pass
+-- through (fail-open, consistent with other visibility behavior).
+filterByRepoAccess :: Connection -> Maybe GFUser
+                   -> (a -> Text) -> (a -> Text)  -- ^ getOwner, getRepo
+                   -> [a] -> IO [a]
+filterByRepoAccess conn mUser getOwner getRepo items = do
+  if isSuperAdmin mUser
+    then pure items
+    else do
+      -- Collect unique (owner, repo) pairs, check each once.
+      let repos = Map.fromList [((getOwner item, getRepo item), ()) | item <- items]
+      accessMap <- Map.traverseWithKey
+        (\(owner, repo) () -> do
+          mProj <- lookupByOrgRepo conn owner repo
+          case mProj of
+            Nothing       -> pure True  -- no mapping → fail-open
+            Just projName -> isProjectAccessible conn projName mUser
+        ) repos
+      pure [item | item <- items
+                 , Map.findWithDefault True (getOwner item, getRepo item) accessMap]
 
 -- | Check if the user is authenticated (any logged-in user, not just admin).
 isAuthenticated :: Maybe GFUser -> Bool
