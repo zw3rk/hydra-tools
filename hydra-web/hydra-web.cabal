@@ -155,3 +155,4 @@ test-suite hydra-web-test
       , HydraWeb.Auth.MiddlewareSpec
       , HydraWeb.DB.OrgMapSpec
       , HydraWeb.DB.SearchSpec
+      , HydraWeb.VisibilitySpec

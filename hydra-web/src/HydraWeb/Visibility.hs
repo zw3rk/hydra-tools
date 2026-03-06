@@ -14,6 +14,8 @@ module HydraWeb.Visibility
   , isProjectAccessible
   , filterByProjectAccess
   , filterByRepoAccess
+    -- * Pure decision logic (exported for testing)
+  , accessDecision
   ) where
 
 import Data.Text (Text)
@@ -30,33 +32,38 @@ isSuperAdmin :: Maybe GFUser -> Bool
 isSuperAdmin (Just u) = gfuIsSuperAdmin u
 isSuperAdmin Nothing  = False
 
+-- | Pure access-control decision given pre-fetched inputs.
+--
+-- @accessDecision isHidden mRepoPublic isAuthed isSuperAdmin'@
+--
+--   * @isHidden@     — project has hidden=1 in the DB
+--   * @mRepoPublic@  — 'Nothing' if no repo mapping or no cache entry (fail-open),
+--                       'Just True' if public, 'Just False' if private
+--   * @isAuthed@     — user is logged in (any role)
+--   * @isSuperAdmin'@ — user is a super-admin
+--
+-- Returns 'True' if the user should be granted access.
+accessDecision :: Bool -> Maybe Bool -> Bool -> Bool -> Bool
+accessDecision _isHidden _mRepoPublic _isAuthed True = True   -- super-admin sees everything
+accessDecision True      _            _         _    = False  -- hidden → deny non-admin
+accessDecision False     Nothing      _         _    = True   -- no mapping / no cache → fail-open
+accessDecision False     (Just True)  _         _    = True   -- public repo → everyone
+accessDecision False     (Just False) isAuthed  _    = isAuthed  -- private → need auth
+
 -- | Full visibility check for a project by name (Phase 1 + Phase 2).
--- Checks both the hidden flag and repo privacy.
---
--- Visibility rules:
---   1. hidden=1 → super-admin only
---   2. hidden=0, repo is public (or no mapping) → everyone
---   3. hidden=0, repo is private → authenticated users only
---   4. hidden=0, no cache entry → everyone (fail-open until cache is populated)
---
--- Returns @True@ if the user can see the project, @False@ if not.
+-- Fetches hidden flag and repo visibility from the DB, then delegates
+-- to the pure 'accessDecision'.
 isProjectAccessible :: Connection -> Text -> Maybe GFUser -> IO Bool
 isProjectAccessible conn projectName mUser = do
-  -- Phase 1: check hidden flag.
   hidden <- isProjectHidden conn projectName
-  if hidden
-    then pure (isSuperAdmin mUser)
+  mRepoPublic <- if hidden
+    then pure Nothing  -- skip Phase 2 lookup for hidden projects
     else do
-      -- Phase 2: check repo privacy.
       mRepo <- lookupProjectRepo conn projectName
       case mRepo of
-        Nothing -> pure True  -- no org/repo mapping → treat as public
-        Just (org, repo) -> do
-          mPublic <- getRepoVisibility conn org repo
-          case mPublic of
-            Nothing    -> pure True            -- no cache entry → fail-open
-            Just True  -> pure True            -- public repo
-            Just False -> pure (isAuthenticated mUser)  -- private → need auth
+        Nothing         -> pure Nothing
+        Just (org, repo) -> getRepoVisibility conn org repo
+  pure $ accessDecision hidden mRepoPublic (isAuthenticated mUser) (isSuperAdmin mUser)
 
 -- | Batch-filter a list of items by project visibility.
 -- Checks each unique project name once, caching results for efficiency.
