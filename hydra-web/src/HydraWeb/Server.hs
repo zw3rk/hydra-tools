@@ -46,6 +46,9 @@ import HydraWeb.Handlers.Profile (profileHandler)
 import HydraWeb.Handlers.Admin (adminServer)
 import HydraWeb.Handlers.Actions (triggerEvalHandler, restartBuildHandler)
 
+-- Download handler
+import HydraWeb.Handlers.Download (downloadApp)
+
 -- API handlers
 import HydraWeb.Handlers.Proxy (proxyToBackend)
 import HydraWeb.Handlers.API (apiJobsetsHandler, apiNrQueueHandler, apiLatestBuildsHandler, apiQueueHandler)
@@ -80,6 +83,7 @@ server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> hoistServer (Proxy @ProfileAPI) (runAppM app) profileHandler
         :<|> hoistServer (Proxy @AdminAPI) (runAppM app) adminServer
         :<|> hoistServer (Proxy @ActionsAPI) (runAppM app) actionsServer
+        :<|> downloadServer app
         :<|> hoistServer (Proxy @JSONAPI) (runAppM app) jsonServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
         :<|> streamServer app
@@ -120,6 +124,10 @@ actionsServer :: ServerT ActionsAPI AppM
 actionsServer mCookie =
          triggerEvalHandler mCookie
     :<|> restartBuildHandler mCookie
+
+-- | Download server — Raw WAI application for serving build products.
+downloadServer :: App -> Server DownloadAPI
+downloadServer app bid productNr = Tagged (downloadApp app bid productNr)
 
 -- | JSON API handlers, wired in the same order as JSONAPI.
 jsonServer :: ServerT JSONAPI AppM

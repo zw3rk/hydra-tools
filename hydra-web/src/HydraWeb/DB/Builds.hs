@@ -10,6 +10,7 @@ module HydraWeb.DB.Builds
   ( getBuild
   , getBuildOutputs
   , getBuildProducts
+  , getBuildProduct
   , getBuildSteps
   , getBuildStep
   , getBuildMetrics
@@ -100,6 +101,18 @@ getBuildProducts conn buildId' = do
     FROM buildproducts WHERE build = ? ORDER BY productnr
   |] (Only buildId')
   pure [BuildProduct nr t st fs sha p n dp | (nr, t, st, fs, sha, p, n, dp) <- rows]
+
+-- | Fetch a single build product by build ID and product number.
+getBuildProduct :: Connection -> Int -> Int -> IO (Maybe BuildProduct)
+getBuildProduct conn buildId' productNr = do
+  rows <- query conn [sql|
+    SELECT productnr, type, subtype, filesize, sha256hash, path, name, defaultpath
+    FROM buildproducts WHERE build = ? AND productnr = ?
+  |] (buildId', productNr)
+  case rows of
+    []    -> pure Nothing
+    ((nr, t, st, fs, sha, p, n, dp):_) ->
+      pure $ Just (BuildProduct nr t st fs sha p n dp)
 
 -- | Fetch steps for a build, ordered by stepnr DESC.
 getBuildSteps :: Connection -> Int -> IO [BuildStep]

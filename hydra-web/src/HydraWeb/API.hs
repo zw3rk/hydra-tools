@@ -14,6 +14,7 @@ module HydraWeb.API
   , ProfileAPI
   , AdminAPI
   , ActionsAPI
+  , DownloadAPI
   , ProxyAPI
   , JSONAPI
   , JobAPI
@@ -154,6 +155,11 @@ type ActionsAPI = Header "Cookie" Text :>
        :> Post '[PlainText] NoContent
   )
 
+-- | Build product download endpoint (Raw WAI app for zero-copy file serving).
+-- Trailing path segments are passed through for directory-based products.
+type DownloadAPI = "build" :> Capture "id" Int :> "download"
+                   :> Capture "productnr" Int :> Raw
+
 -- | SSE stream endpoints (Raw WAI apps for long-lived connections).
 type StreamAPI =
   -- GET /stream/global — nav count updates
@@ -195,6 +201,7 @@ type FullAPI =
   :<|> ProfileAPI
   :<|> AdminAPI
   :<|> ActionsAPI
+  :<|> DownloadAPI
   :<|> JSONAPI
   :<|> JobAPI
   :<|> StreamAPI

@@ -98,7 +98,7 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits showAc
   -- Build products.
   renderSection "Build Products" products $ \prods ->
     table_ $ do
-      thead_ $ tr_ $ th_ "Name" >> th_ "Type" >> th_ "Size"
+      thead_ $ tr_ $ th_ "Name" >> th_ "Type" >> th_ "Size" >> th_ ""
       tbody_ $ mapM_ (\p -> tr_ $ do
         td_ $ toHtml (bpName p)
         td_ $ do
@@ -107,6 +107,12 @@ buildPage bp build steps outputs products metrics inputs evalIDs constits showAc
             "/"
             toHtml (bpSubtype p)
         td_ $ toHtml (maybe "" (humanBytes) (bpFileSize p))
+        td_ $ case bpPath p of
+          Just _  -> a_ [ href_ (bp <> "/build/" <> showT (buildId build)
+                                 <> "/download/" <> showT (bpProductNr p)
+                                 <> "/" <> bpName p)
+                        ] "Download"
+          Nothing -> pure ()
         ) prods
 
   -- Build steps (timeline style).
