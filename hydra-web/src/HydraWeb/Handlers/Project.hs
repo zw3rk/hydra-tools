@@ -21,6 +21,7 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
 import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -33,12 +34,13 @@ projectHandler mCookie name = do
   pool <- asks appPool
   bp   <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
-  (mProject, accessible, jobsets, counts) <- liftIO $ withConn pool $ \conn -> do
+  (mProject, accessible, jobsets, counts, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
     mp <- getProject conn name
     acc <- isProjectAccessible conn name mUser
     js <- jobsetOverview conn name
     nc <- navCounts conn
-    pure (mp, acc, js, nc)
+    mor <- lookupByProject conn name
+    pure (mp, acc, js, nc, mor)
   case mProject of
     Nothing -> throwError err404
     Just project
@@ -54,4 +56,4 @@ projectHandler mCookie name = do
                 , pdCounts   = counts
                 , pdUser     = mUser
                 }
-          pure $ pageLayout pd $ projectPage bp project visibleJs
+          pure $ pageLayout pd $ projectPage bp mOrgRepo project visibleJs

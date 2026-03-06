@@ -23,6 +23,7 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getJobset)
 import HydraWeb.DB.Evals (jobsetEvals, allJobsetEvalsCount)
 import HydraWeb.DB.Queue (navCounts)
+import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.Models.Project (Jobset (..))
 import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
@@ -54,11 +55,12 @@ jobsetHandler mCookie project jobset mPage = do
       -- Jobset-level hidden flag check (super-admin bypass).
       | jsHidden js /= 0 && not (isSuperAdmin mUser) -> throwError err404
       | otherwise -> do
-          (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
+          (evals, total, counts, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
             es <- jobsetEvals conn (jsId js) offset perPage
             tc <- allJobsetEvalsCount conn (jsId js)
             nc <- navCounts conn
-            pure (es, tc, nc)
+            mor <- lookupByProject conn project
+            pure (es, tc, nc, mor)
           let pd = PageData
                 { pdTitle    = project <> ":" <> jsName js
                 , pdBasePath = bp
@@ -66,4 +68,4 @@ jobsetHandler mCookie project jobset mPage = do
                 , pdUser     = mUser
                 }
           let isAuth = case mUser of { Just _ -> True; Nothing -> False }
-          pure $ pageLayout pd $ jobsetPage bp js evals total page perPage isAuth
+          pure $ pageLayout pd $ jobsetPage bp mOrgRepo js evals total page perPage isAuth

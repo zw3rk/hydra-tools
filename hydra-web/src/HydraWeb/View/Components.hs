@@ -33,6 +33,10 @@ module HydraWeb.View.Components
   , evalURL
   , orgRepoURL
 
+    -- * PR link rendering
+  , renderJobsetName
+  , parsePRNumber
+
     -- * New visual components
   , statusDot
   , progressBar
@@ -48,6 +52,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Lucid
 import qualified Lucid.Base
+import Text.Read (readMaybe)
 
 -- | Status icon character for a build status code.
 statusIcon :: Maybe Int -> Html ()
@@ -165,6 +170,27 @@ evalURL basePath eid = basePath <> "/eval/" <> showT eid
 -- | Build an org/repo URL (/:org/:repo).
 orgRepoURL :: Text -> Text -> Text -> Text
 orgRepoURL basePath org repo = basePath <> "/" <> org <> "/" <> repo
+
+-- | Render a jobset name, linking PR jobsets to their GitHub pull request.
+-- "pullrequest-6470" renders as a link to https://github.com/{org}/{repo}/pull/6470.
+-- Other names render as plain text.
+renderJobsetName :: Maybe (Text, Text) -> Text -> Html ()
+renderJobsetName mOrgRepo name =
+  case parsePRNumber name of
+    Just prNum ->
+      case mOrgRepo of
+        Just (org, repo) ->
+          a_ [ href_ ("https://github.com/" <> org <> "/" <> repo <> "/pull/" <> showT prNum)
+             , target_ "_blank"
+             ] $ toHtml ("PR #" <> showT prNum)
+        Nothing -> toHtml name
+    Nothing -> toHtml name
+
+-- | Extract a PR number from a jobset name like "pullrequest-6470".
+parsePRNumber :: Text -> Maybe Int
+parsePRNumber name = case Text.stripPrefix "pullrequest-" name of
+  Just rest -> readMaybe (Text.unpack rest)
+  Nothing   -> Nothing
 
 -- | Small colored dot indicator for build status.
 statusDot :: Maybe Int -> Html ()

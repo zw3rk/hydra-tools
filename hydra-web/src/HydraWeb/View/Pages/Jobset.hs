@@ -15,13 +15,14 @@ import Lucid
 
 import HydraWeb.Models.Project (Jobset (..), hasErrorMsg)
 import HydraWeb.Models.Eval (EvalInfo (..), JobsetEval (..), JobsetEvalInput (..))
-import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, showT, shortRev)
+import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, showT, shortRev, parsePRNumber)
 import HydraWeb.View.Pager (pager)
 
 -- | Render the jobset page content with breadcrumbs and progress bars.
 -- When @showActions@ is True, a "Trigger Evaluation" button is shown.
-jobsetPage :: Text -> Jobset -> [EvalInfo] -> Int -> Int -> Int -> Bool -> Html ()
-jobsetPage bp js evals total page perPage showActions = do
+-- The @mOrgRepo@ parameter enables a "View PR on GitHub" link for PR jobsets.
+jobsetPage :: Text -> Maybe (Text, Text) -> Jobset -> [EvalInfo] -> Int -> Int -> Int -> Bool -> Html ()
+jobsetPage bp mOrgRepo js evals total page perPage showActions = do
   -- Breadcrumb: Home / Project / Jobset
   breadcrumb [ ("Projects", bp <> "/")
              , (jsProject js, projectURL bp (jsProject js))
@@ -33,6 +34,14 @@ jobsetPage bp js evals total page perPage showActions = do
     case jsDescription js of
       Just d  -> p_ $ toHtml d
       Nothing -> pure ()
+
+  -- GitHub PR link for pullrequest-* jobsets.
+  case parsePRNumber (jsName js) of
+    Just prNum | Just (org, repo) <- mOrgRepo ->
+      p_ $ a_ [ href_ ("https://github.com/" <> org <> "/" <> repo <> "/pull/" <> showT prNum)
+               , target_ "_blank"
+               ] $ toHtml ("View PR #" <> showT prNum <> " on GitHub")
+    _ -> pure ()
 
   -- Trigger evaluation button (authenticated users only).
   if showActions

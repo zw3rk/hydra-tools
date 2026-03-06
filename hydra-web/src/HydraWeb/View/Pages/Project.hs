@@ -13,11 +13,13 @@ import Data.Text (Text)
 import Lucid
 
 import HydraWeb.Models.Project (Project (..), Jobset (..), hasErrorMsg)
-import HydraWeb.View.Components (jobsetURL, progressBar, breadcrumb, showT)
+import HydraWeb.View.Components (jobsetURL, progressBar, breadcrumb, showT, renderJobsetName)
 
 -- | Render the project page content with breadcrumb and jobset cards.
-projectPage :: Text -> Project -> [Jobset] -> Html ()
-projectPage bp project jobsets = do
+-- The @mOrgRepo@ parameter enables PR link rendering when a GitHub org/repo
+-- mapping is available for the project.
+projectPage :: Text -> Maybe (Text, Text) -> Project -> [Jobset] -> Html ()
+projectPage bp mOrgRepo project jobsets = do
   -- Breadcrumb: Home / Project
   breadcrumb [("Projects", bp <> "/"), (projDisplayName project, "")]
 
@@ -39,16 +41,22 @@ projectPage bp project jobsets = do
       th_ [class_ "num"] "Total"
       th_ "Status"
     tbody_ $
-      mapM_ (renderJobset bp) jobsets
+      mapM_ (renderJobset bp mOrgRepo) jobsets
 
 -- | Render a single jobset table row with progress bar.
-renderJobset :: Text -> Jobset -> Html ()
-renderJobset bp js = do
+-- PR jobsets show a GitHub PR link; descriptions are shown alongside the name.
+renderJobset :: Text -> Maybe (Text, Text) -> Jobset -> Html ()
+renderJobset bp mOrgRepo js = do
   let cls | jsHidden js == 1 = [class_ "hidden-jobset"]
           | jsEnabled js == 0 = [class_ "disabled"]
           | otherwise = []
   tr_ cls $ do
-    td_ $ a_ [href_ (jobsetURL bp (jsProject js) (jsName js))] $ toHtml (jsName js)
+    td_ $ do
+      a_ [href_ (jobsetURL bp (jsProject js) (jsName js))] $
+        renderJobsetName mOrgRepo (jsName js)
+      case jsDescription js of
+        Just d  -> span_ [class_ "jobset-desc"] $ toHtml (" \x2014 " <> d)
+        Nothing -> pure ()
     td_ $ if jsType js == 1 then "flake" else "legacy"
     td_ $ progressBar (jsNrSucceeded js) (jsNrFailed js) (jsNrScheduled js)
     td_ [class_ "num status-succeeded"] $ toHtml (showT (jsNrSucceeded js))

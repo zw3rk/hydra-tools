@@ -63,4 +63,4 @@ orgRepoHandler mCookie org repo = do
                 , pdCounts   = counts
                 , pdUser     = mUser
                 }
-          pure $ pageLayout pd $ projectPage bp project visibleJs
+          pure $ pageLayout pd $ projectPage bp (Just (org, repo)) project visibleJs
