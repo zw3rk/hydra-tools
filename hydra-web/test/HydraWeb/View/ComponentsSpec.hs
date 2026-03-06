@@ -122,6 +122,18 @@ spec = do
       orgRepoURL "" "input-output-hk" "cardano-node"
         `shouldBe` "/input-output-hk/cardano-node"
 
+  describe "parsePRNumber" $ do
+    it "parses valid pullrequest- prefix" $
+      parsePRNumber "pullrequest-6470" `shouldBe` Just 6470
+    it "returns Nothing for non-PR names" $
+      parsePRNumber "main" `shouldBe` Nothing
+    it "returns Nothing for bare prefix" $
+      parsePRNumber "pullrequest-" `shouldBe` Nothing
+    it "returns Nothing for non-numeric suffix" $
+      parsePRNumber "pullrequest-abc" `shouldBe` Nothing
+    it "parses PR number 1" $
+      parsePRNumber "pullrequest-1" `shouldBe` Just 1
+
   describe "showT" $ do
     it "converts positive integers" $
       showT 42 `shouldBe` "42"

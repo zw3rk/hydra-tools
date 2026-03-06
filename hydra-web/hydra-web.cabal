@@ -151,3 +151,5 @@ test-suite hydra-web-test
       , HydraWeb.ConfigSpec
       , HydraWeb.Auth.EncryptSpec
       , HydraWeb.Auth.MiddlewareSpec
+      , HydraWeb.DB.OrgMapSpec
+      , HydraWeb.DB.SearchSpec

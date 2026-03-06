@@ -15,6 +15,9 @@ module HydraWeb.DB.OrgMap
   , listMappings
   , autoDetectMappings
   , upsertMapping
+    -- * Parsing helpers (exported for testing)
+  , parseProjectName
+  , parseGitHubFlake
   ) where
 
 import Control.Exception (SomeException, catch)
@@ -126,8 +129,8 @@ parseProjectName knownOrgs name =
     -- Fallback: split on first dash for unknown orgs.
     Nothing -> case Text.breakOn "-" name of
       (org, rest)
-        | not (Text.null org) && not (Text.null rest) ->
-            Just (org, Text.drop 1 rest)
+        | not (Text.null org), let repo = Text.drop 1 rest
+        , not (Text.null repo) -> Just (org, repo)
         | otherwise -> Nothing
   where
     tryOrg :: Text -> Maybe (Text, Text)

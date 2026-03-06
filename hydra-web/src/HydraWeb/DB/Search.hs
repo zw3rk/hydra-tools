@@ -8,6 +8,9 @@
 module HydraWeb.DB.Search
   ( SearchResults (..)
   , search
+    -- * Validation helpers (exported for testing)
+  , isValidQuery
+  , escapeLike
   ) where
 
 import Data.Text (Text)
