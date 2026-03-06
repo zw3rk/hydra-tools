@@ -56,28 +56,39 @@ import Text.Read (readMaybe)
 import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
 -- | Status icon character for a build status code.
+-- Hydra codes: 0=success, 1=failed, 2=dep-failed, 3=aborted, 4=cancelled,
+-- 5=failed-with-output, 6=failed-with-output (legacy), 7=timed-out,
+-- 10=log-limit-exceeded, 11=output-size-exceeded, 12=non-deterministic.
 statusIcon :: Maybe Int -> Html ()
-statusIcon Nothing  = span_ [class_ "status-icon queued"]  "\x23F3"
-statusIcon (Just 0) = span_ [class_ "status-icon success"] "\x2713"
-statusIcon (Just 1) = span_ [class_ "status-icon failed"]  "\x2717"
-statusIcon (Just 2) = span_ [class_ "status-icon depfail"] "\x26A0"
-statusIcon (Just 3) = span_ [class_ "status-icon aborted"] "\x2298"
-statusIcon (Just 4) = span_ [class_ "status-icon cancelled"] "\x2298"
-statusIcon (Just 6) = span_ [class_ "status-icon failed"]  "\x2717"
-statusIcon (Just 7) = span_ [class_ "status-icon timedout"] "\x23F1"
-statusIcon _        = span_ [class_ "status-icon unknown"] "?"
+statusIcon Nothing   = span_ [class_ "status-icon queued"]     "\x23F3"
+statusIcon (Just 0)  = span_ [class_ "status-icon success"]    "\x2713"
+statusIcon (Just 1)  = span_ [class_ "status-icon failed"]     "\x2717"
+statusIcon (Just 2)  = span_ [class_ "status-icon depfail"]    "\x26A0"
+statusIcon (Just 3)  = span_ [class_ "status-icon aborted"]    "\x2298"
+statusIcon (Just 4)  = span_ [class_ "status-icon cancelled"]  "\x2298"
+statusIcon (Just 5)  = span_ [class_ "status-icon failed"]     "\x2717"
+statusIcon (Just 6)  = span_ [class_ "status-icon failed"]     "\x2717"
+statusIcon (Just 7)  = span_ [class_ "status-icon timedout"]   "\x23F1"
+statusIcon (Just 10) = span_ [class_ "status-icon aborted"]    "\x2298"
+statusIcon (Just 11) = span_ [class_ "status-icon aborted"]    "\x2298"
+statusIcon (Just 12) = span_ [class_ "status-icon failed"]     "\x2717"
+statusIcon _         = span_ [class_ "status-icon unknown"]    "?"
 
 -- | CSS class for a build status code.
 statusClass :: Maybe Int -> Text
-statusClass Nothing  = "queued"
-statusClass (Just 0) = "success"
-statusClass (Just 1) = "failed"
-statusClass (Just 2) = "depfail"
-statusClass (Just 3) = "aborted"
-statusClass (Just 4) = "cancelled"
-statusClass (Just 6) = "failed"
-statusClass (Just 7) = "timedout"
-statusClass _        = "unknown"
+statusClass Nothing   = "queued"
+statusClass (Just 0)  = "success"
+statusClass (Just 1)  = "failed"
+statusClass (Just 2)  = "depfail"
+statusClass (Just 3)  = "aborted"
+statusClass (Just 4)  = "cancelled"
+statusClass (Just 5)  = "failed"
+statusClass (Just 6)  = "failed"
+statusClass (Just 7)  = "timedout"
+statusClass (Just 10) = "aborted"
+statusClass (Just 11) = "aborted"
+statusClass (Just 12) = "failed"
+statusClass _         = "unknown"
 
 -- | Human-readable status label.
 statusText :: Maybe Int -> Text
@@ -87,6 +98,7 @@ statusText (Just 1)  = "Failed"
 statusText (Just 2)  = "Dependency failed"
 statusText (Just 3)  = "Aborted"
 statusText (Just 4)  = "Cancelled"
+statusText (Just 5)  = "Failed with output"
 statusText (Just 6)  = "Failed with output"
 statusText (Just 7)  = "Timed out"
 statusText (Just 10) = "Log limit exceeded"
@@ -109,8 +121,10 @@ fmtDuration secs
                     showT ((secs `mod` 3600) `div` 60) <> "m"
 
 -- | Format a timestamp as relative "X ago" text.
+-- Handles clock skew / future timestamps gracefully.
 timeAgo :: Int -> Int -> Text
 timeAgo now ts
+  | diff <= 0  = "just now"
   | diff < 60    = showT diff <> "s ago"
   | diff < 3600  = showT (diff `div` 60) <> "m ago"
   | diff < 86400 = showT (diff `div` 3600) <> "h ago"

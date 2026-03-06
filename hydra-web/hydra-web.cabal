@@ -61,6 +61,7 @@ library
       , HydraWeb.DB.Evals
       , HydraWeb.DB.Queue
       , HydraWeb.DB.Search
+      , HydraWeb.DB.Util
       , HydraWeb.DB.Migrate
       , HydraWeb.DB.Auth
       , HydraWeb.DB.Bridges

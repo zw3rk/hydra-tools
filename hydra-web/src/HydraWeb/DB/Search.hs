@@ -18,6 +18,7 @@ import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (Connection, query, execute_, withTransaction)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
+import HydraWeb.DB.Util (escapeLike)
 import HydraWeb.Models.Project (Project (..), Jobset (..))
 import HydraWeb.Models.Build (Build)
 import HydraWeb.DB.Builds (scanBuildListRow)
@@ -118,15 +119,6 @@ isValidQuery t = not (Text.null (Text.strip t)) && Text.all isAllowed t
               || c >= '0' && c <= '9'
               || c == '_' || c == '-' || c == '/' || c == '.'
               || c == ' ' || c == ':'
-
--- | Escape SQL ILIKE metacharacters so user input is treated literally.
-escapeLike :: Text -> Text
-escapeLike = Text.concatMap esc
-  where
-    esc '%'  = "\\%"
-    esc '_'  = "\\_"
-    esc '\\' = "\\\\"
-    esc c    = Text.singleton c
 
 -- | Scan a search jobset row (partial fields).
 scanSearchJobset :: (Text, Int, Text, Maybe Text, Int, Int, Int, Maybe Text) -> Jobset

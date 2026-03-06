@@ -17,7 +17,6 @@ import Control.Concurrent.Async (withAsync)
 import Control.Exception (SomeException, try, bracket)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
-import Data.IORef (IORef, readIORef)
 import Data.Pool (Pool)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
@@ -31,34 +30,33 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.SSE.Hub (Hub, Topic (..), broadcastTo)
 import HydraWeb.View.Pages.Bridges (renderGitHubDataBS, renderAtticDataBS)
 
--- | Start both the PG LISTEN loop and the polling loop. Blocks until shutdown.
-listenAndBroadcast :: Text -> Pool Connection -> Hub -> IORef Bool -> IO ()
-listenAndBroadcast dbURL pool hub running =
-  withAsync (pgListenLoop dbURL pool hub running) $ \_ ->
-    globalPollLoop pool hub running
+-- | Start both the PG LISTEN loop and the polling loop. Blocks forever.
+-- Shutdown is handled by the parent thread via 'withAsync' cancellation.
+listenAndBroadcast :: Text -> Pool Connection -> Hub -> IO ()
+listenAndBroadcast dbURL pool hub =
+  withAsync (pgListenLoop dbURL pool hub) $ \_ ->
+    globalPollLoop pool hub
 
 -- ── PostgreSQL LISTEN loop ────────────────────────────────────────────
 
 -- | LISTEN for bridge-related notifications and broadcast to TopicBridges.
 -- Automatically reconnects on connection errors with 5s backoff.
-pgListenLoop :: Text -> Pool Connection -> Hub -> IORef Bool -> IO ()
-pgListenLoop dbURL pool hub running = loop
+-- Runs forever; shutdown via async cancellation.
+pgListenLoop :: Text -> Pool Connection -> Hub -> IO ()
+pgListenLoop dbURL pool hub = loop
   where
     loop = do
-      alive <- readIORef running
-      if not alive then pure ()
-      else do
-        result <- try (listenSession dbURL pool hub running)
-        case result of
-          Right () -> pure ()
-          Left (e :: SomeException) -> do
-            hPutStrLn stderr $ "SSE listener error, reconnecting in 5s: " ++ show e
-            threadDelay (5 * 1000000)
-            loop
+      result <- try (listenSession dbURL pool hub)
+      case result of
+        Right () -> pure ()
+        Left (e :: SomeException) -> do
+          hPutStrLn stderr $ "SSE listener error, reconnecting in 5s: " ++ show e
+          threadDelay (5 * 1000000)
+          loop
 
 -- | Run a single LISTEN session on a dedicated connection.
-listenSession :: Text -> Pool Connection -> Hub -> IORef Bool -> IO ()
-listenSession dbURL pool hub running =
+listenSession :: Text -> Pool Connection -> Hub -> IO ()
+listenSession dbURL pool hub =
   bracket (connectPostgreSQL (TE.encodeUtf8 dbURL)) close $ \listenConn -> do
     _ <- execute_ listenConn "LISTEN github_status"
     _ <- execute_ listenConn "LISTEN step_finished"
@@ -69,21 +67,18 @@ listenSession dbURL pool hub running =
 
     -- Main notification loop with 30s heartbeat timeout.
     let go = do
-          alive <- readIORef running
-          if not alive then pure ()
-          else do
-            mNotif <- timeout (30 * 1000000) (getNotification listenConn)
-            case mNotif of
-              Nothing -> do
-                -- Heartbeat — broadcast bridge status periodically.
-                broadcastBridgeStatus pool hub
-                go
-              Just _notif -> do
-                -- Notification received — debounce by waiting 500ms.
-                threadDelay (500 * 1000)
-                drainNotifications listenConn
-                broadcastBridgeStatus pool hub
-                go
+          mNotif <- timeout (30 * 1000000) (getNotification listenConn)
+          case mNotif of
+            Nothing -> do
+              -- Heartbeat — broadcast bridge status periodically.
+              broadcastBridgeStatus pool hub
+              go
+            Just _notif -> do
+              -- Notification received — debounce by waiting 500ms.
+              threadDelay (500 * 1000)
+              drainNotifications listenConn
+              broadcastBridgeStatus pool hub
+              go
     go
 
 -- | Drain pending notifications without blocking.
@@ -99,22 +94,19 @@ drainNotifications conn = do
 -- | Periodic polling loop for bridge status updates.
 -- Queue and machines pages no longer use SSE (they were replacing
 -- full tables with single-line count summaries — a regression).
--- Runs every 30 seconds.
-globalPollLoop :: Pool Connection -> Hub -> IORef Bool -> IO ()
-globalPollLoop pool hub running = loop
+-- Runs every 30 seconds; shutdown via async cancellation.
+globalPollLoop :: Pool Connection -> Hub -> IO ()
+globalPollLoop pool hub = loop
   where
     loop = do
-      alive <- readIORef running
-      if not alive then pure ()
-      else do
-        result <- try $ broadcastBridgeStatus pool hub
-        case result of
-          Right () -> pure ()
-          Left (e :: SomeException) ->
-            hPutStrLn stderr $ "Poll loop error: " ++ show e
+      result <- try $ broadcastBridgeStatus pool hub
+      case result of
+        Right () -> pure ()
+        Left (e :: SomeException) ->
+          hPutStrLn stderr $ "Poll loop error: " ++ show e
 
-        threadDelay (30 * 1000000)
-        loop
+      threadDelay (30 * 1000000)
+      loop
 
 -- ── Broadcast helpers ─────────────────────────────────────────────────
 

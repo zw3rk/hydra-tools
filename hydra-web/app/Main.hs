@@ -11,7 +11,6 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (SomeException, try)
-import Data.IORef (newIORef)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -65,9 +64,6 @@ main = do
   -- Initialize encryption (Nothing if key is empty).
   let mEnc = newEncryptor (cfgEncryptionKey cfg)
 
-  -- SSE listener shutdown signal.
-  running <- newIORef True
-
   let app = App
         { appPool        = pool
         , appConfig      = cfg
@@ -94,7 +90,7 @@ main = do
         | otherwise = action
 
   -- Start background threads: SSE listener, session cleanup, and repo visibility.
-  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub running) $ \_ ->
+  withAsync (listenAndBroadcast (cfgDatabaseURL cfg) pool hub) $ \_ ->
     withAsync (sessionCleanupLoop pool) $ \_ ->
       withRepoVisibility $ do
         Text.putStrLn $ "hydra-web listening on " <> cfgListenAddr cfg

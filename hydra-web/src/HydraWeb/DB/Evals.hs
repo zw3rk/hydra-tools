@@ -237,13 +237,13 @@ simpleEvalInfo eval =
   in  EvalInfo eval 0 nrSucceeded nrFailed 0 []
 
 -- | Determine which inputs changed between two eval input lists.
+-- Uses a Map for O(n log n) lookup instead of O(n²) association list.
 computeChangedInputs :: [JobsetEvalInput] -> [JobsetEvalInput] -> [JobsetEvalInput]
 computeChangedInputs current prev =
-  let prevMap = [(jeiName p, p) | p <- prev]
-      findPrev n = lookup n prevMap
-  in  filter (isChanged findPrev) current
+  let prevMap = Map.fromList [(jeiName p, p) | p <- prev]
+  in  filter (isChanged prevMap) current
   where
-    isChanged findPrev input = case findPrev (jeiName input) of
+    isChanged pm input = case Map.lookup (jeiName input) pm of
       Nothing -> True  -- New input, not in previous eval
       Just p  -> jeiRevision input /= jeiRevision p
               || jeiType input /= jeiType p

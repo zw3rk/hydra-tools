@@ -10,7 +10,6 @@ module HydraWeb.Handlers.Overview
   ) where
 
 import Control.Exception (SomeException, catch)
-import Control.Monad (filterM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Lucid
@@ -24,7 +23,7 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (visibleProjects)
 import HydraWeb.DB.Queue (navCounts, newsItems)
 import HydraWeb.Models.Project (Project (..))
-import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.Visibility (filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Overview (overviewPage)
 
@@ -38,7 +37,7 @@ overviewHandler mCookie = do
     ps <- visibleProjects conn
     -- Post-filter by repo privacy: anonymous users should not see
     -- projects whose GitHub repo is private.
-    visible <- filterM (\p -> isProjectAccessible conn (projName p) mUser) ps
+    visible <- filterByProjectAccess conn mUser projName ps
     nc <- navCounts conn
     ni <- newsItems conn 5 `catch` (\(_ :: SomeException) -> pure [])
     pure (visible, nc, ni)

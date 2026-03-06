@@ -32,6 +32,7 @@ import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
+import HydraWeb.DB.Util (escapeLike)
 import HydraWeb.Models.Build
 
 -- | Scan a "list" build row (17 columns via nested tuples).
@@ -170,15 +171,6 @@ getConstituents conn buildId' = do
     ORDER BY b.job, b.system
   |] (Only buildId')
   pure $ map scanBuildListRow rows
-
--- | Escape SQL LIKE/ILIKE metacharacters so user input is treated literally.
-escapeLike :: Text -> Text
-escapeLike = Text.concatMap esc
-  where
-    esc '%'  = "\\%"
-    esc '_'  = "\\_"
-    esc '\\' = "\\\\"
-    esc c    = Text.singleton c
 
 -- | Fetch all builds belonging to an evaluation, optionally filtered by job name.
 -- The filter is escaped to prevent ILIKE pattern injection.
