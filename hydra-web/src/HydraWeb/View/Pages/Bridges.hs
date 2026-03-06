@@ -40,22 +40,22 @@ bridgesPage bp status = do
         atBadge = case bsAttic status of
           Just at | absPending at > 0 -> " (" <> showT (absPending at) <> ")"
           _ -> ""
-    button_ [ role_ "tab", id_ "tab-github-btn", class_ "active"
-            , onclick_ "document.getElementById('tab-github').style.display='';document.getElementById('tab-attic').style.display='none';document.getElementById('tab-github-btn').className='active';document.getElementById('tab-attic-btn').className='';"
+    button_ [ role_ "tab", class_ "active"
+            , data_ "tab-target" "tab-github"
             ] (toHtml ghLabel)
-    button_ [ role_ "tab", id_ "tab-attic-btn"
-            , onclick_ "document.getElementById('tab-attic').style.display='';document.getElementById('tab-github').style.display='none';document.getElementById('tab-attic-btn').className='active';document.getElementById('tab-github-btn').className='';"
+    button_ [ role_ "tab"
+            , data_ "tab-target" "tab-attic"
             ] (toHtml atLabel)
 
   -- SSE connection — wraps both panels but only targets the inner data divs.
   div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $ do
     -- GitHub tab panel (shown by default).
-    div_ [id_ "tab-github"] $
+    div_ [role_ "tabpanel", id_ "tab-github"] $
       div_ [id_ "github-data", sseSwap_ "github-bridge-update", hxSwap_ "innerHTML"] $
         githubData (bsGitHub status)
 
     -- Attic tab panel (hidden by default).
-    div_ [id_ "tab-attic", style_ "display:none"] $
+    div_ [role_ "tabpanel", id_ "tab-attic", style_ "display:none"] $
       div_ [id_ "attic-data", sseSwap_ "attic-bridge-update", hxSwap_ "innerHTML"] $
         atticData (bsAttic status)
 

@@ -40,6 +40,7 @@ pageLayout pd content = doctypehtml_ $ do
     link_ [rel_ "stylesheet", href_ (url pd "/static/style.css")]
     script_ [src_ (url pd "/static/htmx.min.js"), defer_ ""] ("" :: Text)
     script_ [src_ (url pd "/static/sse.js"), defer_ ""] ("" :: Text)
+    script_ [src_ (url pd "/static/tabs.js"), defer_ ""] ("" :: Text)
 
   body_ $ do
     nav_ [class_ "site-nav"] $ do
