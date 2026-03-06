@@ -34,7 +34,8 @@ search conn q rawLimit
   | not (isValidQuery q) = pure Nothing
   | otherwise = withTransaction conn $ do
       let limit = max 1 (min 50 rawLimit)
-          pattern = "%" <> q <> "%"
+          -- Escape ILIKE metacharacters so _ and % in user input are literal.
+          pattern = "%" <> escapeLike q <> "%"
 
       -- SET LOCAL only takes effect inside a transaction.
       _ <- execute_ conn [sql|SET LOCAL statement_timeout = 20000|]
@@ -104,14 +105,25 @@ search conn q rawLimit
         , srBuildsDrv = buildsDrv
         }
 
--- | Validate search query: only alphanumeric, underscore, hyphen, slash, dot.
+-- | Validate search query: alphanumeric, common path/name chars, spaces, colons.
+-- Since queries are parameterized (not interpolated), these characters are safe.
 isValidQuery :: Text -> Bool
-isValidQuery = Text.all isAllowed
+isValidQuery t = not (Text.null (Text.strip t)) && Text.all isAllowed t
   where
     isAllowed c = c >= 'a' && c <= 'z'
               || c >= 'A' && c <= 'Z'
               || c >= '0' && c <= '9'
               || c == '_' || c == '-' || c == '/' || c == '.'
+              || c == ' ' || c == ':'
+
+-- | Escape SQL ILIKE metacharacters so user input is treated literally.
+escapeLike :: Text -> Text
+escapeLike = Text.concatMap esc
+  where
+    esc '%'  = "\\%"
+    esc '_'  = "\\_"
+    esc '\\' = "\\\\"
+    esc c    = Text.singleton c
 
 -- | Scan a search jobset row (partial fields).
 scanSearchJobset :: (Text, Int, Text, Maybe Text, Int, Int, Int, Maybe Text) -> Jobset

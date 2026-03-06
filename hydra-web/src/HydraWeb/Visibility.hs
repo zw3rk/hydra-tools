@@ -10,6 +10,7 @@
 -- Returns 404 (not 403) to avoid leaking the existence of hidden entities.
 module HydraWeb.Visibility
   ( isSuperAdmin
+  , isAuthenticated
   , isProjectAccessible
   , filterByProjectAccess
   , filterByRepoAccess

@@ -25,7 +25,7 @@ import HydraWeb.DB.Evals (jobsetEvals, allJobsetEvalsCount)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.Models.Project (Jobset (..))
-import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin, isAuthenticated)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Jobset (jobsetPage)
 
@@ -39,33 +39,28 @@ jobsetHandler mCookie project jobset mPage = do
   let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
-  -- Look up the jobset and project hidden status; return 404 if not visible.
+  -- Single connection: look up jobset, check visibility, then fetch evals.
   mResult <- liftIO $ withConn pool $ \conn -> do
     mJs <- getJobset conn project jobset
     case mJs of
       Nothing -> pure Nothing
       Just js -> do
         accessible <- isProjectAccessible conn project mUser
-        pure $ Just (js, accessible)
+        if not accessible || (jsHidden js /= 0 && not (isSuperAdmin mUser))
+          then pure Nothing
+          else do
+            es  <- jobsetEvals conn (jsId js) offset perPage
+            tc  <- allJobsetEvalsCount conn (jsId js)
+            nc  <- navCounts conn
+            mor <- lookupByProject conn project
+            pure $ Just (js, es, tc, nc, mor)
   case mResult of
     Nothing -> throwError err404
-    Just (js, accessible)
-      -- Project-level check (includes hidden flag + repo privacy).
-      | not accessible -> throwError err404
-      -- Jobset-level hidden flag check (super-admin bypass).
-      | jsHidden js /= 0 && not (isSuperAdmin mUser) -> throwError err404
-      | otherwise -> do
-          (evals, total, counts, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
-            es <- jobsetEvals conn (jsId js) offset perPage
-            tc <- allJobsetEvalsCount conn (jsId js)
-            nc <- navCounts conn
-            mor <- lookupByProject conn project
-            pure (es, tc, nc, mor)
-          let pd = PageData
-                { pdTitle    = project <> ":" <> jsName js
-                , pdBasePath = bp
-                , pdCounts   = counts
-                , pdUser     = mUser
-                }
-          let isAuth = case mUser of { Just _ -> True; Nothing -> False }
-          pure $ pageLayout pd $ jobsetPage bp mOrgRepo js evals total page perPage isAuth
+    Just (js, evals, total, counts, mOrgRepo) -> do
+      let pd = PageData
+            { pdTitle    = project <> ":" <> jsName js
+            , pdBasePath = bp
+            , pdCounts   = counts
+            , pdUser     = mUser
+            }
+      pure $ pageLayout pd $ jobsetPage bp mOrgRepo js evals total page perPage (isAuthenticated mUser)

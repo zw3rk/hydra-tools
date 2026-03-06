@@ -23,7 +23,7 @@ import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Build (Build (..))
-import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.Visibility (isProjectAccessible, isAuthenticated)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildPage)
 import HydraWeb.View.Components (showT)
@@ -64,6 +64,5 @@ buildHandler mCookie bid = do
             , pdCounts   = counts
             , pdUser     = mUser
             }
-      let isAuth = case mUser of { Just _ -> True; Nothing -> False }
       pure $ pageLayout pd $
-        buildPage bp build steps outputs products metrics inputs evalIDs constits isAuth
+        buildPage bp build steps outputs products metrics inputs evalIDs constits (isAuthenticated mUser)

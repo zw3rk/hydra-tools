@@ -33,7 +33,7 @@ data Config = Config
   , cfgSuperAdmins     :: ![Text]        -- ^ HYDRA_WEB_SUPER_ADMINS (comma-separated)
   , cfgHydraDataDir    :: !FilePath      -- ^ HYDRA_WEB_HYDRA_DATA_DIR (default "/var/lib/hydra")
   , cfgGitHub          :: !GitHubConfig  -- ^ GitHub App/OAuth settings
-  } deriving (Show)
+  }
 
 -- | GitHub App and OAuth configuration.
 data GitHubConfig = GitHubConfig
@@ -43,7 +43,7 @@ data GitHubConfig = GitHubConfig
   , ghClientSecret    :: !Text           -- ^ HYDRA_WEB_GITHUB_CLIENT_SECRET
   , ghInstallationIDs :: ![(Text, Int)]  -- ^ DEPRECATED: use DB-backed gf_github_installations instead.
                                         -- ^ HYDRA_WEB_GITHUB_INSTALLATION_IDS — parsed for one-time seed migration.
-  } deriving (Show)
+  }
 
 -- | Load configuration from environment variables.
 loadConfig :: IO Config

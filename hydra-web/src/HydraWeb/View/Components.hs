@@ -51,8 +51,9 @@ import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Lucid
-import qualified Lucid.Base
 import Text.Read (readMaybe)
+
+import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
 -- | Status icon character for a build status code.
 statusIcon :: Maybe Int -> Html ()
@@ -248,9 +249,3 @@ sseTarget :: Text -> Text -> Text -> Html () -> Html ()
 sseTarget bp streamPath eventName content =
   div_ [hxExt_ "sse", sseConnect_ (bp <> streamPath)] $
     div_ [id_ (eventName <> "-content"), sseSwap_ eventName, hxSwap_ "innerHTML"] content
-  where
-    hxExt_ = makeAttribute "hx-ext"
-    sseConnect_ = makeAttribute "sse-connect"
-    sseSwap_ = makeAttribute "sse-swap"
-    hxSwap_ = makeAttribute "hx-swap"
-    makeAttribute k v = Lucid.Base.makeAttribute k v
