@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 module HydraWeb.DB.Queue
   ( queueCount
@@ -19,9 +20,10 @@ module HydraWeb.DB.Queue
   ) where
 
 import Data.Maybe (fromMaybe)
-import Database.PostgreSQL.Simple (Connection, query, query_)
+import Data.Text (Text)
+import Database.PostgreSQL.Simple (Connection, query, query_, Only (..))
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Database.PostgreSQL.Simple (Only (..))
+import Database.PostgreSQL.Simple.Types ((:.)((:.)))
 
 import HydraWeb.Models.Queue
 import HydraWeb.DB.Builds (scanStepRow)
@@ -156,11 +158,14 @@ activeStepCount conn = do
   pure n
 
 -- | Recent finished build steps, paginated.
--- Excludes steps from hidden projects/jobsets.
-recentSteps :: Connection -> Int -> Int -> IO [BuildStep]
+-- Excludes steps from hidden projects/jobsets (Phase 1).
+-- Returns @(projectName, step)@ pairs so callers can apply Phase 2
+-- (repo privacy) filtering via 'filterByProjectAccess'.
+recentSteps :: Connection -> Int -> Int -> IO [(Text, BuildStep)]
 recentSteps conn offset limit = do
   rows <- query conn [sql|
-    SELECT s.build, s.stepnr, s.type, s.drvpath, s.busy, s.status, s.errormsg,
+    SELECT j.project,
+           s.build, s.stepnr, s.type, s.drvpath, s.busy, s.status, s.errormsg,
            s.starttime, s.stoptime, s.machine, s.system,
            s.propagatedfrom, s.overhead, s.timesbuilt, s.isnondeterministic
     FROM buildsteps s
@@ -172,7 +177,13 @@ recentSteps conn offset limit = do
     ORDER BY s.stoptime DESC
     LIMIT ? OFFSET ?
   |] (limit, offset)
-  pure $ map scanStepRow rows
+  pure $ map scanProjectStep rows
+
+-- | Scan a recent-step row that includes a project name prefix column.
+scanProjectStep :: Only Text :. ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
+                                 :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool) )
+                -> (Text, BuildStep)
+scanProjectStep (Only proj :. stepRow) = (proj, scanStepRow stepRow)
 
 -- | Recent news items for the overview page.
 newsItems :: Connection -> Int -> IO [NewsItem]

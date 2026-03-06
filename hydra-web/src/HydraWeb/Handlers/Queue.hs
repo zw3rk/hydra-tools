@@ -104,8 +104,10 @@ stepsHandler mCookie mPage = do
       offset  = (page - 1) * perPage
   (steps, counts) <- liftIO $ withConn pool $ \conn -> do
     s  <- recentSteps conn offset perPage
+    -- Phase 2: filter by repo privacy (project name is the first element).
+    visible <- filterByProjectAccess conn mUser fst s
     nc <- navCounts conn
-    pure (s, nc)
+    pure (map snd visible, nc)
   let pd = PageData
         { pdTitle    = "Latest Build Steps"
         , pdBasePath = bp

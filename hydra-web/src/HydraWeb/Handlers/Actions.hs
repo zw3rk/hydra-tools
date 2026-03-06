@@ -15,7 +15,7 @@ import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.ByteString (ByteString)
-import Data.Text (Text, pack)
+import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Servant (err303, err401, ServerError (..), NoContent (..))
 
@@ -24,7 +24,9 @@ import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (requireAuth)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Actions (triggerJobsetEval, restartBuild)
+import HydraWeb.DB.Projects (getProjectNameByBuild)
 import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.View.Components (showT)
 
 -- | POST /projects/:name/jobsets/:js/trigger
 -- Sets triggertime on the jobset so the evaluator picks it up.
@@ -59,8 +61,17 @@ restartBuildHandler mCookie buildId' = do
   authResult <- liftIO $ requireAuth pool mCookie
   case authResult of
     Left _ -> throwError err401 { errBody = "Login required" }
-    Right _user -> do
-      ok <- liftIO $ withConn pool $ \conn -> restartBuild conn buildId'
+    Right user -> do
+      -- Check project visibility before allowing restart.
+      ok <- liftIO $ withConn pool $ \conn -> do
+        mProject <- getProjectNameByBuild conn buildId'
+        case mProject of
+          Nothing -> pure False
+          Just projName -> do
+            accessible <- isProjectAccessible conn projName (Just user)
+            if accessible
+              then restartBuild conn buildId'
+              else pure False
       if ok
         then redirect303 (TE.encodeUtf8 $ bp <> "/build/" <> showT buildId')
         else throwError err401 { errBody = "Build not found or not restartable" }
@@ -72,5 +83,3 @@ redirect303 loc = throwError err303
   , errBody = ""
   }
 
-showT :: Int -> Text
-showT = pack . show
