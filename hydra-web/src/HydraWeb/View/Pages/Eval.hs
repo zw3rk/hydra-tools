@@ -165,7 +165,7 @@ latestEvalsPage bp evals total page perPage = do
         td_ $ a_ [href_ (projectURL bp (evalProject eval))] $ toHtml (evalProject eval)
         td_ $ a_ [href_ (jobsetURL bp (evalProject eval) (evalJobset eval))]
           $ toHtml (evalJobset eval)
-        td_ $ toHtml (showT (evalTimestamp eval))
+        td_ $ toHtml (fmtTime (evalTimestamp eval))
         td_ $ progressBar (eiNrSucceeded ei) (eiNrFailed ei) (eiNrScheduled ei)
         td_ [class_ "num status-succeeded"] $ toHtml (showT (eiNrSucceeded ei))
         td_ [class_ "num status-failed"] $ toHtml (showT (eiNrFailed ei))

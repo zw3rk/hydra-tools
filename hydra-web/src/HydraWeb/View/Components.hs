@@ -214,7 +214,7 @@ progressBar succ' fail' queued' =
             div_ [class_ "progress-segment queued"
                  , style_ ("width:" <> pct queued' total)] ""
   where
-    pct n t = showT (n * 100 `div` t) <> "%"
+    pct n t = showT ((n * 100) `div` t) <> "%"
     when True  f = f
     when False _ = pure ()
 

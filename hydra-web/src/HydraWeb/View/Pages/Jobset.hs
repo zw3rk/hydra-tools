@@ -15,7 +15,7 @@ import Lucid
 
 import HydraWeb.Models.Project (Jobset (..), hasErrorMsg)
 import HydraWeb.Models.Eval (EvalInfo (..), JobsetEval (..), JobsetEvalInput (..))
-import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, showT, shortRev, parsePRNumber)
+import HydraWeb.View.Components (projectURL, evalURL, breadcrumb, progressBar, showT, shortRev, parsePRNumber, fmtTime)
 import HydraWeb.View.Pager (pager)
 
 -- | Render the jobset page content with breadcrumbs and progress bars.
@@ -110,7 +110,7 @@ renderEvalInfo bp ei = do
   let eval = eiEval ei
   tr_ $ do
     td_ $ a_ [href_ (evalURL bp (evalId eval))] $ toHtml (showT (evalId eval))
-    td_ $ toHtml (showT (evalTimestamp eval))
+    td_ $ toHtml (fmtTime (evalTimestamp eval))
     td_ $ mapM_ renderChangedInput (eiChangedInputs ei)
     td_ $ progressBar (eiNrSucceeded ei) (eiNrFailed ei) (eiNrScheduled ei)
     td_ [class_ "num status-succeeded"] $ toHtml (showT (eiNrSucceeded ei))
