@@ -11,9 +11,11 @@
 module HydraWeb.Visibility
   ( isSuperAdmin
   , isProjectAccessible
+  , filterByProjectAccess
   ) where
 
 import Data.Text (Text)
+import qualified Data.Map.Strict as Map
 import Database.PostgreSQL.Simple (Connection)
 
 import HydraWeb.DB.Projects (isProjectHidden)
@@ -52,6 +54,21 @@ isProjectAccessible conn projectName mUser = do
             Nothing    -> pure True            -- no cache entry → fail-open
             Just True  -> pure True            -- public repo
             Just False -> pure (isAuthenticated mUser)  -- private → need auth
+
+-- | Batch-filter a list of items by project visibility.
+-- Checks each unique project name once, caching results for efficiency.
+-- Use when filtering lists of builds, queue entries, etc.
+filterByProjectAccess :: Connection -> Maybe GFUser -> (a -> Text) -> [a] -> IO [a]
+filterByProjectAccess conn mUser getProject items = do
+  -- Super-admins see everything.
+  if isSuperAdmin mUser
+    then pure items
+    else do
+      -- Collect unique project names and check each once.
+      let projects = Map.fromList [(getProject item, ()) | item <- items]
+      accessMap <- Map.traverseWithKey
+        (\projName () -> isProjectAccessible conn projName mUser) projects
+      pure [item | item <- items, Map.findWithDefault False (getProject item) accessMap]
 
 -- | Check if the user is authenticated (any logged-in user, not just admin).
 isAuthenticated :: Maybe GFUser -> Bool

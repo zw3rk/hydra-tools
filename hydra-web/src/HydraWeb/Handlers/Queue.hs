@@ -24,6 +24,9 @@ import HydraWeb.Auth.Middleware (getOptionalUser)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (queuedBuilds)
 import HydraWeb.DB.Queue
+import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Models.Queue (ActiveStep (..), QueueSummary (..))
+import HydraWeb.Visibility (filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Queue (queuePage, queueSummaryPage, machinesPage, stepsPage)
 import HydraWeb.View.Components (showT)
@@ -36,8 +39,9 @@ queueHandler mCookie = do
   mUser <- liftIO $ getOptionalUser pool mCookie
   (builds, counts) <- liftIO $ withConn pool $ \conn -> do
     bs <- queuedBuilds conn
+    visible <- filterByProjectAccess conn mUser buildProject bs
     nc <- navCounts conn
-    pure (bs, nc)
+    pure (visible, nc)
   let total = length builds
       pd = PageData
         { pdTitle    = "Build Queue (" <> showT total <> ")"
@@ -55,10 +59,11 @@ queueSummaryHandler mCookie = do
   mUser <- liftIO $ getOptionalUser pool mCookie
   (summary, systems, total, counts) <- liftIO $ withConn pool $ \conn -> do
     s  <- queueSummary conn
+    visible <- filterByProjectAccess conn mUser qsProject s
     sy <- systemQueueSummary conn
     t  <- queueCount conn
     nc <- navCounts conn
-    pure (s, sy, t, nc)
+    pure (visible, sy, t, nc)
   let pd = PageData
         { pdTitle    = "Queue Summary"
         , pdBasePath = bp
@@ -75,8 +80,9 @@ machinesHandler mCookie = do
   mUser <- liftIO $ getOptionalUser pool mCookie
   (steps, counts) <- liftIO $ withConn pool $ \conn -> do
     s  <- activeSteps conn
+    visible <- filterByProjectAccess conn mUser asProject s
     nc <- navCounts conn
-    pure (s, nc)
+    pure (visible, nc)
   let pd = PageData
         { pdTitle    = "Machine Status"
         , pdBasePath = bp

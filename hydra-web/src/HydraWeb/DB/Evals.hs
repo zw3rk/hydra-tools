@@ -17,6 +17,7 @@ module HydraWeb.DB.Evals
   , latestEvalsCount
   , runningEvaluations
   , runningEvalsCount
+  , queuedEvaluations
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -29,7 +30,9 @@ import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.Types ((:.)((:.)), In(..))
 
 import HydraWeb.Models.Eval
-  (JobsetEval (..), JobsetEvalInput (..), EvalInfo (..), EvaluationError (..), RunningEval (..))
+  ( JobsetEval (..), JobsetEvalInput (..), EvalInfo (..), EvaluationError (..)
+  , RunningEval (..), QueuedEval (..)
+  )
 
 -- | Fetch a single evaluation by ID with denormalized project/jobset.
 getEval :: Connection -> Int -> IO (Maybe JobsetEval)
@@ -276,6 +279,23 @@ runningEvalsCount conn = do
       AND j.hidden = 0 AND p.hidden = 0
   |]
   pure n
+
+-- | Fetch queued evaluations (jobsets with triggertime set, not yet started).
+-- Excludes hidden projects/jobsets. Ordered by triggertime (queue priority).
+queuedEvaluations :: Connection -> IO [QueuedEval]
+queuedEvaluations conn = do
+  rows <- query_ conn [sql|
+    SELECT j.name, j.project, j.triggertime,
+           j.flake, j.id, j.errormsg
+    FROM jobsets j
+    JOIN projects p ON p.name = j.project
+    WHERE j.triggertime > 0
+      AND j.starttime IS NULL
+      AND j.hidden = 0 AND p.hidden = 0
+    ORDER BY j.triggertime ASC
+  |]
+  pure $ map (\(name, proj, tt, flake, jid, emsg) ->
+    QueuedEval name proj tt flake jid emsg) rows
 
 -- | Scan a jobset eval row (15 columns) using nested tuples via (:.).
 scanEvalRow :: ( (Int, Int, Maybe Int, Int, Int, Int, Int, Text)

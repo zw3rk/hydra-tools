@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 import HydraWeb.Types (AppM, App (..))
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (jobsetOverview)
-import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.Visibility (isProjectAccessible, filterByProjectAccess)
 import HydraWeb.DB.Queue (queueCount)
 import HydraWeb.DB.Builds (queuedBuilds, latestBuilds)
 import HydraWeb.Models.Project (Jobset (..))
@@ -131,14 +131,17 @@ apiLatestBuildsHandler :: Maybe Int -> Maybe Text -> Maybe Text
 apiLatestBuildsHandler mNr mProject mJobset mJob mSystem = do
   pool <- asks appPool
   let nr = max 1 (min 1000 (fromMaybe 10 mNr))
-  builds <- liftIO $ withConn pool $ \conn ->
-    latestBuilds conn nr mProject mJobset mJob mSystem
+  builds <- liftIO $ withConn pool $ \conn -> do
+    bs <- latestBuilds conn nr mProject mJobset mJob mSystem
+    filterByProjectAccess conn Nothing buildProject bs
   pure $ map buildToAPI builds
 
 -- | GET /api/queue?nr=N — queued builds as JSON.
 apiQueueHandler :: Maybe Int -> AppM [APIBuild]
 apiQueueHandler mNr = do
   pool <- asks appPool
-  builds <- liftIO $ withConn pool queuedBuilds
+  builds <- liftIO $ withConn pool $ \conn -> do
+    bs <- queuedBuilds conn
+    filterByProjectAccess conn Nothing buildProject bs
   let nr = max 1 (min 1000 (fromMaybe 100 mNr))
   pure $ map buildToAPI (take nr builds)

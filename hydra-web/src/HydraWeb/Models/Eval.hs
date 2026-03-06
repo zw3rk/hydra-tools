@@ -10,6 +10,7 @@ module HydraWeb.Models.Eval
   , EvalInfo (..)
   , EvaluationError (..)
   , RunningEval (..)
+  , QueuedEval (..)
   ) where
 
 import Data.Text (Text)
@@ -72,4 +73,14 @@ data RunningEval = RunningEval
   , reDuration  :: !Int          -- ^ Seconds elapsed since start
   , reFlake     :: !(Maybe Text) -- ^ Flake URI (if flake-based)
   , reJobsetId  :: !Int          -- ^ Jobset ID (for linking)
+  } deriving (Show, Eq, Generic)
+
+-- | A queued evaluation (jobset with triggertime set, waiting to start).
+data QueuedEval = QueuedEval
+  { qeJobset      :: !Text         -- ^ Jobset name
+  , qeProject     :: !Text         -- ^ Project name
+  , qeTriggerTime :: !Int          -- ^ When evaluation was triggered (epoch)
+  , qeFlake       :: !(Maybe Text) -- ^ Flake URI (if flake-based)
+  , qeJobsetId    :: !Int          -- ^ Jobset ID
+  , qeErrorMsg    :: !(Maybe Text) -- ^ Last error message (if any)
   } deriving (Show, Eq, Generic)

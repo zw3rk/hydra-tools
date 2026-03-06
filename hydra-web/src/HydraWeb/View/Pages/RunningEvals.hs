@@ -1,7 +1,7 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Running evaluations page HTML.
+-- | Running and queued evaluations page HTML.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -16,18 +16,20 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import Lucid
 
-import HydraWeb.Models.Eval (RunningEval (..))
-import HydraWeb.View.Components (projectURL, jobsetURL, fmtTime, fmtDuration)
+import HydraWeb.Models.Eval (RunningEval (..), QueuedEval (..))
+import HydraWeb.View.Components (projectURL, jobsetURL, fmtTime, fmtDuration, showT)
 
--- | Full running evaluations page.
-runningEvalsPage :: Text -> [RunningEval] -> Html ()
-runningEvalsPage bp evals = do
-  h1_ "Running Evaluations"
+-- | Full running evaluations page (running + queued).
+runningEvalsPage :: Text -> [RunningEval] -> [QueuedEval] -> Html ()
+runningEvalsPage bp evals queued = do
+  h1_ "Evaluations"
   runningEvalsContent bp evals
+  queuedEvalsContent bp queued
 
--- | Reusable content partial for both initial render and SSE updates.
+-- | Running evaluations section.
 runningEvalsContent :: Text -> [RunningEval] -> Html ()
 runningEvalsContent bp evals = do
+  h2_ $ toHtml ("Running (" <> showT (length evals) <> ")")
   case evals of
     [] -> p_ "No evaluations currently running."
     _  -> table_ $ do
@@ -52,6 +54,36 @@ renderRunningEval bp re = tr_ [class_ "running-eval"] $ do
     Just f  -> code_ $ toHtml f
     Nothing -> em_ "legacy"
 
--- | Render the content partial to a strict ByteString (for SSE broadcasting).
+-- | Queued evaluations section.
+queuedEvalsContent :: Text -> [QueuedEval] -> Html ()
+queuedEvalsContent bp queued = do
+  h2_ $ toHtml ("Queued (" <> showT (length queued) <> ")")
+  case queued of
+    [] -> p_ "No evaluations waiting."
+    _  -> table_ $ do
+      thead_ $ tr_ $ do
+        th_ "#"
+        th_ "Project"
+        th_ "Jobset"
+        th_ "Triggered"
+        th_ "Flake"
+        th_ "Status"
+      tbody_ $ mapM_ (\(i, qe) -> renderQueuedEval bp i qe) (zip [1::Int ..] queued)
+
+-- | Render a single queued evaluation row.
+renderQueuedEval :: Text -> Int -> QueuedEval -> Html ()
+renderQueuedEval bp pos qe = tr_ $ do
+  td_ [class_ "num"] $ toHtml (showT pos)
+  td_ $ a_ [href_ (projectURL bp (qeProject qe))] $ toHtml (qeProject qe)
+  td_ $ a_ [href_ (jobsetURL bp (qeProject qe) (qeJobset qe))] $ toHtml (qeJobset qe)
+  td_ $ toHtml (fmtTime (qeTriggerTime qe))
+  td_ $ case qeFlake qe of
+    Just f  -> code_ $ toHtml f
+    Nothing -> em_ "legacy"
+  td_ $ case qeErrorMsg qe of
+    Just _  -> span_ [class_ "status-failed", title_ "Has previous error"] "error"
+    Nothing -> span_ [class_ "status-ok"] "waiting"
+
+-- | Render the running evals section to a strict ByteString (for SSE broadcasting).
 renderRunningEvalsContentBS :: Text -> [RunningEval] -> ByteString
-renderRunningEvalsContentBS bp = LBS.toStrict . renderBS . runningEvalsContent bp
+renderRunningEvalsContentBS bp evals = LBS.toStrict $ renderBS $ runningEvalsContent bp evals

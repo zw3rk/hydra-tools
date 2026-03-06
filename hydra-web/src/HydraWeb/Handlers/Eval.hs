@@ -27,8 +27,8 @@ import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
                            latestEvals, latestEvalsCount)
 import HydraWeb.DB.Builds (buildsByEval)
 import HydraWeb.DB.Queue (navCounts)
-import HydraWeb.Models.Eval (JobsetEval (..))
-import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.Models.Eval (JobsetEval (..), EvalInfo (..))
+import HydraWeb.Visibility (isProjectAccessible, filterByProjectAccess)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
 import HydraWeb.View.BuildDiff (BuildDiff, computeBuildDiff)
@@ -106,12 +106,13 @@ latestEvalsHandler mCookie mPage = do
   let page    = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
       offset  = (page - 1) * perPage
+  mUser <- liftIO $ getOptionalUser pool mCookie
   (evals, total, counts) <- liftIO $ withConn pool $ \conn -> do
     es <- latestEvals conn offset perPage
+    visible <- filterByProjectAccess conn mUser (evalProject . eiEval) es
     tc <- latestEvalsCount conn
     nc <- navCounts conn
-    pure (es, tc, nc)
-  mUser <- liftIO $ getOptionalUser pool mCookie
+    pure (visible, tc, nc)
   let pd = PageData
         { pdTitle    = "Latest Evaluations"
         , pdBasePath = bp
