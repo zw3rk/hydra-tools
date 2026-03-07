@@ -15,6 +15,7 @@ module HydraWeb.API
   , AdminAPI
   , ActionsAPI
   , DownloadAPI
+  , DocsAPI
   , ProxyAPI
   , JSONAPI
   , JobAPI
@@ -24,6 +25,7 @@ module HydraWeb.API
   , FullAPI
   ) where
 
+import Data.OpenApi (OpenApi)
 import Data.Text (Text)
 import Lucid (Html)
 import Servant
@@ -155,6 +157,10 @@ type ActionsAPI = Header "Cookie" Text :>
        :> Post '[PlainText] NoContent
   )
 
+-- | OpenAPI 3.0 documentation endpoint.
+-- Returns the auto-generated spec for all typed JSON endpoints.
+type DocsAPI = "api" :> "docs" :> Get '[JSON] OpenApi
+
 -- | Build product download endpoint (Raw WAI app for zero-copy file serving).
 -- Trailing path segments are passed through for directory-based products.
 type DownloadAPI = "build" :> Capture "id" Int :> "download"
@@ -204,6 +210,7 @@ type FullAPI =
   :<|> DownloadAPI
   :<|> JSONAPI
   :<|> JobAPI
+  :<|> DocsAPI
   :<|> StreamAPI
   :<|> ProxyAPI
   :<|> StaticAPI

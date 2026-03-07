@@ -4,6 +4,7 @@
 -- | JSON API handlers for backward-compatible Hydra API endpoints.
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module HydraWeb.Handlers.API
   ( apiJobsetsHandler
@@ -19,6 +20,9 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.Maybe (fromMaybe)
+import Data.OpenApi (ToSchema (..), genericDeclareNamedSchema,
+                     defaultSchemaOptions, SchemaOptions (..))
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import GHC.Generics (Generic)
@@ -52,6 +56,20 @@ instance ToJSON APIJobset where
     , "nrtotal"     .= ajNrTotal j
     ]
 
+-- | OpenAPI schema — field names must match the ToJSON encoding above.
+instance ToSchema APIJobset where
+  declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy APIJobset)
+    where
+      opts = defaultSchemaOptions
+        { fieldLabelModifier = apiJobsetField }
+      apiJobsetField "ajName"        = "name"
+      apiJobsetField "ajProject"     = "project"
+      apiJobsetField "ajNrScheduled" = "nrscheduled"
+      apiJobsetField "ajNrFailed"    = "nrfailed"
+      apiJobsetField "ajNrSucceeded" = "nrsucceeded"
+      apiJobsetField "ajNrTotal"     = "nrtotal"
+      apiJobsetField x               = x
+
 -- | JSON representation of a build for the API.
 data APIBuild = APIBuild
   { abId       :: !Int
@@ -77,6 +95,23 @@ instance ToJSON APIBuild where
     , "buildstatus" .= abStatus b
     , "drvpath"     .= abDrvPath b
     ]
+
+-- | OpenAPI schema — field names must match the ToJSON encoding above.
+instance ToSchema APIBuild where
+  declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy APIBuild)
+    where
+      opts = defaultSchemaOptions
+        { fieldLabelModifier = apiBuildField }
+      apiBuildField "abId"       = "id"
+      apiBuildField "abFinished" = "finished"
+      apiBuildField "abJob"      = "job"
+      apiBuildField "abSystem"   = "system"
+      apiBuildField "abProject"  = "project"
+      apiBuildField "abJobset"   = "jobset"
+      apiBuildField "abNixName"  = "nixname"
+      apiBuildField "abStatus"   = "buildstatus"
+      apiBuildField "abDrvPath"  = "drvpath"
+      apiBuildField x            = x
 
 -- | Convert a Build to its API representation.
 buildToAPI :: Build -> APIBuild

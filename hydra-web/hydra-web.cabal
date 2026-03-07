@@ -27,14 +27,18 @@ common common
       , http-client
       , http-client-tls
       , http-types
+      , insert-ordered-containers
+      , lens
       , lucid
       , memory
       , mime-types
       , mtl
+      , openapi3
       , postgresql-simple
       , resource-pool
       , servant
       , servant-lucid
+      , servant-openapi3
       , servant-server
       , stm
       , tagged
@@ -54,6 +58,7 @@ library
         HydraWeb.Config
       , HydraWeb.Types
       , HydraWeb.API
+      , HydraWeb.Docs
       , HydraWeb.Server
         -- Database
       , HydraWeb.DB.Pool

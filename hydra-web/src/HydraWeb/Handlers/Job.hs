@@ -4,6 +4,7 @@
 -- | Handlers for job routes: latest-build redirects and shields.io badge.
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module HydraWeb.Handlers.Job
   ( jobLatestHandler
@@ -18,6 +19,9 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Error.Class (throwError)
 import Data.Aeson (ToJSON (..), object, (.=))
+import Data.OpenApi (ToSchema (..), genericDeclareNamedSchema,
+                     defaultSchemaOptions, SchemaOptions (..))
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
@@ -46,6 +50,18 @@ instance ToJSON ShieldBadge where
     , "message"       .= sbMessage b
     , "color"         .= sbColor b
     ]
+
+-- | OpenAPI schema — field names must match the ToJSON encoding above.
+instance ToSchema ShieldBadge where
+  declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy ShieldBadge)
+    where
+      opts = defaultSchemaOptions
+        { fieldLabelModifier = shieldField }
+      shieldField "sbSchemaVersion" = "schemaVersion"
+      shieldField "sbLabel"         = "label"
+      shieldField "sbMessage"       = "message"
+      shieldField "sbColor"         = "color"
+      shieldField x                 = x
 
 -- | Throw a 302 redirect to the given URL.
 redirect302 :: Text -> AppM a

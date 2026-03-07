@@ -53,6 +53,7 @@ import HydraWeb.Handlers.Download (downloadApp)
 import HydraWeb.Handlers.Proxy (proxyToBackend)
 import HydraWeb.Handlers.API (apiJobsetsHandler, apiNrQueueHandler, apiLatestBuildsHandler, apiQueueHandler)
 import HydraWeb.Handlers.Job (jobLatestHandler, jobLatestFinishedHandler, jobLatestForSystemHandler, jobShieldHandler)
+import HydraWeb.Docs (apiOpenApi)
 
 -- SSE stream handlers
 import HydraWeb.SSE.Stream (streamApp)
@@ -86,6 +87,7 @@ server app = hoistServer (Proxy @HydraWebAPI) (runAppM app) htmlServer
         :<|> downloadServer app
         :<|> hoistServer (Proxy @JSONAPI) (runAppM app) jsonServer
         :<|> hoistServer (Proxy @JobAPI) (runAppM app) jobServer
+        :<|> pure apiOpenApi
         :<|> streamServer app
         :<|> Tagged (proxyToBackend app)
         :<|> staticServer (cfgStaticDir $ appConfig app)
