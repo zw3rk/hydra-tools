@@ -2,7 +2,7 @@
   "routes": [
     {
       "method": "get",
-      "endpoint": "app/installations",
+      "endpoint": "/app/installations",
       "responses": [
         {
           "statusCode": 200,
@@ -14,7 +14,7 @@
 
     {
       "method": "post",
-      "endpoint": "app/installations/1/access_tokens",
+      "endpoint": "/app/installations/1/access_tokens",
       "responses": [
         {
           "statusCode": 200,
