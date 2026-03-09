@@ -2,8 +2,9 @@
 .vscode
 dist-newstyle
 hydra-crystal-notify/lib/
+node_modules/
 
 # Nix
 .direnv
-node_modules/
+.nixos-test-history
 
