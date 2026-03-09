@@ -7,7 +7,7 @@
         {
           "statusCode": 200,
           "headers": [{"key": "Content-Type", "value": "application/json"}],
-          "body": "[{\"id\": 1, \"account\":{\"login\":\"input-output-hk\"}}]"
+          "body": "[{\"id\": 1, \"account\":{\"login\":\"input-output-hk\"}}, {\"id\": 2, \"account\":{\"login\":\"unknown\"}}]"
         }
       ]
     },

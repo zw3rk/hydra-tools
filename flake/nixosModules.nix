@@ -34,11 +34,11 @@
               };
 
               ghAppInstallIds = mkOption {
-                type = types.str;
-                default = "[]";
+                type = types.attrsOf types.int;
+                default = {};
                 description = ''
-                  The GitHub App installation IDs to authenticate with. (owner, id)
-                  Formatted as Haskell list syntax. e.g. [(\"owner\", id)]
+                  Mapping of organization names to GitHub App installation ids to
+                  authenticate with.
                 '';
               };
 
@@ -170,8 +170,14 @@
                 // lib.optionalAttrs (iCfg.ghAppId != 0) {
                   GITHUB_APP_ID = toString iCfg.ghAppId;
                 }
-                // lib.optionalAttrs (iCfg.ghAppInstallIds != "[]") {
-                  GITHUB_APP_INSTALL_IDS = iCfg.ghAppInstallIds;
+                // lib.optionalAttrs (iCfg.ghAppInstallIds != {}) {
+                  GITHUB_APP_INSTALL_IDS = let
+                    mkPairStr = org: installId: "${org}=${builtins.toString installId}";
+                  in
+                    lib.pipe iCfg.ghAppInstallIds [
+                      (lib.mapAttrsToList mkPairStr)
+                      (lib.concatStringsSep ",")
+                    ];
                 }
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
                   HYDRA_USER = iCfg.hydraUser;

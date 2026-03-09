@@ -29,7 +29,8 @@ common common
                     , github-rest >= 1.2
                     , regex-tdfa
                     , mtl
-                    , text
+                    , megaparsec
+                    , text >= 2
                     , time
                     , filepath
                     , http-client
