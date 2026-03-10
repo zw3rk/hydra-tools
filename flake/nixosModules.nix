@@ -123,6 +123,14 @@
                   plaintext environment file, containing and `HYDRA_DB_USER`, and `HYDRA_DB_PASS`.
                 '';
               };
+
+              waitForHydraServerPort = mkEnableOption ''
+                delay of hydra-server started state until its port is ready.
+                Note this adds an ExecStartPost= to hydra-server.
+                It does not make the hydra-github-bridge wait as the same might suggest.
+              '' // {
+                default = true;
+              };
             };
           });
         };
@@ -134,7 +142,7 @@
               inherit (iCfg) enable;
 
               wantedBy = ["hydra-github-bridge.target"];
-              after = ["postgresql.service"];
+              after = ["postgresql.service"] ++ config.systemd.targets.hydra-github-bridge.after;
               partOf = ["hydra-github-bridge.target"];
 
               startLimitIntervalSec = 0;
@@ -194,9 +202,29 @@
                 exec ${lib.getExe iCfg.package}
               '';
             }
-        );
+        ) // lib.optionalAttrs (lib.any (iCfg: iCfg.waitForHydraServerPort) (lib.attrValues cfg)) {
+          # Delay systemd's dependencies until Hydra actually listens.
+          # This is needed for After= ordering of the github-hydra-bridge
+          # because that tries to log in to use Hydra's API when it starts.
+          hydra-server.postStart = let
+            script = pkgs.writeShellApplication {
+              name = "hydra-wait-for-port";
+              runtimeInputs = [pkgs.netcat];
+              text = ''
+                while ! nc -z localhost ${toString config.services.hydra.port} 2> /dev/null; do
+                  sleep 1
+                done
+              '';
+            };
+          in ''
+            timeout 30 ${lib.getExe script}
+          '';
+        };
 
-        targets.hydra-github-bridge.wantedBy = ["hydra-server.service"];
+        targets.hydra-github-bridge = rec {
+          wantedBy = ["hydra-server.service"];
+          after = wantedBy;
+        };
       };
     });
 

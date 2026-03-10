@@ -50,17 +50,22 @@
           testScript = ''
             start_all()
 
+            # The bridge needs its Hydra user to be created first
+            hydra.systemctl("stop hydra-github-bridge.target")
+
             # Wait for Hydra to start
             hydra.wait_for_unit("hydra-server.service")
             hydra.wait_for_open_port(3000)
+
+            # Create the bridge user and start the bridge
             hydra.succeed("hydra-create-user bridge --password hydra --role admin")
+            hydra.systemctl("start hydra-github-bridge.target")
 
             # Wait for GitHub Mock server
             hydra.wait_for_unit("mock-github.service")
             hydra.wait_for_open_port(4010)
 
-            # Start hydra-github-bridge
-            hydra.systemctl("start hydra-github-bridge-all.service")
+            # Wait for hydra-github-bridge
             hydra.wait_for_unit("hydra-github-bridge-all.service")
             hydra.wait_for_open_port(8811, timeout=15)
 

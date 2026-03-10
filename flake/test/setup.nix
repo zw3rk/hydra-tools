@@ -89,12 +89,10 @@
       in "${mockoonBin} start --data ${mockData} --port 4010 --repair";
     };
 
-    hydra-github-bridge-all = {
-      # These will fail until Hydra and Mock GitHub are running, so we'll start
-      # them manually
-      wantedBy = lib.mkForce [];
-      # We'll want the test to fail if they crash
-      serviceConfig.Restart = lib.mkForce "no";
-    };
+    # We'll want the test to fail if they crash
+    hydra-github-bridge-all.serviceConfig.Restart = lib.mkForce "no";
   };
+
+  # These will fail until Hydra and Mock GitHub are running
+  systemd.targets.hydra-github-bridge.after = ["mock-github.service"];
 }
