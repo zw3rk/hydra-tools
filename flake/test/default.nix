@@ -5,7 +5,7 @@
     system,
     lib,
     ...
-  } @ perSystem:
+  }:
     lib.optionalAttrs (system == "x86_64-linux") {
       checks.test = let
         prOpenedPayload = ./pr_opened.payload.txt;

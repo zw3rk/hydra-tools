@@ -1,10 +1,4 @@
 {
-  inputs,
-  config,
-  lib,
-  withSystem,
-  ...
-}: {
   perSystem = {
     config,
     pkgs,
@@ -61,6 +55,8 @@
           $out/lib/node_modules/@mockoon/mockoon/node_modules/@mockoon/cli/bin/run.js \
           $out/bin/mockoon-cli
       '';
+
+      meta.mainProgram = "mockoon-cli";
     };
   };
 }
