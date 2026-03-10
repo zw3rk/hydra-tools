@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
 module Lib.GitHub.Client
@@ -29,7 +30,7 @@ module Lib.GitHub.Client
   )
 where
 
-import Control.Exception (Exception, throwIO)
+import Control.Exception (Exception, SomeException, throwIO, try)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader (..), ReaderT (..))
 import Control.Monad.Trans (MonadTrans)
@@ -368,37 +369,46 @@ fetchInstallations ghEndpointUrl appId appKeyFile ghUserAgent = do
 
 fetchAppInstallationToken :: Text -> Int -> FilePath -> ByteString -> Int -> IO TokenLease
 fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
-  signer <- loadSigner appKeyFile
-  jwt <- getJWTToken signer appId
-
-  let githubSettings =
-        GitHubSettings
-          { token = Just jwt,
-            userAgent = ghUserAgent,
-            apiVersion = gitHubApiVersion
+  -- Try extended permissions first (needed for PR sync on private repos).
+  -- If the installation doesn't grant them, fall back to basic permissions.
+  result <- try $ requestToken extendedPermissions
+  case result of
+    Right lease -> return lease
+    Left (_e :: SomeException) -> do
+      putStrLn $ "Extended permissions not available for installation "
+        <> show appInstallationId <> ", falling back to basic permissions"
+      requestToken basicPermissions
+  where
+    basicPermissions =
+      [ "checks" := ("write" :: String),
+        "statuses" := ("write" :: String)
+      ]
+    extendedPermissions = basicPermissions ++
+      [ "pull_requests" := ("read" :: String),
+        "contents" := ("read" :: String)
+      ]
+    requestToken perms = do
+      signer <- loadSigner appKeyFile
+      jwt <- getJWTToken signer appId
+      let githubSettings =
+            GitHubSettings
+              { token = Just jwt,
+                userAgent = ghUserAgent,
+                apiVersion = gitHubApiVersion
+              }
+      response <-
+        liftIO $
+          runGitHubRestT githubSettings ghEndpointUrl $
+            queryGitHub
+              GHEndpoint
+                { method = POST,
+                  endpoint = "/app/installations/:appInstallId/access_tokens",
+                  endpointVals = ["appInstallId" := appInstallationId],
+                  ghData = [ "permissions" := perms ]
+                }
+      expiry <- iso8601ParseM (response .: "expires_at" :: String)
+      return $
+        TokenLease
+          { token = BearerToken $ cs (response .: "token" :: String),
+            expiry = Just expiry
           }
-  response <-
-    liftIO $
-      runGitHubRestT githubSettings ghEndpointUrl $
-        queryGitHub
-          GHEndpoint
-            { method = POST,
-              endpoint = "/app/installations/:appInstallId/access_tokens",
-              endpointVals = ["appInstallId" := appInstallationId],
-              ghData =
-                [ "permissions"
-                    := [ "checks" := ("write" :: String),
-                         "statuses" := ("write" :: String),
-                         "pull_requests" := ("read" :: String),
-                         "contents" := ("read" :: String)
-                       ]
-                ]
-            }
-
-  expiry <- iso8601ParseM (response .: "expires_at" :: String)
-
-  return $
-    TokenLease
-      { token = BearerToken $ cs (response .: "token" :: String),
-        expiry = Just expiry
-      }
