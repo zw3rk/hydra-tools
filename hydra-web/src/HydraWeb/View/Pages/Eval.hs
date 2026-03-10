@@ -66,11 +66,11 @@ evalPage bp eval inputs evalErr diff = do
           th_ "Name"; th_ "Type"; th_ "URI"; th_ "Revision"
         tbody_ $ mapM_ renderInput inputs
 
-  -- Error box.
-  case evalErr of
-    Just ee -> article_ [class_ "error-box"] $ do
+  -- Error box — only show when there is a non-empty error message.
+  case evalErr >>= eeErrorMsg >>= (\t -> if Text.null (Text.strip t) then Nothing else Just t) of
+    Just msg -> article_ [class_ "error-box"] $ do
       header_ "Evaluation Error"
-      pre_ $ toHtml (fromMaybe "" (eeErrorMsg ee))
+      pre_ $ toHtml msg
     Nothing -> pure ()
 
   -- Build diff tabs.
