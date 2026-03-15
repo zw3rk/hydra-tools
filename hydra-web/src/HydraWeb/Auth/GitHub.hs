@@ -56,7 +56,7 @@ authorizeURL clientId callbackURL state =
   <> "?client_id=" <> clientId
   <> "&redirect_uri=" <> callbackURL
   <> "&state=" <> state
-  <> "&scope=read:user,read:org"
+  <> "&scope=read:org"
 
 -- | Exchange an authorization code for an access token.
 -- The redirect_uri MUST match the one sent during authorization;
