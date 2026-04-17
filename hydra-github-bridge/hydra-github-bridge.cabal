@@ -44,6 +44,8 @@ common common
                     , stm
                     , wai
                     , warp
+    if os(linux)
+      build-depends: systemd
 
 library
     import: common
@@ -52,6 +54,7 @@ library
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Systemd
                       , Lib.Bridge.Sync
                       , Lib.Hydra
                       , Lib.Hydra.Client
@@ -74,6 +77,7 @@ executable hydra-github-bridge
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Systemd
                       , Lib.Bridge.Sync
                       , Lib.GitHub
                       , Lib.GitHub.Client

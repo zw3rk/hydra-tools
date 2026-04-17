@@ -11,6 +11,7 @@ module Main where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
+import System.Timeout (timeout)
 import Control.Monad
 import Data.Aeson (toJSON)
 import Data.ByteString.Char8 (ByteString)
@@ -42,6 +43,7 @@ import System.IO
     stdin,
     stdout,
   )
+import Lib.Systemd (notifyReady, notifyWatchdog)
 
 -- | Variant of the notification watcher that also broadcasts check-run
 -- statuses to the SSE cache for real-time client consumption.
@@ -63,26 +65,34 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
   _ <- execute_ conn "LISTEN build_started"
   _ <- execute_ conn "LISTEN build_finished"
   _ <- execute_ conn "LISTEN cached_build_finished"
+  void notifyReady
   forever $ do
     putStrLn "Waiting for notification..."
-    note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    -- Bound the blocking wait so a silently-hung PostgreSQL connection is
+    -- detected within the watchdog interval rather than blocking indefinitely.
+    mRaw <- timeout (60 * 1000000) (getNotification conn)
+    case mRaw of
+      Nothing -> pure ()
+      Just raw -> do
+        let note = toHydraNotification (traceShowId raw)
+        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
 
-    -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
-    broadcastCheckRuns cache statuses
+        -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
+        broadcastCheckRuns cache statuses
 
-    -- Queue for GitHub API delivery (existing behaviour).
-    forM_ statuses $
-      ( \(GitHub.CheckRun owner repo payload) -> do
-          Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-          [Only _id'] <-
-            query
-              conn
-              "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-              (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-              IO [Only Int]
-          execute_ conn "NOTIFY github_status"
-      )
+        -- Queue for GitHub API delivery (existing behaviour).
+        forM_ statuses $
+          ( \(GitHub.CheckRun owner repo payload) -> do
+              Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+              [Only _id'] <-
+                query
+                  conn
+                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
+                  IO [Only Int]
+              execute_ conn "NOTIFY github_status"
+          )
+    void notifyWatchdog
 
 fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> IO [(String, TokenLease)]
 fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent = do

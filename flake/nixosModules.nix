@@ -208,6 +208,9 @@
                   Restart = "always";
                   RestartSec = "10s";
 
+                  Type = "notify";
+                  WatchdogSec = "120s";
+
                   LoadCredential =
                     lib.optional (iCfg.ghTokenFile != null) "github-token:${iCfg.ghTokenFile}"
                     ++ lib.optional (iCfg.ghAppKeyFile != null) "github-app-key-file:${iCfg.ghAppKeyFile}"
