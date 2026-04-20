@@ -27,9 +27,11 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Exception
   ( Exception,
+    SomeAsyncException (..),
     SomeException,
     bracket,
     displayException,
+    fromException,
     throwIO,
     try,
   )
@@ -71,8 +73,12 @@ mkConnectionString info =
 
 -- | Bracket that automatically reconnects on 'ConnectionLost'.
 --
--- Other exceptions ('AsyncCancelled', 'ExitCode', etc.) propagate normally,
--- so process shutdown and @mapConcurrently_@ cancellation work as expected.
+-- During the reconnection loop, synchronous exceptions from
+-- @connectPostgreSQL@ ('SqlError', 'IOException') are also caught so that a
+-- temporarily-unreachable database doesn't crash the process.
+--
+-- Async exceptions ('AsyncCancelled', etc.) always propagate so that process
+-- shutdown and @mapConcurrently_@ cancellation work as expected.
 --
 -- On reconnection, the action is re-entered from the top with a fresh
 -- 'Connection', so any LISTEN registrations are re-issued by the caller.
@@ -88,14 +94,33 @@ withReconnect connStr delaySec action = go
       result <- tryConnectionLost $ bracket (connectPostgreSQL connStr) close action
       case result of
         Right a -> pure a
-        Left (ConnectionLost reason) -> do
-          putStrLn $ "Connection lost (" <> reason <> "), reconnecting in " <> show delaySec <> "s..."
-          threadDelay (delaySec * 1000000)
-          go
+        Left (ConnectionLost reason) -> reconnect reason
 
-    -- Pinned to 'ConnectionLost' so we don't accidentally swallow other exceptions.
+    -- Reconnection loop. Catches any synchronous exception from connectPostgreSQL
+    -- (SqlError on connection-refused, IOException on network errors, etc.) so we
+    -- keep retrying. Async exceptions are re-thrown immediately.
+    reconnect reason = do
+      putStrLn $ "Connection lost (" <> reason <> "), reconnecting in " <> show delaySec <> "s..."
+      threadDelay (delaySec * 1000000)
+      connResult <- tryAny go
+      case connResult of
+        Right a -> pure a
+        Left err
+          | isAsyncException err -> throwIO err
+          | otherwise -> reconnect (displayException err)
+
+    -- Pinned to 'ConnectionLost' so we don't accidentally swallow other exceptions
+    -- during normal operation (e.g. programming errors, schema mismatches).
     tryConnectionLost :: IO a -> IO (Either ConnectionLost a)
     tryConnectionLost = try
+
+    tryAny :: IO a -> IO (Either SomeException a)
+    tryAny = try
+
+    isAsyncException :: SomeException -> Bool
+    isAsyncException e = case fromException e of
+      Just (SomeAsyncException _) -> True
+      Nothing -> False
 
 -- | Wait for a PostgreSQL notification with timeout and health check.
 --
