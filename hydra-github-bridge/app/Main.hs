@@ -24,10 +24,10 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Time.Clock (NominalDiffTime, addUTCTime, getCurrentTime)
 import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Connection (guardedGetNotification, mkConnectionString, withReconnect)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
@@ -46,6 +46,7 @@ import System.IO
 -- | Variant of the notification watcher that also broadcasts check-run
 -- statuses to the SSE cache for real-time client consumption.
 notificationWatcherWithSSE ::
+  Int ->
   StatusCache ->
   String ->
   String ->
@@ -53,7 +54,8 @@ notificationWatcherWithSSE ::
   Bool ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = do
+notificationWatcherWithSSE notifTimeoutSec cache host stateDir checkRunPrefix filterJobs conn = do
+  let timeoutUs = notifTimeoutSec * 1000000
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -65,24 +67,26 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
   _ <- execute_ conn "LISTEN cached_build_finished"
   forever $ do
     putStrLn "Waiting for notification..."
-    note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    mRaw <- guardedGetNotification conn timeoutUs
+    forM_ mRaw $ \raw -> do
+      let note = toHydraNotification (traceShowId raw)
+      statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
 
-    -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
-    broadcastCheckRuns cache statuses
+      -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
+      broadcastCheckRuns cache statuses
 
-    -- Queue for GitHub API delivery (existing behaviour).
-    forM_ statuses $
-      ( \(GitHub.CheckRun owner repo payload) -> do
-          Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-          [Only _id'] <-
-            query
-              conn
-              "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-              (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-              IO [Only Int]
-          execute_ conn "NOTIFY github_status"
-      )
+      -- Queue for GitHub API delivery (existing behaviour).
+      forM_ statuses $
+        ( \(GitHub.CheckRun owner repo payload) -> do
+            Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+            [Only _id'] <-
+              query
+                conn
+                "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
+                IO [Only Int]
+            execute_ conn "NOTIFY github_status"
+        )
 
 fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> IO [(String, TokenLease)]
 fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent = do
@@ -140,6 +144,7 @@ main = do
   api_user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
   api_pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
   port <- maybe 8080 read <$> lookupEnv "PORT"
+  notifTimeoutSec <- maybe 120 read <$> lookupEnv "NOTIFICATION_TIMEOUT_SEC"
   stateDir <- getEnv "HYDRA_STATE_DIR"
   ghEndpointUrl <- Text.pack . maybe "https://api.github.com" id <$> lookupEnv "GITHUB_ENDPOINT_URL"
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
@@ -189,10 +194,14 @@ main = do
   let numWorkers = 10
       getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
 
+  -- Build connection string with TCP keepalive parameters for dead-connection
+  -- detection. All connections benefit from this even without explicit reconnection.
+  let connStr = mkConnectionString (ConnectInfo db 5432 db_user db_pass "hydra")
+
   -- Create partial index for the optimized unsent-payload query.
   -- CONCURRENTLY cannot run inside a transaction, so we use a
   -- dedicated connection with autocommit.
-  withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \migConn -> do
+  withReconnect connStr 5 $ \migConn -> do
     putStrLn "Ensuring partial index idx_github_status_payload_unsent exists..."
     _ <- execute_ migConn
       "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
@@ -203,25 +212,26 @@ main = do
 
   Async.mapConcurrently_
     id $
-    [ Async.replicateConcurrently_
+    [ -- Status handler workers: reconnect automatically on dead PG connections.
+      Async.replicateConcurrently_
         numWorkers
-        ( withConnect
-            (ConnectInfo db 5432 db_user db_pass "hydra")
-            (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
+        ( withReconnect connStr 5 $
+            statusHandlers notifTimeoutSec ghEndpointUrl ghUserAgent getValidGitHubToken'
         ),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+      -- Hydra API client.
+      withReconnect connStr 5 $ \conn ->
         hydraClient env conn,
-      -- Use the SSE-broadcasting variant of the notification watcher.
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+      -- Notification watcher (SSE-broadcasting variant): reconnects on dead connections.
+      withReconnect connStr 5 $
+        notificationWatcherWithSSE notifTimeoutSec cache host stateDir checkRunPrefix filterJobs,
+      -- GitHub webhook server.
+      withReconnect connStr 5 $ \conn -> do
         run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
       -- Periodically prune stale notifications for old commits that
       -- have already been superseded by newer evaluations.  Only marks
       -- a payload as sent when a later payload for the same
       -- (owner, repo, name) has already been successfully delivered.
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+      withReconnect connStr 5 $ \conn ->
         forever $ do
           threadDelay (5 * 60 * 1000000) -- 5 minutes
           pruned <- execute_ conn
@@ -243,7 +253,7 @@ main = do
             putStrLn $ "Pruned " ++ show pruned ++ " stale notification(s)"
     ]
     ++ [ runSSEServer cache ssePort sseTtl | sseEnabled ]
-    ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+    ++ [ withReconnect connStr 5 $ \conn ->
            syncLoop
              SyncConfig
                { scInterval = syncInterval,

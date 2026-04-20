@@ -177,6 +177,18 @@
                 '';
               };
 
+              notificationTimeoutSec = mkOption {
+                type = types.int;
+                default = 120;
+                description = ''
+                  Timeout in seconds for PostgreSQL notification polling.
+                  After this period without a notification, a connection
+                  health check is performed. If the connection is alive,
+                  polling continues. If dead, the connection is
+                  re-established automatically.
+                '';
+              };
+
               environmentFile = mkOption {
                 type = types.nullOr types.path;
                 default = null;
@@ -245,6 +257,7 @@
                   SYNC_ENABLED = lib.boolToString iCfg.enableSync;
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
+                  NOTIFICATION_TIMEOUT_SEC = toString iCfg.notificationTimeoutSec;
                 };
 
               script = ''
