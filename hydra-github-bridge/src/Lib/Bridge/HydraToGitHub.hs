@@ -71,6 +71,7 @@ import GitHub.REST
     queryGitHub,
   )
 import Lib (binarySearch)
+import Lib.Connection (guardedGetNotification)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
@@ -155,10 +156,12 @@ fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds
     Text.putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> Text.pack (show lease.expiry)
     return (Text.unpack owner, lease)
 
-notificationWatcher :: Connection -> HydraToGitHubT IO ()
-notificationWatcher conn = do
+notificationWatcher :: Int -> Connection -> HydraToGitHubT IO ()
+notificationWatcher notifTimeoutSec conn = do
   host <- asks htgEnvHydraHost
   stateDir <- asks htgEnvHydraStateDir
+
+  let timeoutUs = notifTimeoutSec * 1000000
 
   liftIO $ do
     _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
@@ -172,25 +175,29 @@ notificationWatcher conn = do
     _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
     forever $ do
       putStrLn "Waiting for notification..."
-      note <- toHydraNotification . traceShowId <$> getNotification conn
-      statuses <- handleHydraNotification conn (cs host) stateDir note
-      forM_ statuses $
-        ( \(GitHub.CheckRun owner repo payload) -> do
-            liftIO $ Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-            [Only _id'] <-
-              query
-                conn
-                "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-                (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-                IO [Only Int]
-            execute_ conn "NOTIFY github_status"
-        )
+      mRaw <- guardedGetNotification conn timeoutUs
+      forM_ mRaw $ \raw -> do
+        let note = toHydraNotification (traceShowId raw)
+        statuses <- handleHydraNotification conn (cs host) stateDir note
+        forM_ statuses $
+          ( \(GitHub.CheckRun owner repo payload) -> do
+              liftIO $ Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+              [Only _id'] <-
+                query
+                  conn
+                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
+                  IO [Only Int]
+              execute_ conn "NOTIFY github_status"
+          )
 
-statusHandlers :: Connection -> HydraToGitHubT IO ()
-statusHandlers conn = do
+statusHandlers :: Int -> Connection -> HydraToGitHubT IO ()
+statusHandlers notifTimeoutSec conn = do
   ghEndpointUrl <- asks htgEnvGhEndpointUrl
   ghUserAgent <- asks htgEnvGhUserAgent
   env <- ask
+
+  let timeoutUs = notifTimeoutSec * 1000000
 
   forever $ do
     let processStatuses = withTransaction conn $ do
@@ -280,7 +287,7 @@ statusHandlers conn = do
     _ <- liftIO $ execute_ conn "LISTEN github_status"
     let loop = do
           executed <- liftIO processStatuses
-          unless executed $ void $ liftIO $ getNotification conn
+          unless executed $ void $ liftIO $ guardedGetNotification conn timeoutUs
           when executed loop
     loop
 

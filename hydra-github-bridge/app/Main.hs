@@ -13,7 +13,7 @@ import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Database.PostgreSQL.Simple
+import Database.PostgreSQL.Simple (ConnectInfo (..))
 import Lib.Bridge.GitHubToHydra (GitHubToHydraEnv (..), app, hydraClient, hydraClientEnv, parseInstallIds)
 import Lib.Bridge.HydraToGitHub
   ( HydraToGitHubEnv (..),
@@ -22,6 +22,7 @@ import Lib.Bridge.HydraToGitHub
     runHydraToGitHubT,
     statusHandlers,
   )
+import Lib.Connection (mkConnectionString, withReconnect)
 import Lib.GitHub (gitHubKey)
 import Lib.Hydra (HydraClientEnv (..))
 import Network.Wai.Handler.Warp (run)
@@ -51,6 +52,7 @@ main = do
   api_user <- maybe mempty Text.pack <$> lookupEnv "HYDRA_USER"
   api_pass <- maybe mempty Text.pack <$> lookupEnv "HYDRA_PASS"
   port <- maybe 8080 read <$> lookupEnv "PORT"
+  notifTimeoutSec <- maybe 120 read <$> lookupEnv "NOTIFICATION_TIMEOUT_SEC"
   stateDir <- getEnv "HYDRA_STATE_DIR"
   ghEndpointUrl <- maybe "https://api.github.com" cs <$> lookupEnv "GITHUB_ENDPOINT_URL"
   ghUserAgent <- maybe "hydra-github-bridge" cs <$> lookupEnv "GITHUB_USER_AGENT"
@@ -69,6 +71,10 @@ main = do
   env <- hydraClientEnv (Text.pack host) api_user api_pass
 
   putStrLn $ "Server is starting on port " ++ show port
+
+  -- Build connection string with TCP keepalive parameters for dead-connection
+  -- detection. All connections benefit from this even without explicit reconnection.
+  let connStr = mkConnectionString (ConnectInfo db 5432 db_user db_pass "hydra")
 
   -- Start the app loop
   let numWorkers = 10 -- default number of workers
@@ -93,19 +99,17 @@ main = do
 
   Async.mapConcurrently_
     id
-    [ Async.replicateConcurrently_
+    [ -- Status handler workers: reconnect automatically on dead PG connections.
+      Async.replicateConcurrently_
         numWorkers
-        ( withConnect
-            (ConnectInfo db 5432 db_user db_pass "hydra")
-            (runHydraToGitHubT hydraToGitHubEnv . statusHandlers)
+        ( withReconnect connStr 5 $ \conn ->
+            runHydraToGitHubT hydraToGitHubEnv (statusHandlers notifTimeoutSec conn)
         ),
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (hydraClient env),
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (runHydraToGitHubT hydraToGitHubEnv . notificationWatcher),
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (run port . app gitHubToHydraEnv)
+      -- Hydra API client: uses keepalive-enabled connection string.
+      withReconnect connStr 5 (hydraClient env),
+      -- Notification watcher: reconnects automatically on dead PG connections.
+      withReconnect connStr 5 $ \conn ->
+        runHydraToGitHubT hydraToGitHubEnv (notificationWatcher notifTimeoutSec conn),
+      -- GitHub webhook server: uses keepalive-enabled connection string.
+      withReconnect connStr 5 (run port . app gitHubToHydraEnv)
     ]
