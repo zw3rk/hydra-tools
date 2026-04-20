@@ -6,4 +6,4 @@ hydra-crystal-notify/lib/
 # Nix
 .direnv
 node_modules/
-
+result
