@@ -258,7 +258,8 @@ instance FromJSON CheckRun where
 
 data TokenLease = TokenLease
   { token :: Token,
-    expiry :: Maybe UTCTime
+    expiry :: Maybe UTCTime,
+    installationId :: Int
   }
   deriving (Show)
 
@@ -410,5 +411,6 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
       return $
         TokenLease
           { token = BearerToken $ cs (response .: "token" :: String),
-            expiry = Just expiry
+            expiry = Just expiry,
+            installationId = appInstallationId
           }

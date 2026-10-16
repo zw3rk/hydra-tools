@@ -155,6 +155,13 @@ NixOS modules are provided for easy deployment:
 - `GITHUB_ENDPOINT_URL`: The GitHub API base URL (useful for testing)
 - `PORT`: Server port (default: 8080)
 
+`GITHUB_APP_INSTALL_IDS` controls which base repository owners may submit
+webhooks. Public-fork PRs use the base repository's permission check; their fork
+owners do not need to be added. The bridge discovers App installations at startup
+and refreshes each token using its original installation ID. Check the refresh
+cache without GitHub or PostgreSQL with
+`nix develop -c make test-bridge-token-refresh`.
+
 #### hydra-attic-bridge  
 - `ATTIC_HOST`: Attic server URL
 - `ATTIC_CACHE`: Cache name

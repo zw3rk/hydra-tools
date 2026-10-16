@@ -58,6 +58,7 @@ library
                       , Lib.Hydra.DB
                       , Lib.GitHub
                       , Lib.GitHub.Client
+                      , Lib.GitHub.TokenCache
                       , Lib.GitHub.WebHookServer
                       , Lib.SSE
                       , Lib.SSE.StatusCache
@@ -77,6 +78,7 @@ executable hydra-github-bridge
                       , Lib.Bridge.Sync
                       , Lib.GitHub
                       , Lib.GitHub.Client
+                      , Lib.GitHub.TokenCache
                       , Lib.GitHub.WebHookServer
                       , Lib.Hydra
                       , Lib.Hydra.Client
@@ -88,3 +90,13 @@ executable hydra-github-bridge
                       , Lib.Data.List
                       , Lib.Data.Text
     main-is:          Main.hs
+
+test-suite token-refresh
+    type:             exitcode-stdio-1.0
+    main-is:          TokenRefreshSpec.hs
+    hs-source-dirs:   test, src
+    other-modules:    Lib.GitHub.TokenCache
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror
+    build-depends:    base >=4.16 && <5
+                    , time

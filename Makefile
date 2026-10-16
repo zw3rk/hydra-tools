@@ -18,6 +18,9 @@ test: ## Run all test suites
 test-web: ## Run hydra-web test suite
 	cabal test -j hydra-web-test
 
+test-bridge-token-refresh: ## Check installation-token refresh without network or database services
+	cabal test hydra-github-bridge:token-refresh
+
 clean: ## Clean build artifacts
 	cabal clean
 
@@ -27,4 +30,4 @@ help: ## Show this help message
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: help hydra-github-bridge hydra-attic-bridge hydra-web all test test-web clean
+.PHONY: help hydra-github-bridge hydra-attic-bridge hydra-web all test test-web test-bridge-token-refresh clean

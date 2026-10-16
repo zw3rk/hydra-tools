@@ -15,14 +15,13 @@ import Control.Monad
 import Data.Aeson (toJSON)
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.List (find)
+import Data.IORef (IORef, newIORef)
 import Data.Set qualified as Set
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
-import Data.Time.Clock (NominalDiffTime, addUTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
@@ -31,6 +30,7 @@ import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
+import Lib.GitHub.TokenCache (refreshTokensAt)
 import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
@@ -102,29 +102,17 @@ getValidGitHubToken ::
   Text ->
   ByteString ->
   IO [(String, TokenLease)]
-getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent =
-  let buffer = 5 :: NominalDiffTime
-   in getValidToken buffer ghTokens $ \owner -> do
-        putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
-        ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
-        ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
-        let ghAppInstallId = fmap snd . find ((owner ==) . fst) $ ghAppInstallIds
-        ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        maybe
-          (error $ "No configured GitHub App Installation ID " <> owner)
-          (fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent)
-          ghAppInstallId
-
-getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO TokenLease) -> IO [(String, TokenLease)]
-getValidToken buffer lease fetch = do
-  leases' <- readIORef lease
+getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent = do
   now <- getCurrentTime
-  leases'' <- forM leases' $ \(owner, tok) -> do
-    case tok.expiry of
-      Just expiry' | addUTCTime buffer now < expiry' -> return (owner, tok)
-      _ -> (owner,) <$> fetch owner
-  writeIORef lease leases''
-  return leases''
+  let buffer = 5 :: NominalDiffTime
+  refreshTokensAt now buffer (.expiry) ghTokens $ \lease -> do
+    putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
+    ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+    ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+    -- Startup discovers every installation of the App, including owners
+    -- outside this instance's webhook allowlist. Renew the same installation
+    -- that issued the lease, rather than looking up a different owner list.
+    fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent lease.installationId
 
 main :: IO ()
 main = do
