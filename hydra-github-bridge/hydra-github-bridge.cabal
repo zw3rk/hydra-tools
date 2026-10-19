@@ -8,6 +8,7 @@ maintainer:         moritz.angermann@gmail.com
 category:           Network
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
+extra-source-files: test/run-sync-source.sh
 
 common common
     ghc-options:      -Wall -Werror
@@ -90,6 +91,13 @@ executable hydra-github-bridge
                       , Lib.Data.List
                       , Lib.Data.Text
     main-is:          Main.hs
+
+test-suite sync-source
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:    test
+    main-is:          SyncSourceSpec.hs
+    build-depends:    hydra-github-bridge
 
 test-suite token-refresh
     type:             exitcode-stdio-1.0

@@ -53,6 +53,16 @@ Monitors Hydra build events and reports status back to GitHub:
 
 **Usage:** See [Github Integration](docs/github-integration.md)
 
+Periodic reconciliation also repairs missed PR source updates. It refreshes
+only bridge-style immutable GitHub sources for existing open PR jobsets,
+preserves their other settings, and queues a normal evaluation atomically.
+A source changed concurrently by a webhook is left alone. Custom sources and
+legacy jobsets are not rewritten. Missing GitHub tokens, PR-read permissions,
+or incomplete listings (including deleted source repositories) fail that
+project's reconciliation instead of treating its PR list as empty.
+This recovery does not order already-queued webhook events globally. GitHub
+App token renewal and installation permissions remain separate requirements.
+
 - **Real-time Status Updates**: GitHub Check Runs updated as builds progress
 - **Detailed Build Information**: Links to Hydra build pages, logs, and artifacts
 - **Build Result Reporting**: Success/failure status with detailed error information
@@ -113,6 +123,14 @@ This project provides a complete Nix flake with packages and NixOS modules:
 # Build with Nix
 nix build .#hydra-github-bridge
 nix build .#hydra-attic-bridge
+
+# PostgreSQL + fake-GitHub regression (private temporary database, no credentials)
+nix build .#checks.aarch64-darwin.sync-source
+nix build .#checks.aarch64-darwin.token-refresh
+# Or in the development shell:
+nix develop -c make test-sync
+# The complete test target also creates its own temporary PostgreSQL cluster:
+nix develop -c make test
 
 # Run directly
 nix run .#hydra-github-bridge

@@ -21,6 +21,14 @@
           hydra-tools = final.haskell-nix.project' {
             src = ../../../.;
             compiler-nix-name = "ghc9122";
+            modules = [{
+              packages.hydra-github-bridge.components.tests.sync-source.testWrapper = [
+                "${final.writeShellScript "sync-source-postgresql" ''
+                  export PATH=${lib.makeBinPath [final.postgresql final.coreutils]}:$PATH
+                  exec ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/run-sync-source.sh} "$@"
+                ''}"
+              ];
+            }];
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
               "https://github.com/cuedo/github-webhooks" = inputs.github-webhooks;
@@ -37,6 +45,7 @@
               inputsFrom = [config.treefmt.build.devShell];
 
               buildInputs = [
+                final.postgresql
                 (withSystem system ({config, ...}: config.packages.mockoon-cli))
               ];
             };
@@ -50,6 +59,9 @@ in {
     haskellPkgSet' = haskellPkgSet ctx;
   in {
     inherit (haskellPkgSet'.flake') devShells;
+
+    checks.sync-source = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.sync-source;
+    checks.token-refresh = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.token-refresh;
 
     packages = {
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
