@@ -24,7 +24,14 @@
             modules = [{
               packages.hydra-github-bridge.components.tests.sync-source.testWrapper = [
                 "${final.writeShellScript "sync-source-postgresql" ''
-                  export PATH=${lib.makeBinPath [final.postgresql final.coreutils]}:$PATH
+                  export PATH=${lib.makeBinPath ([final.postgresql final.coreutils] ++ lib.optionals final.stdenv.isDarwin [
+                    # crypton-x509-system reads public system certificates when
+                    # creating the TLS manager, including for loopback HTTP.
+                    # Nixpkgs has no working packaged Darwin security tool.
+                    (final.writeShellScriptBin "security" ''
+                      exec /usr/bin/security "$@"
+                    '')
+                  ])}:$PATH
                   exec ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/run-sync-source.sh} "$@"
                 ''}"
               ];
