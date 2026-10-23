@@ -17,6 +17,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (find)
+import Data.Maybe (catMaybes)
 import Data.Set qualified as Set
 import Data.String.Conversions (cs)
 import Data.Text (Text)
@@ -84,13 +85,21 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
           execute_ conn "NOTIFY github_status"
       )
 
-fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> IO [(String, TokenLease)]
-fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent = do
+-- | Fetch tokens for the app's installations that are also listed in
+-- GITHUB_APP_INSTALL_IDS.  Anyone can install a public GitHub App, so the
+-- installation list can include owners we do not serve; a token for one of
+-- those could never be refreshed (see 'getValidGitHubToken').
+fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> [(String, Int)] -> IO [(String, TokenLease)]
+fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds = do
   putStrLn "Fetching GitHub App installations..."
-  ghAppInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
-  putStrLn $ "Found " <> show (length ghAppInstalls) <> " installations"
-  forM_ ghAppInstalls $ \(owner, installId) -> do
-    Text.putStrLn $ "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
+  allInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
+  putStrLn $ "Found " <> show (length allInstalls) <> " installations"
+  let configured (owner, _) = Text.unpack owner `elem` map fst ghAppInstallIds
+      ghAppInstalls = filter configured allInstalls
+  forM_ allInstalls $ \inst@(owner, installId) -> do
+    Text.putStrLn $
+      "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
+        <> if configured inst then "" else " skipped: not in GITHUB_APP_INSTALL_IDS"
 
   forM ghAppInstalls $ \(owner, installId) -> do
     lease <- fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
@@ -110,19 +119,23 @@ getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent =
         ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
         let ghAppInstallId = fmap snd . find ((owner ==) . fst) $ ghAppInstallIds
         ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        maybe
-          (error $ "No configured GitHub App Installation ID " <> owner)
-          (fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent)
-          ghAppInstallId
+        case ghAppInstallId of
+          -- Raising here used to fail every caller (status delivery and the
+          -- PR sync alike) once an hour, when the leases expired.  Drop the
+          -- owner instead.
+          Nothing -> do
+            putStrLn $ "No configured GitHub App Installation ID for " <> owner <> ", dropping its token"
+            return Nothing
+          Just installId -> Just <$> fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
 
-getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO TokenLease) -> IO [(String, TokenLease)]
+getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO (Maybe TokenLease)) -> IO [(String, TokenLease)]
 getValidToken buffer lease fetch = do
   leases' <- readIORef lease
   now <- getCurrentTime
-  leases'' <- forM leases' $ \(owner, tok) -> do
+  leases'' <- fmap catMaybes . forM leases' $ \(owner, tok) -> do
     case tok.expiry of
-      Just expiry' | addUTCTime buffer now < expiry' -> return (owner, tok)
-      _ -> (owner,) <$> fetch owner
+      Just expiry' | addUTCTime buffer now < expiry' -> return (Just (owner, tok))
+      _ -> fmap (owner,) <$> fetch owner
   writeIORef lease leases''
   return leases''
 
@@ -168,7 +181,7 @@ main = do
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
   ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
   ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-  ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent >>= newIORef
+  ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds >>= newIORef
   let allowedOrgs = Set.fromList $ map (Text.pack . fst) ghAppInstallIds
   putStrLn $ "Allowed orgs: " ++ show (Set.toList allowedOrgs)
 
