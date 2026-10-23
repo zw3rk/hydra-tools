@@ -8,10 +8,11 @@ module Lib.Bridge.Source
     parseRepoFlakeDirs,
     validRepoPath,
     flakeSourceUri,
+    flakeSourceUriFor,
   )
 where
 
-import Data.Char (isControl)
+import Data.Char (isControl, isSpace)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -28,6 +29,7 @@ type RepoFlakeDirs = Map Text Text
 parseRepoFlakeDirs :: String -> Either String RepoFlakeDirs
 parseRepoFlakeDirs raw = do
   entries <- maybe (Left "expected a Haskell list of (owner/repo, directory) pairs") Right (readMaybe raw :: Maybe [(String, String)])
+  let values = Map.fromList [(Text.pack repo, Text.pack dir) | (repo, dir) <- entries]
   if any (not . validRepo . fst) entries
     then Left "repository keys must have the form owner/repo"
     else
@@ -38,10 +40,13 @@ parseRepoFlakeDirs raw = do
             then Left "repository flake directory keys must be unique"
             else Right values
   where
-    values = Map.fromList [(Text.pack repo, Text.pack dir) | (repo, dir) <- entries]
     validRepo repo = case Text.splitOn "/" (Text.pack repo) of
-      [owner, name] -> not (Text.null owner || Text.null name)
+      [owner, name] ->
+        all validPart [owner, name]
       _ -> False
+    validPart part =
+      not (Text.null part)
+        && not (Text.any (\c -> isSpace c || isControl c || c == '?' || c == '#') part)
 
 -- | A directory must be a nonempty relative repository path with no empty,
 -- dot, or parent segments, backslashes, or control characters.
@@ -58,7 +63,19 @@ validRepoPath raw =
 -- Query values use percent encoding, including spaces and reserved
 -- characters, while the default empty map keeps root URIs unchanged.
 flakeSourceUri :: RepoFlakeDirs -> Text -> Text -> Text
-flakeSourceUri dirs repo sha =
+flakeSourceUri dirs repo = renderSourceUri repo (Map.lookup repo dirs)
+
+-- | Use an explicit source-repository mapping when present, otherwise inherit
+-- the configured directory from the logical/base repository.
+flakeSourceUriFor :: RepoFlakeDirs -> Text -> Text -> Text -> Text
+flakeSourceUriFor dirs baseRepo sourceRepo =
+  renderSourceUri sourceRepo (Map.lookup sourceRepo dirs `orElse` Map.lookup baseRepo dirs)
+  where
+    orElse (Just value) _ = Just value
+    orElse Nothing fallback = fallback
+
+renderSourceUri :: Text -> Maybe Text -> Text -> Text
+renderSourceUri repo directory sha =
   "github:" <> repo <> "/" <> sha <> maybe "" ("?dir=" <>) encodedDir
   where
-    encodedDir = decodeUtf8 . urlEncode False . encodeUtf8 <$> Map.lookup repo dirs
+    encodedDir = decodeUtf8 . urlEncode False . encodeUtf8 <$> directory
