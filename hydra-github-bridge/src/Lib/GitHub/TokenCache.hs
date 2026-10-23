@@ -1,8 +1,12 @@
-module Lib.GitHub.TokenCache (refreshTokensAt) where
+module Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners) where
 
 import Control.Monad (forM)
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime)
+
+-- | Keep only cache entries whose owner is configured for this bridge.
+retainConfiguredOwners :: (Eq owner) => [owner] -> [(owner, value)] -> [(owner, value)]
+retainConfiguredOwners configured = filter ((`elem` configured) . fst)
 
 -- | Keep valid leases and renew expiring leases using their own origin metadata.
 -- The owner key labels the cache entry; it need not belong to a webhook allowlist.
