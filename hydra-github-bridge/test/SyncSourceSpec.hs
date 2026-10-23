@@ -244,7 +244,7 @@ main = do
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra?x#y\", \"ops\")]"))
         assert
           "repository key with control syntax was accepted"
-          (either (const True) (const False) (parseRepoFlakeDirs (show [("zw3rk/infra" ++ [toEnum 9] ++ "bad", "ops")] :: [(String, String)])))
+          (either (const True) (const False) (parseRepoFlakeDirs (show ([("zw3rk/infra" ++ [toEnum 9] ++ "bad", "ops")] :: [(String, String)]))))
         putStrLn "PASS repository directory validation"
 
         mapM_
