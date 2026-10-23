@@ -84,6 +84,16 @@
                 '';
               };
 
+              hydraPublicUrl = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                example = "https://hydra.example.com/ci";
+                description = ''
+                  Public Hydra URL used in GitHub check-run details links. When
+                  unset, HYDRA_HOST is used for backwards compatibility.
+                '';
+              };
+
               hydraUser = mkOption {
                 type = types.str;
                 default = "";
@@ -236,6 +246,9 @@
                   HYDRA_DB = iCfg.hydraDb;
                   PORT = toString iCfg.port;
                 }
+                // lib.optionalAttrs (iCfg.hydraPublicUrl != null) {
+                  HYDRA_PUBLIC_URL = iCfg.hydraPublicUrl;
+                }
                 // lib.optionalAttrs (iCfg.ghUserAgent != null) {
                   GITHUB_USER_AGENT = iCfg.ghUserAgent;
                 }
@@ -336,7 +349,7 @@
           partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
 
           # nix is needed for the local store probe (nix path-info --offline).
-          path = [ pkgs.nix ];
+          path = [pkgs.nix];
 
           startLimitIntervalSec = 0;
 
@@ -507,7 +520,7 @@
           isSystemUser = true;
           group = "hydra-web";
           # Member of hydra group to read build logs from /var/lib/hydra/build-logs/.
-          extraGroups = [ "hydra" ];
+          extraGroups = ["hydra"];
           description = "Hydra Web Frontend";
         };
         users.groups.hydra-web = {};

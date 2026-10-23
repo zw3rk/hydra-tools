@@ -159,6 +159,7 @@ NixOS modules are provided for easy deployment:
 
 #### hydra-github-bridge
 - `HYDRA_HOST`: Hydra server hostname
+- `HYDRA_PUBLIC_URL`: Optional public Hydra base URL for GitHub check-run links. Defaults to `HYDRA_HOST`; bare hosts use HTTPS, while explicit HTTP/HTTPS schemes and path prefixes are preserved.
 - `HYDRA_DB`: Hydra database hostname
 - `HYDRA_DB_USER`: Hydra database username
 - `HYDRA_DB_PASS`: Hydra database password

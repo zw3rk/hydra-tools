@@ -55,6 +55,7 @@ library
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.Sync
                       , Lib.Bridge.Source
+                      , Lib.Bridge.PublicUrl
                       , Lib.Hydra
                       , Lib.Hydra.Client
                       , Lib.Hydra.DB
@@ -79,6 +80,7 @@ executable hydra-github-bridge
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.Sync
                       , Lib.Bridge.Source
+                      , Lib.Bridge.PublicUrl
                       , Lib.GitHub
                       , Lib.GitHub.Client
                       , Lib.GitHub.TokenCache
@@ -110,3 +112,10 @@ test-suite token-refresh
     ghc-options:      -Wall -Werror
     build-depends:    base >=4.16 && <5
                     , time
+
+test-suite public-url
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          PublicUrlSpec.hs
+    build-depends:    hydra-github-bridge

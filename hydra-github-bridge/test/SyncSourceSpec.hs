@@ -39,10 +39,13 @@ currentFlake = "github:example/repo/" <> currentSha
 type Reply = (Status, Value, IO ())
 
 pull :: Int -> Bool -> Value
-pull n draft = object
-  [ "number" .= n, "title" .= ("PR title" :: Text), "draft" .= draft,
-    "head" .= object ["sha" .= currentSha, "repo" .= object ["full_name" .= ("fork/repo" :: Text)]]
-  ]
+pull n draft =
+  object
+    [ "number" .= n,
+      "title" .= ("PR title" :: Text),
+      "draft" .= draft,
+      "head" .= object ["sha" .= currentSha, "repo" .= object ["full_name" .= ("fork/repo" :: Text)]]
+    ]
 
 api :: IORef Reply -> IORef [Query] -> Application
 api reply pushes req respond
@@ -66,9 +69,12 @@ reset conn = do
   void $ execute_ conn "INSERT INTO gf_org_project_map VALUES ('project', 'example', 'repo')"
 
 insertJobset :: Connection -> Text -> IO ()
-insertJobset conn flake = void $ execute conn
-  "INSERT INTO jobsets VALUES ('project', 'pullrequest-7', 1, ?, 3, false, 17, 0, 88, true, 'ops@example.invalid', 'preserve me')"
-  (Only flake)
+insertJobset conn flake =
+  void $
+    execute
+      conn
+      "INSERT INTO jobsets VALUES ('project', 'pullrequest-7', 1, ?, 3, false, 17, 0, 88, true, 'ops@example.invalid', 'preserve me')"
+      (Only flake)
 
 jobset :: Connection -> IO Value
 jobset conn = do
@@ -133,9 +139,11 @@ main = do
         _ <- run configuredCfg
         migrated <- jobset conn
         migrationCommands <- commands conn
-        assert "configured sync did not migrate the exact old root URI at the same SHA"
+        assert
+          "configured sync did not migrate the exact old root URI at the same SHA"
           (migrated == withFlake currentSubdirFlake rootBeforeMigration)
-        assert "root URI migration must enqueue one ordinary evaluation"
+        assert
+          "root URI migration must enqueue one ordinary evaluation"
           (migrationCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
         _ <- run configuredCfg
         afterMigrationCommands <- commands conn
@@ -147,18 +155,22 @@ main = do
         refreshedSubdir <- jobset conn
         subdirCommands <- commands conn
         assert "configured subdirectory source was not refreshed" (refreshedSubdir == withFlake currentSubdirFlake before)
-        assert "configured subdirectory refresh must enqueue an ordinary evaluation"
+        assert
+          "configured subdirectory refresh must enqueue an ordinary evaluation"
           (subdirCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
         putStrLn "PASS configured subdirectory source refresh"
 
-        mapM_ (\flake -> do
-          prepare flake
-          original <- jobset conn
-          _ <- run configuredCfg
-          unchanged "configured sync rewrote a custom or noncanonical source" original)
-          ["github:example/repo/" <> oldSha <> "?dir=custom",
-           "github:example/repo/" <> oldSha <> "?dir=ops&rev=main",
-           "github:example/repo/main?dir=ops"]
+        mapM_
+          ( \flake -> do
+              prepare flake
+              original <- jobset conn
+              _ <- run configuredCfg
+              unchanged "configured sync rewrote a custom or noncanonical source" original
+          )
+          [ "github:example/repo/" <> oldSha <> "?dir=custom",
+            "github:example/repo/" <> oldSha <> "?dir=ops&rev=main",
+            "github:example/repo/main?dir=ops"
+          ]
         putStrLn "PASS configured sync leaves custom queries and branch sources unchanged"
 
         let inheritedForkFlake = flakeSourceUriFor configuredDirs "example/repo" "fork/repo" oldSha
@@ -168,9 +180,11 @@ main = do
         _ <- run configuredCfg
         forkAfter <- jobset conn
         forkCommands <- commands conn
-        assert "fork source did not inherit the configured base-repository directory"
+        assert
+          "fork source did not inherit the configured base-repository directory"
           (forkAfter == withFlake inheritedForkTarget forkBefore)
-        assert "fork source refresh must enqueue one ordinary evaluation"
+        assert
+          "fork source refresh must enqueue one ordinary evaluation"
           (forkCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
         putStrLn "PASS inherited fork directory and settings preservation"
 
@@ -184,7 +198,8 @@ main = do
                   Hydra.hjDescription = "PR 7: PR title",
                   Hydra.hjFlake = flakeSourceUriFor configuredDirs "example/repo" "fork/repo" currentSha
                 }
-        assert "missing fork jobset did not inherit the configured base directory"
+        assert
+          "missing fork jobset did not inherit the configured base directory"
           (createdForkCommands == [toJSON $ Hydra.CreateOrUpdateJobset "example/repo" "project" "pullrequest-7" createdForkJobset])
         putStrLn "PASS configured directory on a newly created fork-source jobset"
 
@@ -196,38 +211,54 @@ main = do
         explicitForkBefore <- jobset conn
         _ <- run explicitForkCfg
         explicitForkAfter <- jobset conn
-        assert "explicit fork directory did not take precedence over the base mapping"
+        assert
+          "explicit fork directory did not take precedence over the base mapping"
           (explicitForkAfter == withFlake explicitForkTarget explicitForkBefore)
         putStrLn "PASS explicit fork directory precedence"
 
-        assert "valid repository directory list did not parse"
+        assert
+          "valid repository directory list did not parse"
           (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/subdir\")]" == Right (Map.singleton "zw3rk/infra" "ops/subdir"))
-        assert "empty map did not preserve root Flake URIs"
+        assert
+          "empty map did not preserve root Flake URIs"
           (flakeSourceUri Map.empty "zw3rk/infra" oldSha == "github:zw3rk/infra/" <> oldSha)
-        assert "configured URI did not encode a query value"
-          (flakeSourceUri (Map.singleton "zw3rk/infra" "ops dir/sub?part#frag") "zw3rk/infra" oldSha
-            == "github:zw3rk/infra/" <> oldSha <> "?dir=ops%20dir%2Fsub%3Fpart%23frag")
-        assert "parent traversal directory was accepted"
+        assert
+          "configured URI did not encode a query value"
+          ( flakeSourceUri (Map.singleton "zw3rk/infra" "ops dir/sub?part#frag") "zw3rk/infra" oldSha
+              == "github:zw3rk/infra/" <> oldSha <> "?dir=ops%20dir%2Fsub%3Fpart%23frag"
+          )
+        assert
+          "parent traversal directory was accepted"
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/../root\")]"))
-        assert "absolute directory was accepted"
+        assert
+          "absolute directory was accepted"
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"/ops\")]"))
-        assert "duplicate repository mappings were accepted"
+        assert
+          "duplicate repository mappings were accepted"
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops\"), (\"zw3rk/infra\", \"other\")]"))
-        assert "repository key with whitespace was accepted"
+        assert
+          "repository key with whitespace was accepted"
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra bad\", \"ops\")]"))
-        assert "repository key with query or fragment syntax was accepted"
+        assert
+          "repository key with query or fragment syntax was accepted"
           (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra?x#y\", \"ops\")]"))
-        assert "repository key with control syntax was accepted"
+        assert
+          "repository key with control syntax was accepted"
           (either (const True) (const False) (parseRepoFlakeDirs (show [("zw3rk/infra" ++ [toEnum 9] ++ "bad", "ops")])))
         putStrLn "PASS repository directory validation"
 
-        mapM_ (\flake -> do
-          prepare flake
-          original <- jobset conn
-          _ <- run cfg
-          unchanged "custom source was overwritten" original)
-          ["path:/custom", "github:unrelated/repo/" <> oldSha,
-           oldFlake <> "?dir=custom", "github:example/repo/main"]
+        mapM_
+          ( \flake -> do
+              prepare flake
+              original <- jobset conn
+              _ <- run cfg
+              unchanged "custom source was overwritten" original
+          )
+          [ "path:/custom",
+            "github:unrelated/repo/" <> oldSha,
+            oldFlake <> "?dir=custom",
+            "github:example/repo/main"
+          ]
         prepare oldFlake
         void $ execute_ conn "UPDATE jobsets SET type = 0"
         legacy <- jobset conn
@@ -248,8 +279,12 @@ main = do
         putStrLn "PASS head repository retained"
 
         prepare oldFlake
-        writeIORef reply (status200, toJSON [pull 7 False],
-          void $ execute webhook "UPDATE jobsets SET flake = ?" (Only $ "github:example/repo/" <> newerSha))
+        writeIORef
+          reply
+          ( status200,
+            toJSON [pull 7 False],
+            void $ execute webhook "UPDATE jobsets SET flake = ?" (Only $ "github:example/repo/" <> newerSha)
+          )
         _ <- run cfg
         newer <- jobset conn
         raced <- commands conn
@@ -285,16 +320,21 @@ main = do
 
         -- A valid HTTP200 can still omit the source repository of a deleted
         -- fork. No valid entry on that page may be acted on in a partial sync.
-        let deletedFork = object
-              [ "number" .= (7 :: Int), "title" .= ("Deleted fork" :: Text), "draft" .= False,
-                "head" .= object ["sha" .= currentSha, "repo" .= Null]
-              ]
-        mapM_ (\invalid -> do
-          prepare oldFlake
-          writeIORef reply (status200, toJSON [pull 8 False, invalid], pure ())
-          partial <- reconcileAll cfg conn
-          assert "incomplete HTTP200 listing was reported as successful synchronization" (ssErrors partial == 1 && ssProjectsSynced partial == 0)
-          unchanged "incomplete HTTP200 listing changed a source or queued lifecycle work" before)
+        let deletedFork =
+              object
+                [ "number" .= (7 :: Int),
+                  "title" .= ("Deleted fork" :: Text),
+                  "draft" .= False,
+                  "head" .= object ["sha" .= currentSha, "repo" .= Null]
+                ]
+        mapM_
+          ( \invalid -> do
+              prepare oldFlake
+              writeIORef reply (status200, toJSON [pull 8 False, invalid], pure ())
+              partial <- reconcileAll cfg conn
+              assert "incomplete HTTP200 listing was reported as successful synchronization" (ssErrors partial == 1 && ssProjectsSynced partial == 0)
+              unchanged "incomplete HTTP200 listing changed a source or queued lifecycle work" before
+          )
           [deletedFork, object ["number" .= (7 :: Int)]]
         putStrLn "PASS mixed valid/deleted-fork/malformed HTTP200 listings fail closed"
 
@@ -307,10 +347,18 @@ main = do
         writeIORef reply (status200, toJSON [pull 8 True], pure ())
         _ <- run cfg
         cs <- commands conn
-        let decoded = [Hydra.CreateOrUpdateJobset "example/repo" "project" "pullrequest-8"
-                       (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-8", Hydra.hjDescription = "PR 8: PR title", Hydra.hjFlake = "github:fork/repo/" <> currentSha}),
-                      Hydra.UpdateJobset "example/repo" "project" "pullrequest-7"
-                       (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-7", Hydra.hjDescription = "PR 7 (closed)", Hydra.hjFlake = "github:example/repo/" <> Text.replicate 40 "0", Hydra.hjVisible = False, Hydra.hjEnabled = 0})]
+        let decoded =
+              [ Hydra.CreateOrUpdateJobset
+                  "example/repo"
+                  "project"
+                  "pullrequest-8"
+                  (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-8", Hydra.hjDescription = "PR 8: PR title", Hydra.hjFlake = "github:fork/repo/" <> currentSha}),
+                Hydra.UpdateJobset
+                  "example/repo"
+                  "project"
+                  "pullrequest-7"
+                  (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-7", Hydra.hjDescription = "PR 7 (closed)", Hydra.hjFlake = "github:example/repo/" <> Text.replicate 40 "0", Hydra.hjVisible = False, Hydra.hjEnabled = 0})
+              ]
         assert "missing/closed/allowed-draft command behavior changed" (cs == map toJSON decoded)
         putStrLn "PASS existing missing/closed/allowed-draft behavior"
 
@@ -318,17 +366,23 @@ main = do
         writeIORef reply (status200, toJSON [pull 7 True], pure ())
         _ <- reconcileProject cfg conn ("project", "IntersectMBO", "cardano-cli")
         restricted <- commands conn
-        assert "restricted draft was refreshed or created" (length restricted == 1 && case restricted of
-          [Object c] -> KeyMap.lookup "tag" c == Just (String "UpdateJobset")
-          _ -> False)
+        assert
+          "restricted draft was refreshed or created"
+          ( length restricted == 1 && case restricted of
+              [Object c] -> KeyMap.lookup "tag" c == Just (String "UpdateJobset")
+              _ -> False
+          )
         putStrLn "PASS existing restricted-draft behavior"
 
         manager <- newManager defaultManagerSettings
         url <- parseBaseUrl $ "http://127.0.0.1:" <> show port
         let hydra = mkClientEnv manager url
-        mapM_ (\force -> do
-          result <- runClientM (Hydra.push Nothing (Just "project:pullrequest-7") force) hydra
-          assert "mock Hydra push failed" (isRight result)) [Just False, Nothing, Just True]
+        mapM_
+          ( \force -> do
+              result <- runClientM (Hydra.push Nothing (Just "project:pullrequest-7") force) hydra
+              assert "mock Hydra push failed" (isRight result)
+          )
+          [Just False, Nothing, Just True]
         sent <- readIORef pushes
         assert "normal evaluation sent the force query parameter" (length sent == 3 && all (all ((/= "force") . fst)) (take 2 sent))
         assert "explicit force evaluation lost its flag" (any ((== "force") . fst) (last sent))

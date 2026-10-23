@@ -38,8 +38,8 @@ import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
 import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
-import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri)
+import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
 import Lib.Hydra qualified as Hydra
 import Network.HTTP.Client (newManager)
@@ -73,12 +73,14 @@ singleEndpoint orgs flakeDirs env conn =
 isOrgAllowed :: Set Text -> Text -> Bool
 isOrgAllowed orgs repoName =
   let (org, _) = splitRepo repoName
-  in Set.member org orgs
+   in Set.member org orgs
 
 pushHook :: Set Text -> RepoFlakeDirs -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
 pushHook orgs flakeDirs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
-  | not (isOrgAllowed orgs repoName) = liftIO $
-      putStrLn $ "Ignoring push from non-allowed org: " ++ Text.unpack repoName
+  | not (isOrgAllowed orgs repoName) =
+      liftIO $
+        putStrLn $
+          "Ignoring push from non-allowed org: " ++ Text.unpack repoName
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
     Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
     "0000000000000000000000000000000000000000" == headSha =
@@ -169,8 +171,10 @@ pullRequestHook
         evPullReqRepo = HookRepository {whRepoFullName = repoName}
       }
     )
-    | not (isOrgAllowed orgs repoName) = liftIO $
-        putStrLn $ "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
+    | not (isOrgAllowed orgs repoName) =
+        liftIO $
+          putStrLn $
+            "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
     | action
         `elem` [ PullRequestOpenedAction,
                  PullRequestReopenedAction,
@@ -229,8 +233,11 @@ pullRequestHook
                 Hydra.defHydraFlakeJobset
                   { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
                     Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
-                    Hydra.hjFlake = flakeSourceUri flakeDirs repoName
-                      (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)))
+                    Hydra.hjFlake =
+                      flakeSourceUri
+                        flakeDirs
+                        repoName
+                        (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)))
                   }
 
               projName = escapeHydraName repoName
@@ -248,8 +255,11 @@ pullRequestHook _orgs flakeDirs conn _ (_, ev@PullRequestEvent {evPullReqAction 
         Hydra.defHydraFlakeJobset
           { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
             Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
-            Hydra.hjFlake = flakeSourceUri flakeDirs repoName
-              (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))),
+            Hydra.hjFlake =
+              flakeSourceUri
+                flakeDirs
+                repoName
+                (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))),
             -- setting visiblity seems to have no effect...
             Hydra.hjVisible = False,
             -- ... so we just disable it.
@@ -301,16 +311,17 @@ checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventA
 
   if not (isOrgAllowed orgs repoName)
     then putStrLn $ "Ignoring check-run from non-allowed org: " ++ Text.unpack repoName
-    else if "ci/eval" `Text.isPrefixOf` checkRunName
-      then forM_ prs $ \pr -> do
-        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+    else
+      if "ci/eval" `Text.isPrefixOf` checkRunName
+        then forM_ prs $ \pr -> do
+          let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
-      else do
-        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
-        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.RestartBuild externalId
+          putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+          Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
+        else do
+          let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
+          putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+          Hydra.writeCommand conn $ Hydra.RestartBuild externalId
 checkRunHook _orgs _ _ (_, ev) =
   liftIO . putStrLn $
     "Unhandled checkRunEvent with action: "

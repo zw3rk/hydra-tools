@@ -1,6 +1,11 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Periodic sync between GitHub PR state and Hydra jobsets.
 --
 -- When webhook delivery fails, open PRs may lack jobsets (missed creation)
@@ -12,11 +17,6 @@
 --   3. Compares against enabled @pullrequest-*@ jobsets in Hydra
 --   4. Refreshes stale immutable PR sources without changing jobset settings
 --   5. Queues create/disable/evaluation commands via the existing pipeline
-{-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Lib.Bridge.Sync
   ( SyncConfig (..),
     SyncStats (..),
@@ -33,10 +33,10 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, throwIO, try)
-import Data.Char (isHexDigit)
 import Data.Aeson (Value, (.:), (.:?))
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString (ByteString)
+import Data.Char (isHexDigit)
 import Data.IORef (IORef)
 import Data.List (find)
 import Data.Map.Strict (Map)
@@ -109,20 +109,20 @@ data EnabledPRJobset = EnabledPRJobset
 
 -- | Configuration for the sync loop.
 data SyncConfig = SyncConfig
-  { scInterval :: !Int,
-    -- ^ Seconds between sync cycles
+  { -- | Seconds between sync cycles
+    scInterval :: !Int,
+    -- | Log actions without queueing commands
     scDryRun :: !Bool,
-    -- ^ Log actions without queueing commands
+    -- | GitHub API endpoint URL
     scEndpoint :: !Text,
-    -- ^ GitHub API endpoint URL
+    -- | GitHub user-agent header
     scUserAgent :: !ByteString,
-    -- ^ GitHub user-agent header
+    -- | Shared mutable token cache (unused directly but kept for reference)
     scTokensRef :: !(IORef [(String, TokenLease)]),
-    -- ^ Shared mutable token cache (unused directly but kept for reference)
+    -- | Action to refresh tokens when expired
     scGetTokens :: !(IO [(String, TokenLease)]),
-    -- ^ Action to refresh tokens when expired
+    -- | Optional repository-specific Flake directories
     scRepoFlakeDirs :: !RepoFlakeDirs
-    -- ^ Optional repository-specific Flake directories
   }
 
 -- | Repos where draft PRs should NOT create jobsets (replicates existing
@@ -224,16 +224,16 @@ reconcileProject cfg conn (project, org, repo) = do
       githubSet =
         Set.fromList
           [ prNumber pr
-            | pr <- openPRs,
-              not (shouldSkipDraft repoFullName pr)
+          | pr <- openPRs,
+            not (shouldSkipDraft repoFullName pr)
           ]
 
       -- PRs open on GitHub but missing a jobset in Hydra.
       missing :: [PRInfo]
       missing =
         [ pr
-          | n <- Set.toList (githubSet `Set.difference` hydraSet),
-            Just pr <- [Map.lookup n openPRMap]
+        | n <- Set.toList (githubSet `Set.difference` hydraSet),
+          Just pr <- [Map.lookup n openPRMap]
         ]
 
       -- Jobset PR numbers enabled in Hydra but not open on GitHub.
@@ -242,10 +242,10 @@ reconcileProject cfg conn (project, org, repo) = do
 
       refreshes =
         [ (jobset, newFlake)
-          | n <- Set.toList (githubSet `Set.intersection` hydraSet),
-            Just pr <- [Map.lookup n openPRMap],
-            Just jobset <- [Map.lookup n enabledJobsets],
-            Just newFlake <- [sourceRefreshTarget (scRepoFlakeDirs cfg) repoFullName pr jobset]
+        | n <- Set.toList (githubSet `Set.intersection` hydraSet),
+          Just pr <- [Map.lookup n openPRMap],
+          Just jobset <- [Map.lookup n enabledJobsets],
+          Just newFlake <- [sourceRefreshTarget (scRepoFlakeDirs cfg) repoFullName pr jobset]
         ]
 
   putStrLn $
@@ -381,7 +381,8 @@ fetchOrgProjectMappings :: Connection -> IO [(Text, Text, Text)]
 fetchOrgProjectMappings conn = do
   result <-
     try
-      ( query_ conn
+      ( query_
+          conn
           "SELECT project_name, org_name, repo_name FROM gf_org_project_map"
       )
   case result of
@@ -402,8 +403,8 @@ fetchEnabledPRJobsets conn project = do
   pure $
     Map.fromList
       [ (n, EnabledPRJobset name typ flake)
-        | (name, typ, flake) <- rows,
-          Just n <- [parsePRNumber name]
+      | (name, typ, flake) <- rows,
+        Just n <- [parsePRNumber name]
       ]
 
 -- | Parse a PR number from a jobset name like @pullrequest-42@.
@@ -456,17 +457,22 @@ refreshJobsetSource cfg conn project (jobset, newFlake)
   | otherwise = do
       refreshed <- withTransaction conn $ do
         changed <-
-          query conn
+          query
+            conn
             "UPDATE jobsets SET flake = ? WHERE project = ? AND name = ? AND enabled > 0 AND type = 1 AND flake = ? RETURNING name"
-            (newFlake, project, ejName jobset, ejFlake jobset) :: IO [Only Text]
+            (newFlake, project, ejName jobset, ejFlake jobset) ::
+            IO [Only Text]
         case changed of
           [] -> pure 0
           [_] -> do
             Hydra.writeCommand conn (Hydra.EvaluateJobset project (ejName jobset) False)
             pure 1
           _ -> throwIO $ userError "Multiple jobsets matched a source refresh"
-      putStrLn $ (if refreshed == 1 then "[sync] Refreshed source " else "[sync] Source changed concurrently; skipped ")
-        <> Text.unpack project <> "/" <> Text.unpack (ejName jobset)
+      putStrLn $
+        (if refreshed == 1 then "[sync] Refreshed source " else "[sync] Source changed concurrently; skipped ")
+          <> Text.unpack project
+          <> "/"
+          <> Text.unpack (ejName jobset)
       pure refreshed
 
 -- | Queue a CreateOrUpdateJobset command for a missing PR jobset.

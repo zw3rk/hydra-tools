@@ -27,6 +27,7 @@ import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.PublicUrl (normalizePublicBase)
 import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
@@ -36,6 +37,7 @@ import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
 import System.Environment (getEnv, lookupEnv)
+import System.Exit (die)
 import System.IO
   ( BufferMode (LineBuffering),
     hSetBuffering,
@@ -48,13 +50,13 @@ import System.IO
 -- statuses to the SSE cache for real-time client consumption.
 notificationWatcherWithSSE ::
   StatusCache ->
-  String ->
+  Text ->
   String ->
   Text ->
   Bool ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = do
+notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -67,7 +69,7 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
   forever $ do
     putStrLn "Waiting for notification..."
     note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs note
 
     -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
     broadcastCheckRuns cache statuses
@@ -123,6 +125,12 @@ main = do
 
   -- Read environment variables
   host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
+  publicUrl <- lookupEnv "HYDRA_PUBLIC_URL"
+  publicBase <-
+    either
+      (\err -> die $ "Invalid Hydra public URL: " <> Text.unpack err)
+      pure
+      (normalizePublicBase $ Text.pack $ maybe host id publicUrl)
   db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
   db_user <- maybe mempty id <$> lookupEnv "HYDRA_DB_USER"
   db_pass <- maybe mempty id <$> lookupEnv "HYDRA_DB_PASS"
@@ -137,7 +145,7 @@ main = do
   ghKey <- do
     v <- lookupEnv "GITHUB_WEBHOOK_SECRET"
     case v of
-      Just k  -> pure (C8.pack k)
+      Just k -> pure (C8.pack k)
       Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
   filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
@@ -168,10 +176,14 @@ main = do
 
   putStrLn $ "Server is starting on port " ++ show port
   when sseEnabled $
-    putStrLn $ "SSE server will start on port " ++ show ssePort
+    putStrLn $
+      "SSE server will start on port " ++ show ssePort
   when syncEnabled $
-    putStrLn $ "Sync worker will run every " ++ show syncInterval ++ "s"
-      ++ if syncDryRun then " (DRY RUN)" else ""
+    putStrLn $
+      "Sync worker will run every "
+        ++ show syncInterval
+        ++ "s"
+        ++ if syncDryRun then " (DRY RUN)" else ""
 
   -- Initialize SSE status cache
   cache <- newStatusCache
@@ -185,66 +197,71 @@ main = do
   -- dedicated connection with autocommit.
   withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \migConn -> do
     putStrLn "Ensuring partial index idx_github_status_payload_unsent exists..."
-    _ <- execute_ migConn
-      "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
-      \idx_github_status_payload_unsent \
-      \ON github_status_payload (status_id, id DESC) \
-      \WHERE sent IS NULL AND tries < 5"
+    _ <-
+      execute_
+        migConn
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
+        \idx_github_status_payload_unsent \
+        \ON github_status_payload (status_id, id DESC) \
+        \WHERE sent IS NULL AND tries < 5"
     putStrLn "Index ready."
 
   Async.mapConcurrently_
-    id $
-    [ Async.replicateConcurrently_
-        numWorkers
-        ( withConnect
-            (ConnectInfo db 5432 db_user db_pass "hydra")
-            (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
-        ),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-        hydraClient env conn,
-      -- Use the SSE-broadcasting variant of the notification watcher.
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app allowedOrgs repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
-      -- Periodically prune stale notifications for old commits that
-      -- have already been superseded by newer evaluations.  Only marks
-      -- a payload as sent when a later payload for the same
-      -- (owner, repo, name) has already been successfully delivered.
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-        forever $ do
-          threadDelay (5 * 60 * 1000000) -- 5 minutes
-          pruned <- execute_ conn
-            "UPDATE github_status_payload SET sent = NOW() \
-            \WHERE id IN ( \
-            \  SELECT p.id \
-            \  FROM github_status_payload p \
-            \  JOIN github_status s ON s.id = p.status_id \
-            \  WHERE p.sent IS NULL AND p.tries < 5 \
-            \    AND EXISTS ( \
-            \      SELECT 1 \
-            \      FROM github_status_payload p2 \
-            \      JOIN github_status s2 ON s2.id = p2.status_id \
-            \      WHERE s2.owner = s.owner AND s2.repo = s.repo AND s2.name = s.name \
-            \        AND p2.sent IS NOT NULL AND p2.id > p.id \
-            \    ) \
-            \)"
-          when (pruned > 0) $
-            putStrLn $ "Pruned " ++ show pruned ++ " stale notification(s)"
-    ]
-    ++ [ runSSEServer cache ssePort sseTtl | sseEnabled ]
-    ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-           syncLoop
-             SyncConfig
-               { scInterval = syncInterval,
-                 scDryRun = syncDryRun,
-                 scEndpoint = ghEndpointUrl,
-                 scUserAgent = ghUserAgent,
-                 scTokensRef = ghTokens,
-                 scGetTokens = getValidGitHubToken',
-                 scRepoFlakeDirs = repoFlakeDirs
-               }
-             conn
-       | syncEnabled
-       ]
+    id
+    $ [ Async.replicateConcurrently_
+          numWorkers
+          ( withConnect
+              (ConnectInfo db 5432 db_user db_pass "hydra")
+              (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
+          ),
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          hydraClient env conn,
+        -- Use the SSE-broadcasting variant of the notification watcher.
+        withConnect
+          (ConnectInfo db 5432 db_user db_pass "hydra")
+          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs),
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+          run port (app allowedOrgs repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
+        -- Periodically prune stale notifications for old commits that
+        -- have already been superseded by newer evaluations.  Only marks
+        -- a payload as sent when a later payload for the same
+        -- (owner, repo, name) has already been successfully delivered.
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          forever $ do
+            threadDelay (5 * 60 * 1000000) -- 5 minutes
+            pruned <-
+              execute_
+                conn
+                "UPDATE github_status_payload SET sent = NOW() \
+                \WHERE id IN ( \
+                \  SELECT p.id \
+                \  FROM github_status_payload p \
+                \  JOIN github_status s ON s.id = p.status_id \
+                \  WHERE p.sent IS NULL AND p.tries < 5 \
+                \    AND EXISTS ( \
+                \      SELECT 1 \
+                \      FROM github_status_payload p2 \
+                \      JOIN github_status s2 ON s2.id = p2.status_id \
+                \      WHERE s2.owner = s.owner AND s2.repo = s.repo AND s2.name = s.name \
+                \        AND p2.sent IS NOT NULL AND p2.id > p.id \
+                \    ) \
+                \)"
+            when (pruned > 0) $
+              putStrLn $
+                "Pruned " ++ show pruned ++ " stale notification(s)"
+      ]
+      ++ [runSSEServer cache ssePort sseTtl | sseEnabled]
+      ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+             syncLoop
+               SyncConfig
+                 { scInterval = syncInterval,
+                   scDryRun = syncDryRun,
+                   scEndpoint = ghEndpointUrl,
+                   scUserAgent = ghUserAgent,
+                   scTokensRef = ghTokens,
+                   scGetTokens = getValidGitHubToken',
+                   scRepoFlakeDirs = repoFlakeDirs
+                 }
+               conn
+         | syncEnabled
+         ]
