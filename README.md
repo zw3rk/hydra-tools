@@ -171,6 +171,7 @@ NixOS modules are provided for easy deployment:
 - `GITHUB_WEBHOOK_SECRET`: The secret for GitHub webhook payloads
 - `GITHUB_APP_KEY_FILE`: GitHub App private key file
 - `GITHUB_ENDPOINT_URL`: The GitHub API base URL (useful for testing)
+- `REPO_FLAKE_DIRS`: Optional Haskell list of `(owner/repo, directory)` pairs for repositories whose flake is in a subdirectory, for example `[("zw3rk/infra", "ops")]`
 - `PORT`: Server port (default: 8080)
 
 `GITHUB_APP_INSTALL_IDS` controls which base repository owners may submit

@@ -151,6 +151,17 @@
                 '';
               };
 
+              repoFlakeDirs = mkOption {
+                type = types.str;
+                default = "[]";
+                example = "[(\"zw3rk/infra\", \"ops\")]";
+                description = ''
+                  Optional (owner/repo, directory) pairs for repositories whose
+                  Nix flake lives below the repository root. Formatted as a
+                  Haskell list, for example [("zw3rk/infra", "ops")].
+                '';
+              };
+
               enableSse = mkOption {
                 type = types.bool;
                 default = true;
@@ -245,6 +256,9 @@
                   SYNC_ENABLED = lib.boolToString iCfg.enableSync;
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
+                }
+                // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
+                  REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;
                 };
 
               script = ''

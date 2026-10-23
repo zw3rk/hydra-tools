@@ -27,6 +27,7 @@ import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
@@ -150,6 +151,8 @@ main = do
   syncEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_ENABLED"
   syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
+  repoFlakeDirsRaw <- maybe "[]" id <$> lookupEnv "REPO_FLAKE_DIRS"
+  repoFlakeDirs <- either die pure (parseRepoFlakeDirs repoFlakeDirsRaw)
 
   -- Authenticate to GitHub and derive the set of allowed orgs from
   -- configured installations. Only webhooks from these orgs will be processed.
@@ -204,7 +207,7 @@ main = do
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
+        run port (app allowedOrgs repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
       -- Periodically prune stale notifications for old commits that
       -- have already been superseded by newer evaluations.  Only marks
       -- a payload as sent when a later payload for the same
@@ -239,7 +242,8 @@ main = do
                  scEndpoint = ghEndpointUrl,
                  scUserAgent = ghUserAgent,
                  scTokensRef = ghTokens,
-                 scGetTokens = getValidGitHubToken'
+                 scGetTokens = getValidGitHubToken',
+                 scRepoFlakeDirs = repoFlakeDirs
                }
              conn
        | syncEnabled

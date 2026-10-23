@@ -13,10 +13,12 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Char8 qualified as ByteString
 import Data.Either (isRight)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute, execute_, query, query_)
 import GitHub.REST (Token (..))
+import Lib.Bridge.Source (flakeSourceUri, parseRepoFlakeDirs)
 import Lib.Bridge.Sync
 import Lib.GitHub.Client (TokenLease (..))
 import Lib.Hydra qualified as Hydra
@@ -94,7 +96,7 @@ main = do
       let lease = TokenLease (BearerToken "fixture-token") Nothing 17
       tokens <- newIORef [("example", lease), ("IntersectMBO", lease)]
       testWithApplication (pure $ api reply pushes) $ \port -> do
-        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens)
+        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens) Map.empty
             run config = reconcileProject config conn ("project", "example", "repo")
             prepare flake = do
               reset conn
@@ -120,6 +122,44 @@ main = do
         again <- commands conn
         assert "unchanged source must not enqueue a duplicate evaluation" (again == queued)
         putStrLn "PASS stale source, complete settings preservation, ordinary evaluation, idempotence"
+
+        let configuredDirs = Map.singleton "example/repo" "ops"
+            configuredCfg = cfg {scRepoFlakeDirs = configuredDirs}
+            oldSubdirFlake = flakeSourceUri configuredDirs "example/repo" oldSha
+            currentSubdirFlake = flakeSourceUri configuredDirs "example/repo" currentSha
+        prepare oldSubdirFlake
+        _ <- run configuredCfg
+        refreshedSubdir <- jobset conn
+        subdirCommands <- commands conn
+        assert "configured subdirectory source was not refreshed" (refreshedSubdir == withFlake currentSubdirFlake before)
+        assert "configured subdirectory refresh must enqueue an ordinary evaluation"
+          (subdirCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
+        putStrLn "PASS configured subdirectory source refresh"
+
+        mapM_ (\flake -> do
+          prepare flake
+          original <- jobset conn
+          _ <- run configuredCfg
+          unchanged "configured sync rewrote a custom or noncanonical source" original)
+          ["github:example/repo/" <> oldSha <> "?dir=custom",
+           "github:example/repo/" <> oldSha <> "?dir=ops&rev=main",
+           "github:example/repo/main?dir=ops"]
+        putStrLn "PASS configured sync leaves custom queries and branch sources unchanged"
+
+        assert "valid repository directory list did not parse"
+          (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/subdir\")]" == Right (Map.singleton "zw3rk/infra" "ops/subdir"))
+        assert "empty map did not preserve root Flake URIs"
+          (flakeSourceUri Map.empty "zw3rk/infra" oldSha == "github:zw3rk/infra/" <> oldSha)
+        assert "configured URI did not encode a query value"
+          (flakeSourceUri (Map.singleton "zw3rk/infra" "ops dir/sub?part#frag") "zw3rk/infra" oldSha
+            == "github:zw3rk/infra/" <> oldSha <> "?dir=ops%20dir%2Fsub%3Fpart%23frag")
+        assert "parent traversal directory was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/../root\")]"))
+        assert "absolute directory was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"/ops\")]"))
+        assert "duplicate repository mappings were accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops\"), (\"zw3rk/infra\", \"other\")]"))
+        putStrLn "PASS repository directory validation"
 
         mapM_ (\flake -> do
           prepare flake
