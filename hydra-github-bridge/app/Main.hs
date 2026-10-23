@@ -32,7 +32,7 @@ import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
-import Lib.GitHub.TokenCache (refreshTokensAt)
+import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
@@ -87,13 +87,25 @@ notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs c
           execute_ conn "NOTIFY github_status"
       )
 
-fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> IO [(String, TokenLease)]
-fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent = do
+-- | Fetch tokens only for app installations listed in GITHUB_APP_INSTALL_IDS.
+-- Anyone can install a public GitHub App, so the discovered list may include
+-- owners this bridge does not serve.
+fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> [(String, Int)] -> IO [(String, TokenLease)]
+fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds = do
   putStrLn "Fetching GitHub App installations..."
-  ghAppInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
-  putStrLn $ "Found " <> show (length ghAppInstalls) <> " installations"
-  forM_ ghAppInstalls $ \(owner, installId) -> do
-    Text.putStrLn $ "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
+  allInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
+  putStrLn $ "Found " <> show (length allInstalls) <> " installations"
+  let configuredOwners = map (Text.pack . fst) ghAppInstallIds
+      configured (owner, _) = owner `elem` configuredOwners
+      ghAppInstalls = retainConfiguredOwners configuredOwners allInstalls
+  forM_ allInstalls $ \inst@(owner, installId) -> do
+    Text.putStrLn $
+      "\t- "
+        <> owner
+        <> " ("
+        <> Text.pack (show installId)
+        <> ")"
+        <> if configured inst then "" else " skipped: not in GITHUB_APP_INSTALL_IDS"
 
   forM ghAppInstalls $ \(owner, installId) -> do
     lease <- fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
@@ -112,9 +124,7 @@ getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent = do
     putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
     ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
     ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-    -- Startup discovers every installation of the App, including owners
-    -- outside this instance's webhook allowlist. Renew the same installation
-    -- that issued the lease, rather than looking up a different owner list.
+    -- Renew the same installation that issued the lease.
     fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent lease.installationId
 
 main :: IO ()
@@ -167,7 +177,7 @@ main = do
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
   ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
   ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-  ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent >>= newIORef
+  ghTokens <- fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds >>= newIORef
   let allowedOrgs = Set.fromList $ map (Text.pack . fst) ghAppInstallIds
   putStrLn $ "Allowed orgs: " ++ show (Set.toList allowedOrgs)
 

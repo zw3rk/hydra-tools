@@ -5,7 +5,7 @@ import Control.Monad (unless)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), addUTCTime)
-import Lib.GitHub.TokenCache (refreshTokensAt)
+import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 
 data Lease = Lease
   { installationId :: Int,
@@ -17,7 +17,8 @@ data Lease = Lease
 assertEqual :: (Eq a, Show a) => String -> a -> a -> IO ()
 assertEqual label expected actual =
   unless (actual == expected) $
-    fail $ label ++ ": expected " ++ show expected ++ ", got " ++ show actual
+    fail $
+      label ++ ": expected " ++ show expected ++ ", got " ++ show actual
 
 main :: IO ()
 main = do
@@ -47,6 +48,18 @@ main = do
   assertEqual "cache receives renewed leases" expected =<< readIORef cache
   assertEqual "valid leases reused on next call" expected =<< runRefresh
   assertEqual "no duplicate refresh" [2, 3, 4] =<< readIORef calls
+
+  let configuredOwners = ["simplex-chat", "at-buffer", "no-expiry"]
+      configuredInitial = retainConfiguredOwners configuredOwners initial
+      configuredExpected = [(owner, if owner == "simplex-chat" then lease else renewed lease) | (owner, lease) <- configuredInitial]
+  configuredCalls <- newIORef []
+  configuredCache <- newIORef configuredInitial
+  configuredResult <- refreshTokensAt now 5 expiry configuredCache $ \lease -> do
+    modifyIORef' configuredCalls (++ [installationId lease])
+    pure $ renewed lease
+  assertEqual "unconfigured installations are excluded before refresh" configuredExpected configuredResult
+  assertEqual "configured leases refresh their original installation IDs" [3, 4] =<< readIORef configuredCalls
+  assertEqual "configured token cache keeps only renewed configured owners" configuredExpected =<< readIORef configuredCache
 
   failingCache <- newIORef [("kolfadser1", expired)]
   failed <- try $ refreshTokensAt now 5 expiry failingCache (\_ -> ioError $ userError "refresh failed")
