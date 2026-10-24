@@ -409,6 +409,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs e = (
       return $ checkRun ++ concat depCheckRuns
   where
     catchJustPredicate ee
+      | Just (_ :: SomeAsyncException) <- fromException ee = Nothing
       | Just (_ :: Async.AsyncCancelled) <- fromException ee = Nothing
       | otherwise = Just ee
 
@@ -608,10 +609,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs e = (
               -- used to escape later while the status payload was encoded.
               logs <-
                 catchJust
-                  ( \err -> case fromException err :: Maybe SomeAsyncException of
-                      Just _ -> Nothing
-                      Nothing -> Just err
-                  )
+                  catchJustPredicate
                   (fmap (fmap Text.unpack) (readBuildLog stateDir drvpath))
                   ( \err -> do
                       Text.putStrLn $ "Warning: could not fetch build log: " <> Text.pack (displayException err)
