@@ -21,6 +21,12 @@ test-web: ## Run hydra-web test suite
 test-sync: ## Test PR source recovery against a private temporary PostgreSQL cluster
 	bash hydra-github-bridge/test/run-sync-source.sh cabal test -j1 hydra-github-bridge:sync-source --test-show-details=direct
 
+test-iog-integration: ## Build local IOG integration VM check (x86_64-linux only, needs Nix VM builds)
+	nix build .#checks.x86_64-linux.iog-integration-local --show-trace
+
+test-iog-scenarios: ## Build local IOG scenario VM checks (x86_64-linux only, needs Nix VM builds)
+	nix build .#checks.x86_64-linux.iog-scenarios-local --show-trace
+
 test-bridge-token-refresh: ## Check installation-token refresh without network or database services
 	cabal test hydra-github-bridge:token-refresh
 
@@ -33,4 +39,4 @@ help: ## Show this help message
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: help hydra-github-bridge hydra-attic-bridge hydra-web all test test-web test-sync test-bridge-token-refresh clean
+.PHONY: help hydra-github-bridge hydra-attic-bridge hydra-web all test test-web test-sync test-iog-integration test-iog-scenarios test-bridge-token-refresh clean
