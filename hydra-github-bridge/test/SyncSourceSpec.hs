@@ -60,11 +60,13 @@ assert label ok = unless ok $ fail label
 
 reset :: Connection -> IO ()
 reset conn = do
-  void $ execute_ conn "DROP TABLE IF EXISTS github_commands, jobsets, gf_org_project_map"
+  void $ execute_ conn "DROP TABLE IF EXISTS github_commands, jobsets, gf_org_project_map, projects"
   void $ execute_ conn "CREATE TABLE jobsets (project text, name text, type integer NOT NULL, flake text, enabled integer NOT NULL, visible boolean, keepnr integer, checkinterval integer, schedulingshares integer, enableemail boolean, emailoverride text, custom_setting text, PRIMARY KEY (project, name))"
   void $ execute_ conn "CREATE TABLE github_commands (id bigserial PRIMARY KEY, command jsonb NOT NULL)"
   void $ execute_ conn "CREATE TABLE gf_org_project_map (project_name text, org_name text, repo_name text)"
+  void $ execute_ conn "CREATE TABLE projects (name text PRIMARY KEY, enabled integer NOT NULL)"
   void $ execute_ conn "INSERT INTO gf_org_project_map VALUES ('project', 'example', 'repo')"
+  void $ execute_ conn "INSERT INTO projects VALUES ('project', 1)"
 
 insertJobset :: Connection -> Text -> IO ()
 insertJobset conn flake =
@@ -197,6 +199,17 @@ main = do
         assert "unavailable PR permission was reported as successful synchronization" (ssErrors forbidden == 1 && ssProjectsSynced forbidden == 0)
         unchanged "API permission error disabled or changed an existing jobset" before
         putStrLn "PASS missing token and actual HTTP403 fail closed with error statistics"
+
+        prepare oldFlake
+        enabledMappings <- fetchOrgProjectMappings conn
+        assert "enabled project mapping was excluded" (enabledMappings == [("project", "example", "repo")])
+        void $ execute_ conn "UPDATE projects SET enabled = 0 WHERE name = 'project'"
+        disabledMappings <- fetchOrgProjectMappings conn
+        assert "disabled project mapping was retained" (null disabledMappings)
+        void $ execute_ conn "DELETE FROM projects"
+        retainedMappings <- fetchOrgProjectMappings conn
+        assert "not-yet-created project mapping was dropped" (retainedMappings == [("project", "example", "repo")])
+        putStrLn "PASS disabled-project mapping policy with not-yet-created retention"
 
         -- A valid HTTP200 can still omit the source repository of a deleted
         -- fork. No valid entry on that page may be acted on in a partial sync.
