@@ -1,4 +1,4 @@
--- Forge a fake build in the Hydra database. We're assuming the project and jobse
+-- Forge a fake build in the Hydra database. We're assuming the project and jobset
 -- already exist at input-output-hk-sample/pullrequest-1347.
 
 -- Forge a successful evaluation
@@ -66,7 +66,7 @@ VALUES
     0,
     1,
     extract(epoch from now())::int,
-    extract(epoch from now())::in
+    extract(epoch from now())::int
   );
 
 -- Add the forged build to an existing eval.
