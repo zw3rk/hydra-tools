@@ -26,8 +26,7 @@
                 packages.hydra-github-bridge.components.tests.sync-source.testWrapper = [
                   "${final.writeShellScript "sync-source-postgresql" ''
                     export PATH=${lib.makeBinPath ([final.postgresql final.coreutils]
-                      # Root launchers re-exec run-sync-source.sh as an
-                      # unprivileged user via setpriv/runuser.
+                      # Root launchers run only PostgreSQL as an ordinary user.
                       ++ lib.optionals final.stdenv.isLinux [final.util-linux]
                       ++ lib.optionals final.stdenv.isDarwin [
                         # crypton-x509-system reads public system certificates when
@@ -37,6 +36,7 @@
                           exec /usr/bin/security "$@"
                         '')
                       ])}:$PATH
+                    ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/test-run-sync-source-ownership.sh} ${../../../hydra-github-bridge/test/run-sync-source.sh}
                     exec ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/run-sync-source.sh} "$@"
                   ''}"
                 ];

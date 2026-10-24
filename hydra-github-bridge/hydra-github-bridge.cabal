@@ -9,7 +9,7 @@ category:           Network
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 extra-source-files: test/run-sync-source.sh
-                  test/test-run-sync-source-reexec.sh
+    test/test-run-sync-source-ownership.sh
 
 common common
     ghc-options:      -Wall -Werror
