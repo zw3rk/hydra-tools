@@ -2,8 +2,11 @@
 #
 # Separate from `flake/tests.nix` (the existing private smoke check) and
 # from the Haskell suites (`sync-source`, `token-refresh`, `public-url`),
-# which stay independent and intact. Nothing here is built or run by
-# default; wire-up is opt-in via the flake import.
+# which stay independent and intact. Importing this directory via
+# `flake.nix` registers the batches as separate `checks.iog-*-local`
+# outputs (x86_64-linux only); run them with
+# `nix build .#checks.<system>.iog-integration-local` or
+# `make test-iog-integration` / `make test-iog-scenarios`.
 {
   imports = [
     # Broad webhook-to-Hydra-to-GitHub workflows end to end.

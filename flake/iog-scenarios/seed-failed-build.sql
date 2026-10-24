@@ -84,25 +84,7 @@ VALUES
     1
   );
 
--- Forge a build step. This is fragile, it assumes there's only one existing build.
-INSERT INTO buildsteps
-  ( build,
-    stepnr,
-    type,
-    drvpath,
-    busy,
-    status,
-    starttime,
-    stoptime
-  )
-VALUES
-  ( (SELECT id FROM builds ORDER BY id DESC LIMIT 1),
-    1,
-    0,
-    '/nix/store/ply5hyh8fxwkp82jsp42h8l8aq6zw7-test.drv',
-    0,
-    1,
-    extract(epoch from now())::int,
-    extract(epoch from now())::int
-  );
+-- NOTE: exactly one build step is intended above. Do not add a second
+-- buildsteps INSERT here: it would forge a duplicate stepnr-1 row for the
+-- same build and skew the "N failed steps" check-run summary.
 

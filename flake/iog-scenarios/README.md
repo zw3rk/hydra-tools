@@ -24,6 +24,10 @@ purpose: the existing `flake/tests.nix` smoke check and the Haskell suites
 
 ## Run (requires Nix VM builds; NOT run in this session)
 
+The `flake.nix` import registers both batches as `checks.iog-*-local`
+outputs (x86_64-linux only), so `nix flake check` includes them; run them
+directly with:
+
 ```bash
 nix build .#checks.x86_64-linux.iog-integration-local
 nix build .#checks.x86_64-linux.iog-scenarios-local

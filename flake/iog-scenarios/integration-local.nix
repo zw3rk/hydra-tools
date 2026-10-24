@@ -25,7 +25,6 @@
     lib.optionalAttrs (system == "x86_64-linux") {
       checks.iog-integration-local = let
         prOpenedPayload = ./pr_opened.payload.txt;
-        prUnknownPayload = ./pr_opened_unknown.payload.txt;
         pushedPayload = ./push.payload.txt;
         checkSuitePayload = ./check_suite.payload.txt;
         checkRunPayload = ./check_run.payload.txt;
@@ -140,7 +139,8 @@
               hydra.wait_until_succeeds(
                 "curl -H \"Accept: application/json\" "
                 "http://localhost:3000/jobset/input-output-hk-sample/pullrequest-1347 | "
-                "jq --exit-status '.enabled == 0'"
+                "jq --exit-status '.enabled == 0'",
+                timeout=15
               )
 
             with subtest("Pushing creates check runs"):

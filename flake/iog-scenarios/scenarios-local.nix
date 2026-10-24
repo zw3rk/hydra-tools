@@ -53,9 +53,10 @@
             hydra.wait_for_unit("mock-github.service")
             hydra.wait_for_open_port(4010)
 
-            # Wait for hydra-github-bridge
+            # Wait for hydra-github-bridge (webhooks on 8811, SSE on 8812)
             hydra.wait_for_unit("hydra-github-bridge-all.service")
             hydra.wait_for_open_port(8811, timeout=20)
+            hydra.wait_for_open_port(8812, timeout=20)
 
             # Use the bridge to create a jobset via webhook
             hydra.succeed("iog-send-webhook http://localhost:8811/hook pull_request < ${prOpenedPayload}")
@@ -151,6 +152,17 @@
                 "required.invalid-plain"
               )
 
+              # The bridge must still report the failure (not drop the
+              # check run or send it without a result body)
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=100' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "last | .request.body | fromjson | "
+                ".conclusion == \"failure\" and .output.text != null'",
+                timeout=20
+              )
+
             with subtest("Handles invalid compressed UTF-8 log gracefully"):
               # Create bz2 with invalid UTF-8
               hydra.succeed(
@@ -166,6 +178,17 @@
                 "required.invalid-compressed"
               )
 
+              # The bridge must still report the failure (not drop the
+              # check run or send it without a result body)
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=100' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "last | .request.body | fromjson | "
+                ".conclusion == \"failure\" and .output.text != null'",
+                timeout=20
+              )
+
             with subtest("Handles missing log files gracefully"):
               # Don't create any log file
 
@@ -174,6 +197,17 @@
                 "/nix/store/33334444555566667777888899990000-test5.drv",
                 "33334444555566667777888899990000-test5.drv",
                 "required.missing"
+              )
+
+              # The bridge must still report the failure (not drop the
+              # check run or send it without a result body)
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=100' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "last | .request.body | fromjson | "
+                ".conclusion == \"failure\" and .output.text != null'",
+                timeout=20
               )
           '';
         });

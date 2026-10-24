@@ -43,7 +43,7 @@
       ghUserAgent = "hydra-github-bridge";
       ghAppKeyFile = ./github-app.key;
       ghSecretFile = pkgs.writeText "gh-secret-file" "secret-token";
-      ghTokenFile = pkgs.writeText "gh-secret-file" "secret-token";
+      ghTokenFile = pkgs.writeText "gh-token-file" "secret-token";
       hydraHost = "http://localhost:3000";
       # Exercises the public-URL check-link path; same loopback host.
       hydraPublicUrl = "http://localhost:3000";
