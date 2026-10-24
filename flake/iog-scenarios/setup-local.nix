@@ -7,7 +7,12 @@
 # `waitForHydraServerPort` options). All fixtures and endpoints are
 # private/local only: loopback Hydra, loopback mock GitHub, shared
 # `secret-token` secret, installation id 1.
-{pkgs, lib, flakePackages, ...}: {
+{
+  pkgs,
+  lib,
+  flakePackages,
+  ...
+}: {
   environment.systemPackages = with pkgs; [
     # Local webhook signer (openssl + jq + curl; no hand crypto).
     (import ./send-webhook.nix {inherit pkgs;})

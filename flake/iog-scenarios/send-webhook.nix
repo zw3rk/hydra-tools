@@ -1,4 +1,5 @@
-{pkgs}: pkgs.writeShellApplication {
+{pkgs}:
+pkgs.writeShellApplication {
   name = "iog-send-webhook";
   runtimeInputs = with pkgs; [jq curl openssl];
 
