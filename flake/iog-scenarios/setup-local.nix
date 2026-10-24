@@ -102,7 +102,7 @@
       wantedBy = ["multi-user.target"];
       serviceConfig.ExecStart = let
         mockoonBin = lib.getExe flakePackages.mockoon-cli;
-        mockData = ../../mock-github-data.json;
+        mockData = ./mock-github-data.json;
       in "${mockoonBin} start --data ${mockData} --port 4010 --repair";
     };
 

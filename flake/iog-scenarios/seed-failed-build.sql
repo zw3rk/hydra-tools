@@ -37,14 +37,14 @@ INSERT INTO builds
     buildstatus
   )
 VALUES
-  ( 0,
+  ( 1,
     extract(epoch from now())::int,
     ( SELECT id FROM jobsets
       WHERE name = 'pullrequest-1347'
       AND project = 'input-output-hk-sample'
     ),
     'required.test',
-    '/nix/store/ply5hyh8fxwkp82jsp42h8l8aq6zw7-test.drv',
+    '/nix/store/ply5hyh8fxwkp82jsp42h8l8aq6zw700-test.drv',
     'x86_64-linux',
     extract(epoch from now())::int,
     extract(epoch from now())::int,
@@ -66,7 +66,7 @@ VALUES
   ( (SELECT id FROM builds ORDER BY id DESC LIMIT 1),
     1,
     0,
-    '/nix/store/ply5hyh8fxwkp82jsp42h8l8aq6zw7-test.drv',
+    '/nix/store/ply5hyh8fxwkp82jsp42h8l8aq6zw700-test.drv',
     0,
     1,
     extract(epoch from now())::int,

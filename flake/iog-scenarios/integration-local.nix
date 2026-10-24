@@ -177,7 +177,7 @@
               hydra.succeed(
                 "mkdir -p /var/lib/hydra/build-logs/pl && "
                 "printf '\\xff\\xfe\\x00build output\\x80\\x81\\x82' > "
-                "/var/lib/hydra/build-logs/pl/y5hyh8fxwkp82jsp42h8l8aq6zw7-test.drv.bz2"
+                "/var/lib/hydra/build-logs/pl/y5hyh8fxwkp82jsp42h8l8aq6zw700-test.drv.bz2"
               )
 
               # Fire the build_finished notification directly via psql
@@ -271,7 +271,7 @@
               hydra.succeed(
                 "psql hydra hydra -c \""
                 "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), "
-                "u AS (UPDATE jobsets SET errormsg = 'evaluation failed\nin job ‘retry-job’:\n  boom', fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), "
+                "u AS (UPDATE jobsets SET errormsg = 'evaluation failed\nin job ‘retry-job’:\n  boom', fetcherrormsg = NULL WHERE id = (SELECT id FROM j)), "
                 "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) "
                 "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) "
                 "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
@@ -311,7 +311,7 @@
               hydra.succeed(
                 "psql hydra hydra -c \""
                 "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), "
-                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), "
+                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrormsg = NULL WHERE id = (SELECT id FROM j)), "
                 "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) "
                 "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) "
                 "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
@@ -348,7 +348,7 @@
               hydra.succeed(
                 "psql hydra hydra -c \"" +
                 "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), " +
-                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), " +
+                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrormsg = NULL WHERE id = (SELECT id FROM j)), " +
                 "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) " +
                 "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) " +
                 "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
@@ -367,6 +367,18 @@
                 "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
                 "map(.request.body | fromjson) | " +
                 "map(select(.name == \"ci/eval:retry-job\" and .conclusion == \"success\" and .output.title == \"Evaluation succeeded on retry\")) | length == 1'"
+              )
+
+              # A recorded request alone may have received an HTTP error.
+              # sent is set by the real status handler only after API success.
+              hydra.wait_until_succeeds(
+                "psql -At hydra hydra -c \"SELECT count(DISTINCT p.payload->>'conclusion') "
+                "FROM github_status s JOIN github_status_payload p ON p.status_id = s.id "
+                "WHERE s.owner = 'input-output-hk' AND s.repo = 'sample' "
+                "AND s.headSha = 'd6fde92930d4715a2b49857d24b940956b26d2d3' "
+                "AND s.name = 'ci/eval:retry-job' AND p.sent IS NOT NULL "
+                "AND p.payload->>'conclusion' IN ('failure','success')\" | grep -qx 2",
+                timeout=20
               )
 
               hydra.succeed("systemctl is-active hydra-github-bridge-all.service")
