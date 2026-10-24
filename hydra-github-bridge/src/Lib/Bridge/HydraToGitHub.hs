@@ -22,11 +22,11 @@ module Lib.Bridge.HydraToGitHub
   )
 where
 
-import Codec.Compression.BZip qualified as BZip
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Exception
-  ( SomeException,
+  ( SomeAsyncException,
+    SomeException,
     catchJust,
     displayException,
     fromException,
@@ -40,7 +40,6 @@ import Data.Aeson hiding (Error, Success)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as BS
-import Data.ByteString.Lazy qualified as BSLw
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -77,17 +76,8 @@ import Lib.GitHub (CheckRunConclusion)
 import Lib.GitHub qualified as GitHub
 import Lib.Hydra (BuildStatus)
 import Lib.Hydra qualified as Hydra
+import Lib.Hydra.DB (readBuildLog)
 import Network.HTTP.Client qualified as HTTP
-import System.FilePath
-  ( takeFileName,
-    (<.>),
-    (</>),
-  )
-import System.IO.Error
-  ( catchIOError,
-    ioeGetErrorType,
-    isDoesNotExistErrorType,
-  )
 import Text.Regex.TDFA ((=~))
 
 -- Text utils
@@ -614,16 +604,19 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs e = (
         failedStepLogs <-
           sequence $
             failedSteps <&> \(stepnr, drvpath, _) -> do
-              let drvName = takeFileName drvpath
-                  bucketed = take 2 drvName </> drop 2 drvName
-                  path = stateDir </> "build-logs" </> bucketed
-              logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
-                if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
-                  then ioError ioe
-                  else catchIOError (BSLw.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
-                    if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
-                      then ioError ioe2
-                      else return Nothing
+              -- Complete log decoding inside this boundary. Lazy decompression
+              -- used to escape later while the status payload was encoded.
+              logs <-
+                catchJust
+                  ( \err -> case fromException err :: Maybe SomeAsyncException of
+                      Just _ -> Nothing
+                      Nothing -> Just err
+                  )
+                  (fmap (fmap Text.unpack) (readBuildLog stateDir drvpath))
+                  ( \err -> do
+                      Text.putStrLn $ "Warning: could not fetch build log: " <> Text.pack (displayException err)
+                      pure Nothing
+                  )
               return (stepnr, drvpath, logs)
         output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [(Only Text)]
         pure $

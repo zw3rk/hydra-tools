@@ -35,6 +35,7 @@ common common
                     , text
                     , time
                     , filepath
+                    , directory
                     , http-client
                     , http-client-tls
                     , http-types

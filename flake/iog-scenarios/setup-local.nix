@@ -24,6 +24,9 @@
     postgresql
   ];
 
+  # The fixture creates flake jobsets and exercises Hydra's flake evaluator.
+  nix.settings.experimental-features = ["nix-command" "flakes"];
+
   environment.variables = {
     # Required by `iog-send-webhook` in the test scripts.
     WEBHOOK_SECRET = "secret-token";
