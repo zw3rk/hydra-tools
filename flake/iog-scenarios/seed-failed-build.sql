@@ -87,4 +87,3 @@ VALUES
 -- NOTE: exactly one build step is intended above. Do not add a second
 -- buildsteps INSERT here: it would forge a duplicate stepnr-1 row for the
 -- same build and skew the "N failed steps" check-run summary.
-
