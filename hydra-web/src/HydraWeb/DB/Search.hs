@@ -39,7 +39,7 @@ search conn q rawLimit
   | otherwise = withTransaction conn $ do
       let limit = max 1 (min 50 rawLimit)
           -- Escape ILIKE metacharacters so _ and % in user input are literal.
-          pattern = "%" <> escapeLike q <> "%"
+          likePattern = "%" <> escapeLike q <> "%"
 
       -- SET LOCAL only takes effect inside a transaction.
       _ <- execute_ conn [sql|SET LOCAL statement_timeout = 20000|]
@@ -51,7 +51,7 @@ search conn q rawLimit
         WHERE hidden = 0
           AND (name ILIKE ? OR displayname ILIKE ? OR description ILIKE ?)
         ORDER BY name
-      |] (pattern, pattern, pattern)
+      |] (likePattern, likePattern, likePattern)
       let projects = map (\(n, dn, d, e, h, o, hp) ->
             Project n dn d e h o hp Nothing Nothing Nothing []) prows
 
@@ -64,7 +64,7 @@ search conn q rawLimit
         WHERE p.hidden = 0 AND j.hidden = 0
           AND (j.name ILIKE ? OR j.description ILIKE ?)
         ORDER BY j.project, j.name
-      |] (pattern, pattern)
+      |] (likePattern, likePattern)
       let jobsets = map scanSearchJobset jrows
 
       -- Search builds by output path (excludes hidden projects/jobsets).
@@ -82,7 +82,7 @@ search conn q rawLimit
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
-      |] (pattern, limit)
+      |] (likePattern, limit)
       let builds = map scanBuildListRow brows
 
       -- Search builds by derivation path (excludes hidden projects/jobsets).
@@ -99,7 +99,7 @@ search conn q rawLimit
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
-      |] (pattern, limit)
+      |] (likePattern, limit)
       let buildsDrv = map scanBuildListRow drows
 
       pure $ Just SearchResults
