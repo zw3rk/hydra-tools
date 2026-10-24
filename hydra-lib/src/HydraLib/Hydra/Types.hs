@@ -1,35 +1,36 @@
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Core Hydra types shared across hydra-tools components.
--- Includes build status codes, notification types, and API data types
--- for talking to the Hydra CI server.
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Core Hydra types shared across hydra-tools components.
+-- Includes build status codes, notification types, and API data types
+-- for talking to the Hydra CI server.
 module HydraLib.Hydra.Types
   ( -- * ID type aliases
-    JobSetId
-  , EvalId
-  , BuildId
+    JobSetId,
+    EvalId,
+    BuildId,
 
     -- * Notifications (PostgreSQL LISTEN/NOTIFY)
-  , Notification (..)
+    Notification (..),
 
     -- * Build status
-  , BuildStatus (..)
+    BuildStatus (..),
 
     -- * Hydra API request/response types
-  , HydraLogin (..)
-  , HydraPush (..)
-  , HydraProject (..)
-  , HydraJobset (..)
-  , HydraJobsetResp (..)
-  , defHydraProject
-  , defHydraJobset
-  , defHydraFlakeJobset
-  ) where
+    HydraLogin (..),
+    HydraPush (..),
+    HydraProject (..),
+    HydraJobset (..),
+    HydraJobsetResp (..),
+    defHydraProject,
+    defHydraJobset,
+    defHydraFlakeJobset,
+  )
+where
 
 import Data.Aeson (FromJSON (..), ToJSON (..), genericParseJSON, genericToJSON)
 import Data.Aeson.Casing (aesonDrop, camelCase)
@@ -37,7 +38,9 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 type JobSetId = Int
+
 type EvalId = Int
+
 type BuildId = Int
 
 -- | Hydra PostgreSQL LISTEN/NOTIFY notification types.
@@ -53,16 +56,26 @@ data Notification
 
 -- | Build outcome status codes, matching Hydra's integer encoding.
 data BuildStatus
-  = Succeeded           -- ^ 0
-  | Failed              -- ^ 1
-  | DependencyFailed    -- ^ 2
-  | Aborted             -- ^ 3, 9
-  | Cancelled           -- ^ 4
-  | FailedWithOutput    -- ^ 6
-  | TimedOut            -- ^ 7
-  | LogLimitExceeded    -- ^ 10
-  | OutputSizeLimitExceeded -- ^ 11
-  | NonDeterministicBuild   -- ^ 12
+  = -- | 0
+    Succeeded
+  | -- | 1
+    Failed
+  | -- | 2
+    DependencyFailed
+  | -- | 3, 9
+    Aborted
+  | -- | 4
+    Cancelled
+  | -- | 6
+    FailedWithOutput
+  | -- | 7
+    TimedOut
+  | -- | 10
+    LogLimitExceeded
+  | -- | 11
+    OutputSizeLimitExceeded
+  | -- | 12
+    NonDeterministicBuild
   | Other
   deriving (Eq)
 
@@ -82,18 +95,18 @@ instance Show BuildStatus where
 
 instance Enum BuildStatus where
   toEnum = \case
-    0  -> Succeeded
-    1  -> Failed
-    2  -> DependencyFailed
-    3  -> Aborted
-    9  -> Aborted
-    4  -> Cancelled
-    6  -> FailedWithOutput
-    7  -> TimedOut
+    0 -> Succeeded
+    1 -> Failed
+    2 -> DependencyFailed
+    3 -> Aborted
+    9 -> Aborted
+    4 -> Cancelled
+    6 -> FailedWithOutput
+    7 -> TimedOut
     10 -> LogLimitExceeded
     11 -> OutputSizeLimitExceeded
     12 -> NonDeterministicBuild
-    _  -> Other
+    _ -> Other
   fromEnum = \case
     Succeeded -> 0
     Failed -> 1
@@ -108,95 +121,107 @@ instance Enum BuildStatus where
     Other -> 99
 
 data HydraLogin = HydraLogin
-  { lUsername :: Text
-  , lPassword :: Text
-  } deriving (Show, Eq, Generic)
+  { lUsername :: Text,
+    lPassword :: Text
+  }
+  deriving (Show, Eq, Generic)
 
 instance ToJSON HydraLogin where
   toJSON = genericToJSON $ aesonDrop 1 camelCase
+
 instance FromJSON HydraLogin where
   parseJSON = genericParseJSON $ aesonDrop 1 camelCase
 
 data HydraPush = HydraPush
   { pJobsets :: Text
-  } deriving (Show, Eq, Generic)
+  }
+  deriving (Show, Eq, Generic)
 
 instance ToJSON HydraPush where
   toJSON = genericToJSON $ aesonDrop 1 camelCase
+
 instance FromJSON HydraPush where
   parseJSON = genericParseJSON $ aesonDrop 1 camelCase
 
 data HydraProject = HydraProject
-  { hpName        :: Text
-  , hpDisplayname :: Text
-  , hpDescription :: Text
-  , hpHomepage    :: Text
-  , hpOwner       :: Text
-  , hpEnabled     :: Bool
-  , hpVisible     :: Bool
-  } deriving (Show, Eq, Generic)
+  { hpName :: Text,
+    hpDisplayname :: Text,
+    hpDescription :: Text,
+    hpHomepage :: Text,
+    hpOwner :: Text,
+    hpEnabled :: Bool,
+    hpVisible :: Bool
+  }
+  deriving (Show, Eq, Generic)
 
 instance ToJSON HydraProject where
   toJSON = genericToJSON $ aesonDrop 2 camelCase
+
 instance FromJSON HydraProject where
   parseJSON = genericParseJSON $ aesonDrop 2 camelCase
 
 data HydraJobset = HydraJobset
-  { hjName             :: Text
-  , hjDescription      :: Text
-  , hjEnabled          :: Int
-  , hjEnableemail      :: Bool
-  , hjVisible          :: Bool
-  , hjEmailoverride    :: Text
-  , hjKeepnr           :: Int
-  , hjCheckinterval    :: Int
-  , hjSchedulingshares :: Int
-  , hjType             :: Int
-  , hjFlake            :: Text
-  } deriving (Eq, Generic, Read, Show)
+  { hjName :: Text,
+    hjDescription :: Text,
+    hjEnabled :: Int,
+    hjEnableemail :: Bool,
+    hjVisible :: Bool,
+    hjEmailoverride :: Text,
+    hjKeepnr :: Int,
+    hjCheckinterval :: Int,
+    hjSchedulingshares :: Int,
+    hjType :: Int,
+    hjFlake :: Text
+  }
+  deriving (Eq, Generic, Read, Show)
 
 instance ToJSON HydraJobset where
   toJSON = genericToJSON $ aesonDrop 2 camelCase
+
 instance FromJSON HydraJobset where
   parseJSON = genericParseJSON $ aesonDrop 2 camelCase
 
 data HydraJobsetResp = HydraJobsetResp
-  { respRedirect :: Text
-  , respUri      :: Maybe Text
-  , respName     :: Maybe Text
-  , respType     :: Maybe Text
-  } deriving (Show, Eq, Generic)
+  { respRedirect :: Text,
+    respUri :: Maybe Text,
+    respName :: Maybe Text,
+    respType :: Maybe Text
+  }
+  deriving (Show, Eq, Generic)
 
 instance ToJSON HydraJobsetResp where
   toJSON = genericToJSON $ aesonDrop 4 camelCase
+
 instance FromJSON HydraJobsetResp where
   parseJSON = genericParseJSON $ aesonDrop 4 camelCase
 
 defHydraProject :: HydraProject
-defHydraProject = HydraProject
-  { hpEnabled     = True
-  , hpVisible     = True
-  , hpOwner       = "bridge"
-  , hpName        = ""
-  , hpDisplayname = ""
-  , hpDescription = ""
-  , hpHomepage    = ""
-  }
+defHydraProject =
+  HydraProject
+    { hpEnabled = True,
+      hpVisible = True,
+      hpOwner = "bridge",
+      hpName = "",
+      hpDisplayname = "",
+      hpDescription = "",
+      hpHomepage = ""
+    }
 
 defHydraJobset :: HydraJobset
-defHydraJobset = HydraJobset
-  { hjEnabled          = 1
-  , hjVisible          = True
-  , hjKeepnr           = 2
-  , hjSchedulingshares = 42
-  , hjCheckinterval    = 0
-  , hjEnableemail      = False
-  , hjEmailoverride    = ""
-  , hjType             = 0
-  , hjName             = ""
-  , hjDescription      = ""
-  , hjFlake            = ""
-  }
+defHydraJobset =
+  HydraJobset
+    { hjEnabled = 1,
+      hjVisible = True,
+      hjKeepnr = 2,
+      hjSchedulingshares = 42,
+      hjCheckinterval = 0,
+      hjEnableemail = False,
+      hjEmailoverride = "",
+      hjType = 0,
+      hjName = "",
+      hjDescription = "",
+      hjFlake = ""
+    }
 
 defHydraFlakeJobset :: HydraJobset
-defHydraFlakeJobset = defHydraJobset { hjType = 1 }
+defHydraFlakeJobset = defHydraJobset {hjType = 1}

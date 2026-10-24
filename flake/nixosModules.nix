@@ -322,7 +322,7 @@
           partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
 
           # nix is needed for the local store probe (nix path-info --offline).
-          path = [ pkgs.nix ];
+          path = [pkgs.nix];
 
           startLimitIntervalSec = 0;
 
@@ -493,7 +493,7 @@
           isSystemUser = true;
           group = "hydra-web";
           # Member of hydra group to read build logs from /var/lib/hydra/build-logs/.
-          extraGroups = [ "hydra" ];
+          extraGroups = ["hydra"];
           description = "Hydra Web Frontend";
         };
         users.groups.hydra-web = {};

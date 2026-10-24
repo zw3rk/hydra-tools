@@ -37,10 +37,13 @@ currentFlake = "github:example/repo/" <> currentSha
 type Reply = (Status, Value, IO ())
 
 pull :: Int -> Bool -> Value
-pull n draft = object
-  [ "number" .= n, "title" .= ("PR title" :: Text), "draft" .= draft,
-    "head" .= object ["sha" .= currentSha, "repo" .= object ["full_name" .= ("fork/repo" :: Text)]]
-  ]
+pull n draft =
+  object
+    [ "number" .= n,
+      "title" .= ("PR title" :: Text),
+      "draft" .= draft,
+      "head" .= object ["sha" .= currentSha, "repo" .= object ["full_name" .= ("fork/repo" :: Text)]]
+    ]
 
 api :: IORef Reply -> IORef [Query] -> Application
 api reply pushes req respond
@@ -64,9 +67,12 @@ reset conn = do
   void $ execute_ conn "INSERT INTO gf_org_project_map VALUES ('project', 'example', 'repo')"
 
 insertJobset :: Connection -> Text -> IO ()
-insertJobset conn flake = void $ execute conn
-  "INSERT INTO jobsets VALUES ('project', 'pullrequest-7', 1, ?, 3, false, 17, 0, 88, true, 'ops@example.invalid', 'preserve me')"
-  (Only flake)
+insertJobset conn flake =
+  void $
+    execute
+      conn
+      "INSERT INTO jobsets VALUES ('project', 'pullrequest-7', 1, ?, 3, false, 17, 0, 88, true, 'ops@example.invalid', 'preserve me')"
+      (Only flake)
 
 jobset :: Connection -> IO Value
 jobset conn = do
@@ -121,13 +127,18 @@ main = do
         assert "unchanged source must not enqueue a duplicate evaluation" (again == queued)
         putStrLn "PASS stale source, complete settings preservation, ordinary evaluation, idempotence"
 
-        mapM_ (\flake -> do
-          prepare flake
-          original <- jobset conn
-          _ <- run cfg
-          unchanged "custom source was overwritten" original)
-          ["path:/custom", "github:unrelated/repo/" <> oldSha,
-           oldFlake <> "?dir=custom", "github:example/repo/main"]
+        mapM_
+          ( \flake -> do
+              prepare flake
+              original <- jobset conn
+              _ <- run cfg
+              unchanged "custom source was overwritten" original
+          )
+          [ "path:/custom",
+            "github:unrelated/repo/" <> oldSha,
+            oldFlake <> "?dir=custom",
+            "github:example/repo/main"
+          ]
         prepare oldFlake
         void $ execute_ conn "UPDATE jobsets SET type = 0"
         legacy <- jobset conn
@@ -148,8 +159,12 @@ main = do
         putStrLn "PASS head repository retained"
 
         prepare oldFlake
-        writeIORef reply (status200, toJSON [pull 7 False],
-          void $ execute webhook "UPDATE jobsets SET flake = ?" (Only $ "github:example/repo/" <> newerSha))
+        writeIORef
+          reply
+          ( status200,
+            toJSON [pull 7 False],
+            void $ execute webhook "UPDATE jobsets SET flake = ?" (Only $ "github:example/repo/" <> newerSha)
+          )
         _ <- run cfg
         newer <- jobset conn
         raced <- commands conn
@@ -185,16 +200,21 @@ main = do
 
         -- A valid HTTP200 can still omit the source repository of a deleted
         -- fork. No valid entry on that page may be acted on in a partial sync.
-        let deletedFork = object
-              [ "number" .= (7 :: Int), "title" .= ("Deleted fork" :: Text), "draft" .= False,
-                "head" .= object ["sha" .= currentSha, "repo" .= Null]
-              ]
-        mapM_ (\invalid -> do
-          prepare oldFlake
-          writeIORef reply (status200, toJSON [pull 8 False, invalid], pure ())
-          partial <- reconcileAll cfg conn
-          assert "incomplete HTTP200 listing was reported as successful synchronization" (ssErrors partial == 1 && ssProjectsSynced partial == 0)
-          unchanged "incomplete HTTP200 listing changed a source or queued lifecycle work" before)
+        let deletedFork =
+              object
+                [ "number" .= (7 :: Int),
+                  "title" .= ("Deleted fork" :: Text),
+                  "draft" .= False,
+                  "head" .= object ["sha" .= currentSha, "repo" .= Null]
+                ]
+        mapM_
+          ( \invalid -> do
+              prepare oldFlake
+              writeIORef reply (status200, toJSON [pull 8 False, invalid], pure ())
+              partial <- reconcileAll cfg conn
+              assert "incomplete HTTP200 listing was reported as successful synchronization" (ssErrors partial == 1 && ssProjectsSynced partial == 0)
+              unchanged "incomplete HTTP200 listing changed a source or queued lifecycle work" before
+          )
           [deletedFork, object ["number" .= (7 :: Int)]]
         putStrLn "PASS mixed valid/deleted-fork/malformed HTTP200 listings fail closed"
 
@@ -207,10 +227,18 @@ main = do
         writeIORef reply (status200, toJSON [pull 8 True], pure ())
         _ <- run cfg
         cs <- commands conn
-        let decoded = [Hydra.CreateOrUpdateJobset "example/repo" "project" "pullrequest-8"
-                       (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-8", Hydra.hjDescription = "PR 8: PR title", Hydra.hjFlake = "github:fork/repo/" <> currentSha}),
-                      Hydra.UpdateJobset "example/repo" "project" "pullrequest-7"
-                       (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-7", Hydra.hjDescription = "PR 7 (closed)", Hydra.hjFlake = "github:example/repo/" <> Text.replicate 40 "0", Hydra.hjVisible = False, Hydra.hjEnabled = 0})]
+        let decoded =
+              [ Hydra.CreateOrUpdateJobset
+                  "example/repo"
+                  "project"
+                  "pullrequest-8"
+                  (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-8", Hydra.hjDescription = "PR 8: PR title", Hydra.hjFlake = "github:fork/repo/" <> currentSha}),
+                Hydra.UpdateJobset
+                  "example/repo"
+                  "project"
+                  "pullrequest-7"
+                  (Hydra.defHydraFlakeJobset {Hydra.hjName = "pullrequest-7", Hydra.hjDescription = "PR 7 (closed)", Hydra.hjFlake = "github:example/repo/" <> Text.replicate 40 "0", Hydra.hjVisible = False, Hydra.hjEnabled = 0})
+              ]
         assert "missing/closed/allowed-draft command behavior changed" (cs == map toJSON decoded)
         putStrLn "PASS existing missing/closed/allowed-draft behavior"
 
@@ -218,17 +246,23 @@ main = do
         writeIORef reply (status200, toJSON [pull 7 True], pure ())
         _ <- reconcileProject cfg conn ("project", "IntersectMBO", "cardano-cli")
         restricted <- commands conn
-        assert "restricted draft was refreshed or created" (length restricted == 1 && case restricted of
-          [Object c] -> KeyMap.lookup "tag" c == Just (String "UpdateJobset")
-          _ -> False)
+        assert
+          "restricted draft was refreshed or created"
+          ( length restricted == 1 && case restricted of
+              [Object c] -> KeyMap.lookup "tag" c == Just (String "UpdateJobset")
+              _ -> False
+          )
         putStrLn "PASS existing restricted-draft behavior"
 
         manager <- newManager defaultManagerSettings
         url <- parseBaseUrl $ "http://127.0.0.1:" <> show port
         let hydra = mkClientEnv manager url
-        mapM_ (\force -> do
-          result <- runClientM (Hydra.push Nothing (Just "project:pullrequest-7") force) hydra
-          assert "mock Hydra push failed" (isRight result)) [Just False, Nothing, Just True]
+        mapM_
+          ( \force -> do
+              result <- runClientM (Hydra.push Nothing (Just "project:pullrequest-7") force) hydra
+              assert "mock Hydra push failed" (isRight result)
+          )
+          [Just False, Nothing, Just True]
         sent <- readIORef pushes
         assert "normal evaluation sent the force query parameter" (length sent == 3 && all (all ((/= "force") . fst)) (take 2 sent))
         assert "explicit force evaluation lost its flag" (any ((== "force") . fst) (last sent))

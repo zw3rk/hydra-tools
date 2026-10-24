@@ -1,74 +1,85 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handlers for job routes: latest-build redirects and shields.io badge.
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Handlers for job routes: latest-build redirects and shields.io badge.
 module HydraWeb.Handlers.Job
-  ( jobLatestHandler
-  , jobLatestFinishedHandler
-  , jobLatestForSystemHandler
-  , jobShieldHandler
-    -- * Response types (re-exported for API.hs route declarations)
-  , ShieldBadge
-  ) where
+  ( jobLatestHandler,
+    jobLatestFinishedHandler,
+    jobLatestForSystemHandler,
+    jobShieldHandler,
 
+    -- * Response types (re-exported for API.hs route declarations)
+    ShieldBadge,
+  )
+where
+
+import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import Control.Monad.Error.Class (throwError)
 import Data.Aeson (ToJSON (..), object, (.=))
-import Data.OpenApi (ToSchema (..), genericDeclareNamedSchema,
-                     defaultSchemaOptions, SchemaOptions (..))
+import Data.OpenApi
+  ( SchemaOptions (..),
+    ToSchema (..),
+    defaultSchemaOptions,
+    genericDeclareNamedSchema,
+  )
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import Servant (err302, err404, ServerError (..))
-
-import HydraWeb.Types (AppM, App (..))
 import HydraWeb.Config (Config (..))
-import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Builds (latestBuildForJob)
+import HydraWeb.DB.Pool (withConn)
 import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.Visibility (isProjectAccessible)
+import Servant (ServerError (..), err302, err404)
 
 -- | Shields.io badge response format.
 data ShieldBadge = ShieldBadge
-  { sbSchemaVersion :: !Int
-  , sbLabel         :: !Text
-  , sbMessage       :: !Text
-  , sbColor         :: !Text
-  } deriving (Generic)
+  { sbSchemaVersion :: !Int,
+    sbLabel :: !Text,
+    sbMessage :: !Text,
+    sbColor :: !Text
+  }
+  deriving (Generic)
 
 instance ToJSON ShieldBadge where
-  toJSON b = object
-    [ "schemaVersion" .= sbSchemaVersion b
-    , "label"         .= sbLabel b
-    , "message"       .= sbMessage b
-    , "color"         .= sbColor b
-    ]
+  toJSON b =
+    object
+      [ "schemaVersion" .= sbSchemaVersion b,
+        "label" .= sbLabel b,
+        "message" .= sbMessage b,
+        "color" .= sbColor b
+      ]
 
 -- | OpenAPI schema — field names must match the ToJSON encoding above.
 instance ToSchema ShieldBadge where
   declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy ShieldBadge)
     where
-      opts = defaultSchemaOptions
-        { fieldLabelModifier = shieldField }
+      opts =
+        defaultSchemaOptions
+          { fieldLabelModifier = shieldField
+          }
       shieldField "sbSchemaVersion" = "schemaVersion"
-      shieldField "sbLabel"         = "label"
-      shieldField "sbMessage"       = "message"
-      shieldField "sbColor"         = "color"
-      shieldField x                 = x
+      shieldField "sbLabel" = "label"
+      shieldField "sbMessage" = "message"
+      shieldField "sbColor" = "color"
+      shieldField x = x
 
 -- | Throw a 302 redirect to the given URL.
 redirect302 :: Text -> AppM a
-redirect302 url = throwError err302
-  { errHeaders = [("Location", TE.encodeUtf8 url)]
-  , errBody    = ""
-  }
+redirect302 url =
+  throwError
+    err302
+      { errHeaders = [("Location", TE.encodeUtf8 url)],
+        errBody = ""
+      }
 
 -- | Redirect to the latest successful build for a job.
 -- Returns 404 if the project is not accessible (hidden or private repo).
@@ -76,14 +87,14 @@ redirect302 url = throwError err302
 jobLatestHandler :: Text -> Text -> Text -> AppM ShieldBadge
 jobLatestHandler project jobset job = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mBuild <- liftIO $ withConn pool $ \conn -> do
     accessible <- isProjectAccessible conn project Nothing
     if not accessible
       then pure Nothing
       else latestBuildForJob conn project jobset job Nothing
   case mBuild of
-    Nothing    -> throwError err404
+    Nothing -> throwError err404
     Just build -> redirect302 (bp <> "/build/" <> Text.pack (show (buildId build)))
 
 -- | Same as jobLatest — both look for finished+succeeded.
@@ -97,14 +108,14 @@ jobLatestFinishedHandler = jobLatestHandler
 jobLatestForSystemHandler :: Text -> Text -> Text -> Text -> AppM ShieldBadge
 jobLatestForSystemHandler project jobset job system = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mBuild <- liftIO $ withConn pool $ \conn -> do
     accessible <- isProjectAccessible conn project Nothing
     if not accessible
       then pure Nothing
       else latestBuildForJob conn project jobset job (Just system)
   case mBuild of
-    Nothing    -> throwError err404
+    Nothing -> throwError err404
     Just build -> redirect302 (bp <> "/build/" <> Text.pack (show (buildId build)))
 
 -- | Return a shields.io-compatible badge for the latest build status.
@@ -121,5 +132,5 @@ jobShieldHandler project jobset job = do
   pure $ case mBuild of
     Nothing -> ShieldBadge 1 "hydra build" "unknown" "lightgrey"
     Just build -> case buildStatus build of
-      Just 0  -> ShieldBadge 1 "hydra build" "passing" "green"
-      _       -> ShieldBadge 1 "hydra build" "failing" "red"
+      Just 0 -> ShieldBadge 1 "hydra build" "passing" "green"
+      _ -> ShieldBadge 1 "hydra build" "failing" "red"

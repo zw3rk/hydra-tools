@@ -1,26 +1,27 @@
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | In-memory status cache for SSE subscribers.
---
--- Maintains the latest status per (owner, repo, sha, check-run name) and
--- broadcasts updates to connected SSE clients via 'TChan'. A periodic GC
--- thread evicts entries older than the configured TTL.
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
+-- | In-memory status cache for SSE subscribers.
+--
+-- Maintains the latest status per (owner, repo, sha, check-run name) and
+-- broadcasts updates to connected SSE clients via 'TChan'. A periodic GC
+-- thread evicts entries older than the configured TTL.
 module HydraLib.SSE.StatusCache
-  ( StatusCache (..)
-  , StatusEntry (..)
-  , CommitKey
-  , newStatusCache
-  , updateStatus
-  , broadcastCheckRuns
-  , lookupStatuses
-  , garbageCollect
-  ) where
+  ( StatusCache (..),
+    StatusEntry (..),
+    CommitKey,
+    newStatusCache,
+    updateStatus,
+    broadcastCheckRuns,
+    lookupStatuses,
+    garbageCollect,
+  )
+where
 
 import Control.Concurrent.STM
 import Data.Aeson (ToJSON (..), object, (.=))
@@ -28,7 +29,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
-
 import HydraLib.GitHub.Types
 
 -- | Key identifying a specific commit in a specific repository.
@@ -36,32 +36,34 @@ type CommitKey = (Text, Text, Text) -- (owner, repo, sha)
 
 -- | A single check-run status entry in the cache.
 data StatusEntry = StatusEntry
-  { seName       :: !Text
-  , seStatus     :: !CheckRunStatus
-  , seConclusion :: !(Maybe CheckRunConclusion)
-  , seUpdatedAt  :: !UTCTime
-  } deriving (Show, Eq)
+  { seName :: !Text,
+    seStatus :: !CheckRunStatus,
+    seConclusion :: !(Maybe CheckRunConclusion),
+    seUpdatedAt :: !UTCTime
+  }
+  deriving (Show, Eq)
 
 instance ToJSON StatusEntry where
   toJSON StatusEntry {..} =
     object $
-      [ "name"  .= seName
-      , "status" .= seStatus
-      , "state"  .= derivedState
-      ] ++ maybe [] (\c -> ["conclusion" .= c]) seConclusion
+      [ "name" .= seName,
+        "status" .= seStatus,
+        "state" .= derivedState
+      ]
+        ++ maybe [] (\c -> ["conclusion" .= c]) seConclusion
     where
       derivedState :: Text
       derivedState = case seStatus of
         Completed -> case seConclusion of
           Just Success -> "success"
-          Just _       -> "failure"
-          Nothing      -> "pending"
+          Just _ -> "failure"
+          Nothing -> "pending"
         _ -> "pending"
 
 -- | Thread-safe in-memory cache and subscriber registry.
 data StatusCache = StatusCache
-  { scStatuses    :: !(TVar (Map CommitKey (Map Text StatusEntry)))
-  , scSubscribers :: !(TVar (Map CommitKey [TChan StatusEntry]))
+  { scStatuses :: !(TVar (Map CommitKey (Map Text StatusEntry))),
+    scSubscribers :: !(TVar (Map CommitKey [TChan StatusEntry]))
   }
 
 -- | Create a new empty status cache.
@@ -87,12 +89,13 @@ broadcastCheckRuns cache checkRuns = do
   where
     broadcastOne now (CheckRun owner' repo' payload') = do
       let key = (owner', repo', payload'.headSha)
-          entry = StatusEntry
-            { seName       = payload'.name
-            , seStatus     = payload'.status
-            , seConclusion = payload'.conclusion
-            , seUpdatedAt  = now
-            }
+          entry =
+            StatusEntry
+              { seName = payload'.name,
+                seStatus = payload'.status,
+                seConclusion = payload'.conclusion,
+                seUpdatedAt = now
+              }
       updateStatus cache key entry
 
 -- | Look up all current statuses for a given commit.

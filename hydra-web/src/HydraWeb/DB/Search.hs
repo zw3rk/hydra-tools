@@ -1,34 +1,39 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database queries for cross-entity search.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
+-- | Database queries for cross-entity search.
 module HydraWeb.DB.Search
-  ( SearchResults (..)
-  , search
+  ( SearchResults (..),
+    search,
+
     -- * Validation helpers (exported for testing)
-  , isValidQuery
-  , escapeLike
-  ) where
+    isValidQuery,
+    escapeLike,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Database.PostgreSQL.Simple (Connection, query, execute_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, execute_, query, withTransaction)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-
-import HydraWeb.DB.Util (escapeLike)
-import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Models.Build (Build)
 import HydraWeb.DB.Builds (scanBuildListRow)
+import HydraWeb.DB.Util (escapeLike)
+import HydraWeb.Models.Build (Build)
+import HydraWeb.Models.Project (Jobset (..), Project (..))
 
 -- | Results from a cross-entity search.
 data SearchResults = SearchResults
-  { srProjects  :: ![Project]   -- ^ Projects matching by name/displayname/description
-  , srJobsets   :: ![Jobset]    -- ^ Jobsets matching by name/description
-  , srBuilds    :: ![Build]     -- ^ Builds matching by output path
-  , srBuildsDrv :: ![Build]     -- ^ Builds matching by derivation path
+  { -- | Projects matching by name/displayname/description
+    srProjects :: ![Project],
+    -- | Jobsets matching by name/description
+    srJobsets :: ![Jobset],
+    -- | Builds matching by output path
+    srBuilds :: ![Build],
+    -- | Builds matching by derivation path
+    srBuildsDrv :: ![Build]
   }
 
 -- | Perform a cross-entity search with input validation.
@@ -45,18 +50,29 @@ search conn q rawLimit
       _ <- execute_ conn [sql|SET LOCAL statement_timeout = 20000|]
 
       -- Search projects.
-      prows <- query conn [sql|
+      prows <-
+        query
+          conn
+          [sql|
         SELECT name, displayname, description, enabled, hidden, owner, homepage
         FROM projects
         WHERE hidden = 0
           AND (name ILIKE ? OR displayname ILIKE ? OR description ILIKE ?)
         ORDER BY name
-      |] (likePattern, likePattern, likePattern)
-      let projects = map (\(n, dn, d, e, h, o, hp) ->
-            Project n dn d e h o hp Nothing Nothing Nothing []) prows
+      |]
+          (likePattern, likePattern, likePattern)
+      let projects =
+            map
+              ( \(n, dn, d, e, h, o, hp) ->
+                  Project n dn d e h o hp Nothing Nothing Nothing []
+              )
+              prows
 
       -- Search jobsets.
-      jrows <- query conn [sql|
+      jrows <-
+        query
+          conn
+          [sql|
         SELECT j.name, j.id, j.project, j.description,
                j.enabled, j.hidden, j.type, j.flake
         FROM jobsets j
@@ -64,11 +80,15 @@ search conn q rawLimit
         WHERE p.hidden = 0 AND j.hidden = 0
           AND (j.name ILIKE ? OR j.description ILIKE ?)
         ORDER BY j.project, j.name
-      |] (likePattern, likePattern)
+      |]
+          (likePattern, likePattern)
       let jobsets = map scanSearchJobset jrows
 
       -- Search builds by output path (excludes hidden projects/jobsets).
-      brows <- query conn [sql|
+      brows <-
+        query
+          conn
+          [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -82,11 +102,15 @@ search conn q rawLimit
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
-      |] (likePattern, limit)
+      |]
+          (likePattern, limit)
       let builds = map scanBuildListRow brows
 
       -- Search builds by derivation path (excludes hidden projects/jobsets).
-      drows <- query conn [sql|
+      drows <-
+        query
+          conn
+          [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -99,31 +123,61 @@ search conn q rawLimit
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC
         LIMIT ?
-      |] (likePattern, limit)
+      |]
+          (likePattern, limit)
       let buildsDrv = map scanBuildListRow drows
 
-      pure $ Just SearchResults
-        { srProjects  = projects
-        , srJobsets   = jobsets
-        , srBuilds    = builds
-        , srBuildsDrv = buildsDrv
-        }
+      pure $
+        Just
+          SearchResults
+            { srProjects = projects,
+              srJobsets = jobsets,
+              srBuilds = builds,
+              srBuildsDrv = buildsDrv
+            }
 
 -- | Validate search query: alphanumeric, common path/name chars, spaces, colons.
 -- Since queries are parameterized (not interpolated), these characters are safe.
 isValidQuery :: Text -> Bool
 isValidQuery t = not (Text.null (Text.strip t)) && Text.all isAllowed t
   where
-    isAllowed c = c >= 'a' && c <= 'z'
-              || c >= 'A' && c <= 'Z'
-              || c >= '0' && c <= '9'
-              || c == '_' || c == '-' || c == '/' || c == '.'
-              || c == ' ' || c == ':'
+    isAllowed c =
+      c >= 'a' && c <= 'z'
+        || c >= 'A' && c <= 'Z'
+        || c >= '0' && c <= '9'
+        || c == '_'
+        || c == '-'
+        || c == '/'
+        || c == '.'
+        || c == ' '
+        || c == ':'
 
 -- | Scan a search jobset row (partial fields).
 scanSearchJobset :: (Text, Int, Text, Maybe Text, Int, Int, Int, Maybe Text) -> Jobset
 scanSearchJobset (n, jid, p, d, e, h, t, f) =
-  Jobset n jid p d Nothing Nothing
-         Nothing Nothing Nothing Nothing
-         e 0 h "" 0 0 0 Nothing Nothing t f 0 0 0 0
-
+  Jobset
+    n
+    jid
+    p
+    d
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    e
+    0
+    h
+    ""
+    0
+    0
+    0
+    Nothing
+    Nothing
+    t
+    f
+    0
+    0
+    0
+    0

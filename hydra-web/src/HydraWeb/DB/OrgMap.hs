@@ -1,69 +1,83 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Org/repo mapping queries for the gf_org_project_map table.
--- Maps Hydra project names to GitHub org/repo pairs, either auto-detected
--- from flake URLs or manually overridden via admin panel.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Org/repo mapping queries for the gf_org_project_map table.
+-- Maps Hydra project names to GitHub org/repo pairs, either auto-detected
+-- from flake URLs or manually overridden via admin panel.
 module HydraWeb.DB.OrgMap
-  ( OrgMapping (..)
-  , lookupByOrgRepo
-  , lookupByProject
-  , listMappings
-  , autoDetectMappings
-  , upsertMapping
+  ( OrgMapping (..),
+    lookupByOrgRepo,
+    lookupByProject,
+    listMappings,
+    autoDetectMappings,
+    upsertMapping,
+
     -- * Parsing helpers (exported for testing)
-  , parseProjectName
-  , parseGitHubFlake
-  ) where
+    parseProjectName,
+    parseGitHubFlake,
+  )
+where
 
 import Control.Exception (SomeException, catch)
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Database.PostgreSQL.Simple (Connection, query, query_, execute, Only (..))
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 
 -- | An org/repo mapping record.
 data OrgMapping = OrgMapping
-  { omProjectName  :: !Text
-  , omOrgName      :: !Text
-  , omRepoName     :: !Text
-  , omAutoDetected :: !Bool
-  , omCreatedAt    :: !Int
-  } deriving (Show, Eq)
+  { omProjectName :: !Text,
+    omOrgName :: !Text,
+    omRepoName :: !Text,
+    omAutoDetected :: !Bool,
+    omCreatedAt :: !Int
+  }
+  deriving (Show, Eq)
 
 -- | Lookup the project name for a given org/repo pair.
 -- Returns Nothing if no mapping exists.
 lookupByOrgRepo :: Connection -> Text -> Text -> IO (Maybe Text)
 lookupByOrgRepo conn org repo = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT project_name FROM gf_org_project_map
     WHERE org_name = ? AND repo_name = ?
-  |] (org, repo)
+  |]
+      (org, repo)
   case rows of
-    []         -> pure Nothing
-    (Only p:_) -> pure (Just p)
+    [] -> pure Nothing
+    (Only p : _) -> pure (Just p)
 
 -- | Lookup the org/repo pair for a given project name.
 -- Returns Nothing if no mapping exists.
 lookupByProject :: Connection -> Text -> IO (Maybe (Text, Text))
 lookupByProject conn projectName = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT org_name, repo_name FROM gf_org_project_map
     WHERE project_name = ?
-  |] (Only projectName)
+  |]
+      (Only projectName)
   case rows of
-    []          -> pure Nothing
-    ((o, r):_)  -> pure (Just (o, r))
+    [] -> pure Nothing
+    ((o, r) : _) -> pure (Just (o, r))
 
 -- | List all org/repo mappings ordered by org then repo.
 listMappings :: Connection -> IO [OrgMapping]
 listMappings conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT project_name, org_name, repo_name, auto_detected,
            extract(epoch from created_at)::int
     FROM gf_org_project_map
@@ -83,29 +97,42 @@ listMappings conn = do
 autoDetectMappings :: Connection -> IO ()
 autoDetectMappings conn = do
   -- Phase 1: Parse flake URIs from jobsets.
-  flakeRows <- query_ conn [sql|
+  flakeRows <-
+    query_
+      conn
+      [sql|
     SELECT DISTINCT j.project, j.flake
     FROM jobsets j
     JOIN projects p ON p.name = j.project
     WHERE j.flake IS NOT NULL AND j.flake LIKE 'github:%'
       AND p.enabled <> 0
-  |] `catch` (\(_ :: SomeException) -> pure [])
+  |]
+      `catch` (\(_ :: SomeException) -> pure [])
   mapM_ processFlakeRow flakeRows
 
   -- Phase 2: For projects without mappings, try parsing the project name
   -- using known org names from gf_github_installations.  This avoids the
   -- ambiguity of a naive first-dash split for orgs like "input-output-hk".
-  knownOrgs <- map (\(Only o) -> o) <$>
-    (query_ conn [sql|
+  knownOrgs <-
+    map (\(Only o) -> o)
+      <$> ( query_
+              conn
+              [sql|
       SELECT org_name FROM gf_github_installations
-    |] `catch` (\(_ :: SomeException) -> pure []))
-  unmapped <- query_ conn [sql|
+    |]
+              `catch` (\(_ :: SomeException) -> pure [])
+          )
+  unmapped <-
+    query_
+      conn
+      [sql|
     SELECT p.name FROM projects p
     WHERE p.enabled <> 0
       AND NOT EXISTS (
       SELECT 1 FROM gf_org_project_map m WHERE m.project_name = p.name
     )
-  |] `catch` (\(_ :: SomeException) -> pure [])
+  |]
+      `catch` (\(_ :: SomeException) -> pure [])
   mapM_ (processNameRow knownOrgs) unmapped
   where
     processFlakeRow :: (Text, Text) -> IO ()
@@ -135,8 +162,10 @@ parseProjectName knownOrgs name =
     -- Fallback: split on first dash for unknown orgs.
     Nothing -> case Text.breakOn "-" name of
       (org, rest)
-        | not (Text.null org), let repo = Text.drop 1 rest
-        , not (Text.null repo) -> Just (org, repo)
+        | not (Text.null org),
+          let repo = Text.drop 1 rest,
+          not (Text.null repo) ->
+            Just (org, repo)
         | otherwise -> Nothing
   where
     tryOrg :: Text -> Maybe (Text, Text)
@@ -155,15 +184,19 @@ parseGitHubFlake flake = do
   let pathPart = fst $ Text.breakOn "?" rest
   -- Split on "/" to get org/repo[/ref].
   case Text.splitOn "/" pathPart of
-    (org:repo:_) | not (Text.null org) && not (Text.null repo) ->
-      Just (org, repo)
+    (org : repo : _)
+      | not (Text.null org) && not (Text.null repo) ->
+          Just (org, repo)
     _ -> Nothing
 
 -- | Upsert an org/repo mapping. Manual overrides (auto_detected=false)
 -- are not replaced by auto-detection.
 upsertMapping :: Connection -> Text -> Text -> Text -> Bool -> IO ()
 upsertMapping conn projectName org repo autoDetected = do
-  _ <- execute conn [sql|
+  _ <-
+    execute
+      conn
+      [sql|
     INSERT INTO gf_org_project_map (project_name, org_name, repo_name, auto_detected)
     VALUES (?, ?, ?, ?)
     ON CONFLICT (project_name)
@@ -171,6 +204,6 @@ upsertMapping conn projectName org repo autoDetected = do
                   repo_name = EXCLUDED.repo_name,
                   auto_detected = EXCLUDED.auto_detected
     WHERE gf_org_project_map.auto_detected = true OR EXCLUDED.auto_detected = false
-  |] (projectName, org, repo, autoDetected)
+  |]
+      (projectName, org, repo, autoDetected)
   pure ()
-

@@ -1,12 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Human-readable duration formatting.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Human-readable duration formatting.
 module HydraLib.Data.Duration
-  ( humanReadableDuration
-  ) where
+  ( humanReadableDuration,
+  )
+where
 
 import qualified Data.Duration as Duration
 import Data.String.Conversions (cs)

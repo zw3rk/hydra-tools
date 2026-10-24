@@ -143,7 +143,6 @@ sseApp cache subMap idRef req respond = do
         responseLBS status200 jsonHeaders $
           Aeson.encode $
             Aeson.object ["status" Aeson..= ("ok" :: Text)]
-
     -- Everything else
     _ ->
       respond $

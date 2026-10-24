@@ -1,25 +1,25 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Queue, queue-summary, machines, and steps page HTML.
--- Queue and machines pages now use SSE for live updates.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Queue, queue-summary, machines, and steps page HTML.
+-- Queue and machines pages now use SSE for live updates.
 module HydraWeb.View.Pages.Queue
-  ( queuePage
-  , queueSummaryPage
-  , machinesPage
-  , stepsPage
-  ) where
+  ( queuePage,
+    queueSummaryPage,
+    machinesPage,
+    stepsPage,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Lucid
-
 import HydraWeb.Models.Build (Build (..), BuildStep (..), stepStatusText)
-import HydraWeb.Models.Queue (QueueSummary (..), SystemQueueRow (..), ActiveStep (..))
+import HydraWeb.Models.Queue (ActiveStep (..), QueueSummary (..), SystemQueueRow (..))
 import HydraWeb.View.Components
+import Lucid
 
 -- | Render the full queue list page.
 queuePage :: Text -> [Build] -> Int -> Html ()
@@ -57,22 +57,28 @@ queueSummaryPage bp summary systems total = do
   h2_ "By Jobset"
   table_ $ do
     thead_ $ tr_ $ do
-      th_ "Jobset"; th_ [class_ "num"] "Queued"
-      th_ "Oldest"; th_ "Newest"
+      th_ "Jobset"
+      th_ [class_ "num"] "Queued"
+      th_ "Oldest"
+      th_ "Newest"
     tbody_ $ mapM_ renderSummaryRow summary
 
   h2_ "By System"
   table_ $ do
     thead_ $ tr_ $ th_ "System" >> th_ [class_ "num"] "Count"
-    tbody_ $ mapM_ (\s -> tr_ $ do
-      td_ $ toHtml (sqSystem s)
-      td_ [class_ "num"] $ toHtml (showT (sqCount s))
-      ) systems
+    tbody_ $
+      mapM_
+        ( \s -> tr_ $ do
+            td_ $ toHtml (sqSystem s)
+            td_ [class_ "num"] $ toHtml (showT (sqCount s))
+        )
+        systems
   where
     renderSummaryRow :: QueueSummary -> Html ()
     renderSummaryRow s = tr_ $ do
-      td_ $ a_ [href_ (jobsetURL bp (qsProject s) (qsJobset s))]
-        $ toHtml (qsProject s <> ":" <> qsJobset s)
+      td_ $
+        a_ [href_ (jobsetURL bp (qsProject s) (qsJobset s))] $
+          toHtml (qsProject s <> ":" <> qsJobset s)
       td_ [class_ "num"] $ toHtml (showT (qsQueued s))
       td_ $ toHtml (fmtTime (qsOldest s))
       td_ $ toHtml (fmtTime (qsNewest s))
@@ -88,10 +94,14 @@ machinesContent :: Text -> [ActiveStep] -> Html ()
 machinesContent bp steps =
   case steps of
     [] -> p_ "No active build steps."
-    _  -> table_ $ do
+    _ -> table_ $ do
       thead_ $ tr_ $ do
-        th_ "Machine"; th_ "Build"; th_ "Step"; th_ "System"
-        th_ "Job"; th_ "Running"
+        th_ "Machine"
+        th_ "Build"
+        th_ "Step"
+        th_ "System"
+        th_ "Job"
+        th_ "Running"
       tbody_ $ mapM_ renderActiveStep steps
   where
     renderActiveStep :: ActiveStep -> Html ()
@@ -114,8 +124,13 @@ stepsPage bp steps page _perPage = do
   h1_ "Latest Build Steps"
   table_ $ do
     thead_ $ tr_ $ do
-      th_ "Build"; th_ "#"; th_ ""; th_ "Machine"
-      th_ "System"; th_ "Duration"; th_ "Finished"
+      th_ "Build"
+      th_ "#"
+      th_ ""
+      th_ "Machine"
+      th_ "System"
+      th_ "Duration"
+      th_ "Finished"
     tbody_ $ mapM_ renderRecentStep steps
 
   -- Simple prev/next pagination.
@@ -136,5 +151,5 @@ stepsPage bp steps page _perPage = do
         (Just start, Just stop) -> toHtml (fmtDuration (stop - start))
         _ -> pure ()
       td_ $ case stepStopTime s of
-        Just t  -> toHtml (fmtTime t)
+        Just t -> toHtml (fmtTime t)
         Nothing -> pure ()

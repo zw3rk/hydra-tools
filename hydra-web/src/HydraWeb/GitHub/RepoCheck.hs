@@ -1,17 +1,18 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Background worker that checks GitHub repo visibility (public/private)
 -- and caches the result in @gf_repo_visibility_cache@.
 --
 -- Uses GitHub App installation tokens to query @GET /repos/{owner}/{repo}@.
 -- Runs periodically to keep the cache fresh.
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module HydraWeb.GitHub.RepoCheck
-  ( repoVisibilityLoop
-  ) where
+  ( repoVisibilityLoop,
+  )
+where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
@@ -26,16 +27,20 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.REST.Auth (fromToken)
-import Network.HTTP.Client (Manager, Request (..), httpLbs, parseRequest_,
-                            responseBody, responseStatus)
-import Network.HTTP.Types (statusCode)
-import System.IO (hPutStrLn, stderr)
-
 import HydraLib.GitHub.Client (fetchAppInstallationToken, gitHubApiVersion)
 import HydraLib.GitHub.Types (TokenLease (..))
-
 import HydraWeb.DB.Installations (Installation (..), listInstallations)
 import HydraWeb.DB.RepoVisibility (allProjectRepos, upsertRepoVisibility)
+import Network.HTTP.Client
+  ( Manager,
+    Request (..),
+    httpLbs,
+    parseRequest_,
+    responseBody,
+    responseStatus,
+  )
+import Network.HTTP.Types (statusCode)
+import System.IO (hPutStrLn, stderr)
 
 -- | Background loop that refreshes the repo visibility cache.
 -- Checks all repos in @gf_org_project_map@ against the GitHub API.
@@ -50,9 +55,12 @@ repoVisibilityLoop pool mgr interval ghAppKeyFile ghUserAgent ghAppId = do
       result <- try (refreshAll pool mgr ghAppKeyFile ghUserAgent ghAppId)
       case result of
         Right (checked, errors) ->
-          hPutStrLn stderr $ "[repo-visibility] Refresh complete: "
-            <> show checked <> " repo(s) checked, "
-            <> show errors <> " error(s)"
+          hPutStrLn stderr $
+            "[repo-visibility] Refresh complete: "
+              <> show checked
+              <> " repo(s) checked, "
+              <> show errors
+              <> " error(s)"
         Left (e :: SomeException) ->
           hPutStrLn stderr $ "[repo-visibility] ERROR: " <> show e
       loop
@@ -66,8 +74,11 @@ refreshAll pool mgr ghAppKeyFile ghUserAgent ghAppId = withResource pool $ \conn
 
   -- Get enabled installations from DB for token generation.
   installations <- listInstallations conn
-  let enabledInstalls = [(instOrgName i, instInstallationId i)
-                        | i <- installations, instEnabled i]
+  let enabledInstalls =
+        [ (instOrgName i, instInstallationId i)
+        | i <- installations,
+          instEnabled i
+        ]
 
   -- Fetch installation tokens for each org (one API call per org).
   orgTokens <- fetchOrgTokens ghAppKeyFile ghUserAgent ghAppId enabledInstalls
@@ -83,19 +94,27 @@ refreshAll pool mgr ghAppKeyFile ghUserAgent ghAppId = withResource pool $ \conn
 fetchOrgTokens :: FilePath -> ByteString -> Int -> [(Text, Int)] -> IO [(Text, ByteString)]
 fetchOrgTokens ghAppKeyFile ghUserAgent ghAppId installs = do
   let ghEndpoint = "https://api.github.com" :: Text
-  results <- mapM (\(org, installId) -> do
-    result <- try (fetchAppInstallationToken ghEndpoint ghAppId ghAppKeyFile ghUserAgent installId)
-    case result of
-      Right lease -> pure (Just (org, fromToken (HydraLib.GitHub.Types.token lease)))
-      Left (e :: SomeException) -> do
-        hPutStrLn stderr $ "[repo-visibility] Failed to get token for " <> Text.unpack org <> ": " <> show e
-        pure Nothing
-    ) installs
+  results <-
+    mapM
+      ( \(org, installId) -> do
+          result <- try (fetchAppInstallationToken ghEndpoint ghAppId ghAppKeyFile ghUserAgent installId)
+          case result of
+            Right lease -> pure (Just (org, fromToken (HydraLib.GitHub.Types.token lease)))
+            Left (e :: SomeException) -> do
+              hPutStrLn stderr $ "[repo-visibility] Failed to get token for " <> Text.unpack org <> ": " <> show e
+              pure Nothing
+      )
+      installs
   pure [x | Just x <- results]
 
 -- | Check a single repo's visibility via GitHub API and store in cache.
-checkAndStore :: Connection -> Manager -> ByteString -> [(Text, ByteString)]
-             -> (Text, Text) -> IO Bool
+checkAndStore ::
+  Connection ->
+  Manager ->
+  ByteString ->
+  [(Text, ByteString)] ->
+  (Text, Text) ->
+  IO Bool
 checkAndStore conn mgr ghUserAgent orgTokens (org, repo) =
   case find (\(o, _) -> o == org) orgTokens of
     Nothing -> do
@@ -109,12 +128,20 @@ checkAndStore conn mgr ghUserAgent orgTokens (org, repo) =
           upsertRepoVisibility conn org repo isPublic
           pure True
         Right Nothing -> do
-          hPutStrLn stderr $ "[repo-visibility] Could not parse visibility for "
-            <> Text.unpack org <> "/" <> Text.unpack repo
+          hPutStrLn stderr $
+            "[repo-visibility] Could not parse visibility for "
+              <> Text.unpack org
+              <> "/"
+              <> Text.unpack repo
           pure False
         Left (e :: SomeException) -> do
-          hPutStrLn stderr $ "[repo-visibility] Error checking "
-            <> Text.unpack org <> "/" <> Text.unpack repo <> ": " <> show e
+          hPutStrLn stderr $
+            "[repo-visibility] Error checking "
+              <> Text.unpack org
+              <> "/"
+              <> Text.unpack repo
+              <> ": "
+              <> show e
           pure False
 
 -- | Call @GET /repos/{owner}/{repo}@ and parse the @private@ field.
@@ -122,24 +149,30 @@ checkAndStore conn mgr ghUserAgent orgTokens (org, repo) =
 checkRepo :: Manager -> ByteString -> ByteString -> Text -> Text -> IO (Maybe Bool)
 checkRepo mgr ghUserAgent authHeader owner repo = do
   let url = "https://api.github.com/repos/" <> Text.unpack owner <> "/" <> Text.unpack repo
-      req = (parseRequest_ url)
-        { requestHeaders =
-            [ ("Authorization", authHeader)
-            , ("Accept", "application/vnd.github+json")
-            , ("User-Agent", ghUserAgent)
-            , ("X-GitHub-Api-Version", TE.encodeUtf8 $ TE.decodeUtf8 gitHubApiVersion)
-            ]
-        }
+      req =
+        (parseRequest_ url)
+          { requestHeaders =
+              [ ("Authorization", authHeader),
+                ("Accept", "application/vnd.github+json"),
+                ("User-Agent", ghUserAgent),
+                ("X-GitHub-Api-Version", TE.encodeUtf8 $ TE.decodeUtf8 gitHubApiVersion)
+              ]
+          }
   resp <- httpLbs req mgr
   let status = statusCode (responseStatus resp)
   if status == 200
     then case eitherDecode (responseBody resp) of
-      Right val -> pure $ parseMaybe (withObject "repo" $ \o -> do
-        private <- o .: "private"
-        pure (not (private :: Bool))
-        ) val
+      Right val ->
+        pure $
+          parseMaybe
+            ( withObject "repo" $ \o -> do
+                private <- o .: "private"
+                pure (not (private :: Bool))
+            )
+            val
       Left _ -> pure Nothing
-    else if status == 404
-      -- 404 means we can't see the repo → treat as private.
-      then pure (Just False)
-      else pure Nothing
+    else
+      if status == 404
+        -- 404 means we can't see the repo → treat as private.
+        then pure (Just False)
+        else pure Nothing

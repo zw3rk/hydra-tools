@@ -1,12 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Shared database utility functions.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Shared database utility functions.
 module HydraWeb.DB.Util
-  ( escapeLike
-  ) where
+  ( escapeLike,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -15,7 +16,7 @@ import qualified Data.Text as Text
 escapeLike :: Text -> Text
 escapeLike = Text.concatMap esc
   where
-    esc '%'  = "\\%"
-    esc '_'  = "\\_"
+    esc '%' = "\\%"
+    esc '_' = "\\_"
     esc '\\' = "\\\\"
-    esc c    = Text.singleton c
+    esc c = Text.singleton c
