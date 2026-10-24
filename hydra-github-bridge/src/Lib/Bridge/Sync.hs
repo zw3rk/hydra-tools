@@ -27,6 +27,7 @@ module Lib.Bridge.Sync
     reconcileProject,
     fetchOpenPRs,
     fetchEnabledPRJobsets,
+    fetchOrgProjectMappings,
     sourceRefreshTarget,
   )
 where
