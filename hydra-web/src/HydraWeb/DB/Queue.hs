@@ -1,40 +1,43 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database queries for queue status, running builds, and navigation counts.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Database queries for queue status, running builds, and navigation counts.
 module HydraWeb.DB.Queue
-  ( queueCount
-  , runningCount
-  , activeStepCount
-  , navCounts
-  , queueSummary
-  , systemQueueSummary
-  , activeSteps
-  , recentSteps
-  , newsItems
-  ) where
+  ( queueCount,
+    runningCount,
+    activeStepCount,
+    navCounts,
+    queueSummary,
+    systemQueueSummary,
+    activeSteps,
+    recentSteps,
+    newsItems,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Database.PostgreSQL.Simple (Connection, query, query_, Only (..))
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
-
-import HydraWeb.Models.Queue
+import Database.PostgreSQL.Simple.Types ((:.) ((:.)))
 import HydraWeb.DB.Builds (scanStepRow)
 import HydraWeb.DB.Evals (runningEvalsCount)
 import HydraWeb.Models.Build (BuildStep)
+import HydraWeb.Models.Queue
 
 -- | Count of unfinished builds in the queue.
 -- Excludes builds from hidden projects/jobsets.
 queueCount :: Connection -> IO Int
 queueCount conn = do
-  [Only n] <- query_ conn [sql|
+  [Only n] <-
+    query_
+      conn
+      [sql|
     SELECT count(*)
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
@@ -48,7 +51,10 @@ queueCount conn = do
 -- Excludes steps from hidden projects/jobsets.
 runningCount :: Connection -> IO Int
 runningCount conn = do
-  [Only n] <- query_ conn [sql|
+  [Only n] <-
+    query_
+      conn
+      [sql|
     SELECT count(DISTINCT s.build)
     FROM buildsteps s
     JOIN builds b ON s.build = b.id
@@ -62,21 +68,25 @@ runningCount conn = do
 -- | Batched navigation counts: queue size, running steps, bridge pending, running evals.
 navCounts :: Connection -> IO NavCounts
 navCounts conn = do
-  queued  <- queueCount conn
+  queued <- queueCount conn
   running <- runningCount conn
   pending <- bridgePending conn
-  evals   <- runningEvalsCount conn
-  pure NavCounts
-    { ncQueued        = queued
-    , ncRunning       = running
-    , ncBridgePending = pending
-    , ncRunningEvals  = evals
-    }
+  evals <- runningEvalsCount conn
+  pure
+    NavCounts
+      { ncQueued = queued,
+        ncRunning = running,
+        ncBridgePending = pending,
+        ncRunningEvals = evals
+      }
 
 -- | Count of pending bridge notifications. Returns 0 if the table doesn't exist.
 bridgePending :: Connection -> IO Int
 bridgePending conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT count(*)
     FROM pg_catalog.pg_tables
     WHERE schemaname = 'public' AND tablename = 'github_status_pending'
@@ -84,18 +94,24 @@ bridgePending conn = do
   case rows of
     [Only (0 :: Int)] -> pure 0
     _ -> do
-      r <- query_ conn [sql|
+      r <-
+        query_
+          conn
+          [sql|
         SELECT count(*) FROM github_status_pending WHERE sent IS NULL AND tries < 5
       |]
       case r of
         [Only n] -> pure n
-        _        -> pure 0
+        _ -> pure 0
 
 -- | Queue grouped by jobset with oldest/newest timestamps.
 -- Excludes builds from hidden projects/jobsets.
 queueSummary :: Connection -> IO [QueueSummary]
 queueSummary conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT j.project, j.name, count(*) AS queued,
            min(b.timestamp) AS oldest, max(b.timestamp) AS newest
     FROM builds b
@@ -112,7 +128,10 @@ queueSummary conn = do
 -- Excludes builds from hidden projects/jobsets.
 systemQueueSummary :: Connection -> IO [SystemQueueRow]
 systemQueueSummary conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT b.system, count(*) AS c
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
@@ -128,7 +147,10 @@ systemQueueSummary conn = do
 -- Excludes steps from hidden projects/jobsets.
 activeSteps :: Connection -> IO [ActiveStep]
 activeSteps conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT s.build, s.stepnr, s.system, s.drvpath, s.machine,
            s.starttime, j.project, j.name, b.job, s.busy
     FROM buildsteps s
@@ -139,14 +161,21 @@ activeSteps conn = do
       AND j.hidden = 0 AND p.hidden = 0
     ORDER BY s.machine, s.stepnr
   |]
-  pure $ map (\(b, nr, sys, drv, m, st, p, j, job, busy) ->
-    ActiveStep b nr sys drv m st p j job busy) rows
+  pure $
+    map
+      ( \(b, nr, sys, drv, m, st, p, j, job, busy) ->
+          ActiveStep b nr sys drv m st p j job busy
+      )
+      rows
 
 -- | Count of currently-running build steps (for SSE fragments).
 -- Excludes steps from hidden projects/jobsets.
 activeStepCount :: Connection -> IO Int
 activeStepCount conn = do
-  [Only n] <- query_ conn [sql|
+  [Only n] <-
+    query_
+      conn
+      [sql|
     SELECT count(*)
     FROM buildsteps s
     JOIN builds b ON s.build = b.id
@@ -163,7 +192,10 @@ activeStepCount conn = do
 -- (repo privacy) filtering via 'filterByProjectAccess'.
 recentSteps :: Connection -> Int -> Int -> IO [(Text, BuildStep)]
 recentSteps conn offset limit = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT j.project,
            s.build, s.stepnr, s.type, s.drvpath, s.busy, s.status, s.errormsg,
            s.starttime, s.stoptime, s.machine, s.system,
@@ -176,22 +208,30 @@ recentSteps conn offset limit = do
       AND j.hidden = 0 AND p.hidden = 0
     ORDER BY s.stoptime DESC
     LIMIT ? OFFSET ?
-  |] (limit, offset)
+  |]
+      (limit, offset)
   pure $ map scanProjectStep rows
 
 -- | Scan a recent-step row that includes a project name prefix column.
-scanProjectStep :: Only Text :. ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
-                                 :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool) )
-                -> (Text, BuildStep)
+scanProjectStep ::
+  Only Text
+    :. ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
+           :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool)
+       ) ->
+  (Text, BuildStep)
 scanProjectStep (Only proj :. stepRow) = (proj, scanStepRow stepRow)
 
 -- | Recent news items for the overview page.
 newsItems :: Connection -> Int -> IO [NewsItem]
 newsItems conn limit = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT id, contents, createtime, author
     FROM newsitems
     ORDER BY createtime DESC
     LIMIT ?
-  |] (Only limit)
+  |]
+      (Only limit)
   pure $ map (\(i, c, ct, a) -> NewsItem i c ct a) rows

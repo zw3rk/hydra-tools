@@ -1,57 +1,65 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Topic-based broadcast hub for Server-Sent Events.
 -- Uses STM for thread-safe subscriber management. Each subscriber declares
 -- interest in specific topics; broadcasts are routed only to matching
 -- subscribers. Every subscriber auto-receives TopicGlobal for nav updates.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.SSE.Hub
-  ( Hub
-  , Topic (..)
-  , newHub
-  , subscribeTopics
-  , unsubscribe
-  , broadcastTo
-  ) where
+  ( Hub,
+    Topic (..),
+    newHub,
+    subscribeTopics,
+    unsubscribe,
+    broadcastTo,
+  )
+where
 
 import Control.Concurrent.STM
 import qualified Data.ByteString as BS
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
 -- | Topics for SSE routing. Subscribers declare which topics they want.
 data Topic
-  = TopicGlobal       -- ^ Nav count updates (auto-subscribed for everyone)
-  | TopicBridges      -- ^ Bridge status updates
-  | TopicQueue        -- ^ Queue list updates
-  | TopicMachines     -- ^ Active steps / machine updates
-  | TopicRunningEvals -- ^ Running evaluations updates
-  | TopicProject !Text   -- ^ Per-project updates
-  | TopicJobset !Text !Text -- ^ Per-jobset updates (project, jobset)
+  = -- | Nav count updates (auto-subscribed for everyone)
+    TopicGlobal
+  | -- | Bridge status updates
+    TopicBridges
+  | -- | Queue list updates
+    TopicQueue
+  | -- | Active steps / machine updates
+    TopicMachines
+  | -- | Running evaluations updates
+    TopicRunningEvals
+  | -- | Per-project updates
+    TopicProject !Text
+  | -- | Per-jobset updates (project, jobset)
+    TopicJobset !Text !Text
   deriving (Eq, Ord, Show)
 
 -- | A subscriber with their message queue and topic subscriptions.
 data Subscriber = Subscriber
-  { subQueue  :: !(TBQueue BS.ByteString)
-  , subTopics :: !(Set Topic)
+  { subQueue :: !(TBQueue BS.ByteString),
+    subTopics :: !(Set Topic)
   }
 
 -- | Broadcast hub mapping subscriber IDs to their subscriptions.
 data Hub = Hub
-  { hubNextId :: !(TVar Int)
-  , hubSubs   :: !(TVar (Map.Map Int Subscriber))
+  { hubNextId :: !(TVar Int),
+    hubSubs :: !(TVar (Map.Map Int Subscriber))
   }
 
 -- | Create an empty broadcast hub.
 newHub :: IO Hub
 newHub = do
   nextId <- newTVarIO 0
-  subs   <- newTVarIO Map.empty
-  pure Hub { hubNextId = nextId, hubSubs = subs }
+  subs <- newTVarIO Map.empty
+  pure Hub {hubNextId = nextId, hubSubs = subs}
 
 -- | Register a subscriber interested in specific topics.
 -- TopicGlobal is always included automatically.
@@ -66,8 +74,9 @@ subscribeTopics hub topics = atomically $ do
 
 -- | Remove a subscriber by ID. Safe to call multiple times.
 unsubscribe :: Hub -> Int -> IO ()
-unsubscribe hub sid = atomically $
-  modifyTVar' (hubSubs hub) (Map.delete sid)
+unsubscribe hub sid =
+  atomically $
+    modifyTVar' (hubSubs hub) (Map.delete sid)
 
 -- | Broadcast a message only to subscribers of a specific topic.
 broadcastTo :: Hub -> Topic -> BS.ByteString -> IO ()

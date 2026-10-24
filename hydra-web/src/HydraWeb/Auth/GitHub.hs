@@ -1,47 +1,56 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | GitHub OAuth 2.0 flow: authorization URL, code exchange, user fetch.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | GitHub OAuth 2.0 flow: authorization URL, code exchange, user fetch.
 module HydraWeb.Auth.GitHub
-  ( GitHubUser (..)
-  , generateOAuthState
-  , authorizeURL
-  , exchangeCode
-  , fetchGitHubUser
-  ) where
+  ( GitHubUser (..),
+    generateOAuthState,
+    authorizeURL,
+    exchangeCode,
+    fetchGitHubUser,
+  )
+where
 
 import Crypto.Random (getRandomBytes)
 import Data.Aeson (FromJSON (..), Value (..), decode, withObject, (.:), (.:?))
+import qualified Data.Aeson.Key as K
+import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
-import qualified Data.Aeson.KeyMap as KM
-import qualified Data.Aeson.Key as K
-import Network.HTTP.Client
-  (Manager, Request (..), parseRequest, httpLbs, responseBody,
-   responseStatus, urlEncodedBody)
-import Network.HTTP.Types (statusCode)
 import HydraWeb.Auth.Session (bytesToHex)
+import Network.HTTP.Client
+  ( Manager,
+    Request (..),
+    httpLbs,
+    parseRequest,
+    responseBody,
+    responseStatus,
+    urlEncodedBody,
+  )
+import Network.HTTP.Types (statusCode)
 
 -- | User info returned by GitHub's /user endpoint.
 data GitHubUser = GitHubUser
-  { ghuId        :: !Int
-  , ghuLogin     :: !Text
-  , ghuName      :: !(Maybe Text)
-  , ghuEmail     :: !(Maybe Text)
-  , ghuAvatarURL :: !(Maybe Text)
-  } deriving (Show)
+  { ghuId :: !Int,
+    ghuLogin :: !Text,
+    ghuName :: !(Maybe Text),
+    ghuEmail :: !(Maybe Text),
+    ghuAvatarURL :: !(Maybe Text)
+  }
+  deriving (Show)
 
 instance FromJSON GitHubUser where
-  parseJSON = withObject "GitHubUser" $ \v -> GitHubUser
-    <$> v .:  "id"
-    <*> v .:  "login"
-    <*> v .:? "name"
-    <*> v .:? "email"
-    <*> v .:? "avatar_url"
+  parseJSON = withObject "GitHubUser" $ \v ->
+    GitHubUser
+      <$> v .: "id"
+      <*> v .: "login"
+      <*> v .:? "name"
+      <*> v .:? "email"
+      <*> v .:? "avatar_url"
 
 -- | Generate a 128-bit CSRF state token for OAuth, hex-encoded.
 generateOAuthState :: IO Text
@@ -53,10 +62,13 @@ generateOAuthState = do
 authorizeURL :: Text -> Text -> Text -> Text
 authorizeURL clientId callbackURL state =
   "https://github.com/login/oauth/authorize"
-  <> "?client_id=" <> clientId
-  <> "&redirect_uri=" <> callbackURL
-  <> "&state=" <> state
-  <> "&scope=read:org"
+    <> "?client_id="
+    <> clientId
+    <> "&redirect_uri="
+    <> callbackURL
+    <> "&state="
+    <> state
+    <> "&scope=read:org"
 
 -- | Exchange an authorization code for an access token.
 -- The redirect_uri MUST match the one sent during authorization;
@@ -64,15 +76,16 @@ authorizeURL clientId callbackURL state =
 exchangeCode :: Manager -> Text -> Text -> Text -> Text -> IO (Maybe Text)
 exchangeCode mgr clientId clientSecret code redirectUri = do
   initReq <- parseRequest "https://github.com/login/oauth/access_token"
-  let req = urlEncodedBody
-        [ ("client_id", TE.encodeUtf8 clientId)
-        , ("client_secret", TE.encodeUtf8 clientSecret)
-        , ("code", TE.encodeUtf8 code)
-        , ("redirect_uri", TE.encodeUtf8 redirectUri)
-        ]
-        initReq
-          { requestHeaders = [("Accept", "application/json")]
-          }
+  let req =
+        urlEncodedBody
+          [ ("client_id", TE.encodeUtf8 clientId),
+            ("client_secret", TE.encodeUtf8 clientSecret),
+            ("code", TE.encodeUtf8 code),
+            ("redirect_uri", TE.encodeUtf8 redirectUri)
+          ]
+          initReq
+            { requestHeaders = [("Accept", "application/json")]
+            }
   resp <- httpLbs req mgr
   if statusCode (responseStatus resp) /= 200
     then pure Nothing
@@ -85,20 +98,21 @@ parseAccessToken body = do
   case val of
     Object o -> case KM.lookup (K.fromText "access_token") o of
       Just (String t) -> Just t
-      _               -> Nothing
+      _ -> Nothing
     _ -> Nothing
 
 -- | Fetch the authenticated GitHub user using an access token.
 fetchGitHubUser :: Manager -> Text -> IO (Maybe GitHubUser)
 fetchGitHubUser mgr token = do
   initReq <- parseRequest "https://api.github.com/user"
-  let req = initReq
-        { requestHeaders =
-            [ ("Authorization", "Bearer " <> TE.encodeUtf8 token)
-            , ("Accept", "application/json")
-            , ("User-Agent", "hydra-web")
-            ]
-        }
+  let req =
+        initReq
+          { requestHeaders =
+              [ ("Authorization", "Bearer " <> TE.encodeUtf8 token),
+                ("Accept", "application/json"),
+                ("User-Agent", "hydra-web")
+              ]
+          }
   resp <- httpLbs req mgr
   if statusCode (responseStatus resp) /= 200
     then pure Nothing

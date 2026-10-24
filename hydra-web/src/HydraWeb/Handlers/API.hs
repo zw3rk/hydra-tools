@@ -1,131 +1,145 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | JSON API handlers for backward-compatible Hydra API endpoints.
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | JSON API handlers for backward-compatible Hydra API endpoints.
 module HydraWeb.Handlers.API
-  ( apiJobsetsHandler
-  , apiNrQueueHandler
-  , apiLatestBuildsHandler
-  , apiQueueHandler
+  ( apiJobsetsHandler,
+    apiNrQueueHandler,
+    apiLatestBuildsHandler,
+    apiQueueHandler,
+
     -- * API response types (re-exported for API.hs route declarations)
-  , APIJobset
-  , APIBuild
-  ) where
+    APIJobset,
+    APIBuild,
+  )
+where
 
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.Maybe (fromMaybe)
-import Data.OpenApi (ToSchema (..), genericDeclareNamedSchema,
-                     defaultSchemaOptions, SchemaOptions (..))
+import Data.OpenApi
+  ( SchemaOptions (..),
+    ToSchema (..),
+    defaultSchemaOptions,
+    genericDeclareNamedSchema,
+  )
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import GHC.Generics (Generic)
-
-import HydraWeb.Types (AppM, App (..))
+import HydraWeb.DB.Builds (latestBuilds, queuedBuilds)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (jobsetOverview)
-import HydraWeb.Visibility (isProjectAccessible, filterByProjectAccess)
 import HydraWeb.DB.Queue (queueCount)
-import HydraWeb.DB.Builds (queuedBuilds, latestBuilds)
-import HydraWeb.Models.Project (Jobset (..))
 import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Models.Project (Jobset (..))
+import HydraWeb.Types (App (..), AppM)
+import HydraWeb.Visibility (filterByProjectAccess, isProjectAccessible)
 
 -- | JSON representation of a jobset for the API.
 data APIJobset = APIJobset
-  { ajName        :: !Text
-  , ajProject     :: !Text
-  , ajNrScheduled :: !Int
-  , ajNrFailed    :: !Int
-  , ajNrSucceeded :: !Int
-  , ajNrTotal     :: !Int
-  } deriving (Generic)
+  { ajName :: !Text,
+    ajProject :: !Text,
+    ajNrScheduled :: !Int,
+    ajNrFailed :: !Int,
+    ajNrSucceeded :: !Int,
+    ajNrTotal :: !Int
+  }
+  deriving (Generic)
 
 instance ToJSON APIJobset where
-  toJSON j = object
-    [ "name"        .= ajName j
-    , "project"     .= ajProject j
-    , "nrscheduled" .= ajNrScheduled j
-    , "nrfailed"    .= ajNrFailed j
-    , "nrsucceeded" .= ajNrSucceeded j
-    , "nrtotal"     .= ajNrTotal j
-    ]
+  toJSON j =
+    object
+      [ "name" .= ajName j,
+        "project" .= ajProject j,
+        "nrscheduled" .= ajNrScheduled j,
+        "nrfailed" .= ajNrFailed j,
+        "nrsucceeded" .= ajNrSucceeded j,
+        "nrtotal" .= ajNrTotal j
+      ]
 
 -- | OpenAPI schema — field names must match the ToJSON encoding above.
 instance ToSchema APIJobset where
   declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy APIJobset)
     where
-      opts = defaultSchemaOptions
-        { fieldLabelModifier = apiJobsetField }
-      apiJobsetField "ajName"        = "name"
-      apiJobsetField "ajProject"     = "project"
+      opts =
+        defaultSchemaOptions
+          { fieldLabelModifier = apiJobsetField
+          }
+      apiJobsetField "ajName" = "name"
+      apiJobsetField "ajProject" = "project"
       apiJobsetField "ajNrScheduled" = "nrscheduled"
-      apiJobsetField "ajNrFailed"    = "nrfailed"
+      apiJobsetField "ajNrFailed" = "nrfailed"
       apiJobsetField "ajNrSucceeded" = "nrsucceeded"
-      apiJobsetField "ajNrTotal"     = "nrtotal"
-      apiJobsetField x               = x
+      apiJobsetField "ajNrTotal" = "nrtotal"
+      apiJobsetField x = x
 
 -- | JSON representation of a build for the API.
 data APIBuild = APIBuild
-  { abId       :: !Int
-  , abFinished :: !Int
-  , abJob      :: !Text
-  , abSystem   :: !Text
-  , abProject  :: !Text
-  , abJobset   :: !Text
-  , abNixName  :: !(Maybe Text)
-  , abStatus   :: !(Maybe Int)
-  , abDrvPath  :: !Text
-  } deriving (Generic)
+  { abId :: !Int,
+    abFinished :: !Int,
+    abJob :: !Text,
+    abSystem :: !Text,
+    abProject :: !Text,
+    abJobset :: !Text,
+    abNixName :: !(Maybe Text),
+    abStatus :: !(Maybe Int),
+    abDrvPath :: !Text
+  }
+  deriving (Generic)
 
 instance ToJSON APIBuild where
-  toJSON b = object
-    [ "id"          .= abId b
-    , "finished"    .= abFinished b
-    , "job"         .= abJob b
-    , "system"      .= abSystem b
-    , "project"     .= abProject b
-    , "jobset"      .= abJobset b
-    , "nixname"     .= abNixName b
-    , "buildstatus" .= abStatus b
-    , "drvpath"     .= abDrvPath b
-    ]
+  toJSON b =
+    object
+      [ "id" .= abId b,
+        "finished" .= abFinished b,
+        "job" .= abJob b,
+        "system" .= abSystem b,
+        "project" .= abProject b,
+        "jobset" .= abJobset b,
+        "nixname" .= abNixName b,
+        "buildstatus" .= abStatus b,
+        "drvpath" .= abDrvPath b
+      ]
 
 -- | OpenAPI schema — field names must match the ToJSON encoding above.
 instance ToSchema APIBuild where
   declareNamedSchema _ = genericDeclareNamedSchema opts (Proxy :: Proxy APIBuild)
     where
-      opts = defaultSchemaOptions
-        { fieldLabelModifier = apiBuildField }
-      apiBuildField "abId"       = "id"
+      opts =
+        defaultSchemaOptions
+          { fieldLabelModifier = apiBuildField
+          }
+      apiBuildField "abId" = "id"
       apiBuildField "abFinished" = "finished"
-      apiBuildField "abJob"      = "job"
-      apiBuildField "abSystem"   = "system"
-      apiBuildField "abProject"  = "project"
-      apiBuildField "abJobset"   = "jobset"
-      apiBuildField "abNixName"  = "nixname"
-      apiBuildField "abStatus"   = "buildstatus"
-      apiBuildField "abDrvPath"  = "drvpath"
-      apiBuildField x            = x
+      apiBuildField "abJob" = "job"
+      apiBuildField "abSystem" = "system"
+      apiBuildField "abProject" = "project"
+      apiBuildField "abJobset" = "jobset"
+      apiBuildField "abNixName" = "nixname"
+      apiBuildField "abStatus" = "buildstatus"
+      apiBuildField "abDrvPath" = "drvpath"
+      apiBuildField x = x
 
 -- | Convert a Build to its API representation.
 buildToAPI :: Build -> APIBuild
-buildToAPI b = APIBuild
-  { abId       = buildId b
-  , abFinished = buildFinished b
-  , abJob      = buildJob b
-  , abSystem   = buildSystem b
-  , abProject  = buildProject b
-  , abJobset   = buildJobset b
-  , abNixName  = buildNixName b
-  , abStatus   = buildStatus b
-  , abDrvPath  = buildDrvPath b
-  }
+buildToAPI b =
+  APIBuild
+    { abId = buildId b,
+      abFinished = buildFinished b,
+      abJob = buildJob b,
+      abSystem = buildSystem b,
+      abProject = buildProject b,
+      abJobset = buildJobset b,
+      abNixName = buildNixName b,
+      abStatus = buildStatus b,
+      abDrvPath = buildDrvPath b
+    }
 
 -- | GET /api/jobsets?project=... — jobset overview as JSON.
 -- Filters out hidden projects and hidden jobsets from the response.
@@ -144,14 +158,15 @@ apiJobsetsHandler mProject = do
           else filter (\j -> jsHidden j == 0) <$> jobsetOverview conn project
       pure $ map jobsetToAPI result
   where
-    jobsetToAPI j = APIJobset
-      { ajName        = jsName j
-      , ajProject     = jsProject j
-      , ajNrScheduled = jsNrScheduled j
-      , ajNrFailed    = jsNrFailed j
-      , ajNrSucceeded = jsNrSucceeded j
-      , ajNrTotal     = jsNrTotal j
-      }
+    jobsetToAPI j =
+      APIJobset
+        { ajName = jsName j,
+          ajProject = jsProject j,
+          ajNrScheduled = jsNrScheduled j,
+          ajNrFailed = jsNrFailed j,
+          ajNrSucceeded = jsNrSucceeded j,
+          ajNrTotal = jsNrTotal j
+        }
 
 -- | GET /api/nrqueue — queue count as plain text.
 apiNrQueueHandler :: AppM Text
@@ -161,8 +176,13 @@ apiNrQueueHandler = do
   pure $ Text.pack (show n)
 
 -- | GET /api/latestbuilds?nr=N&project=...&jobset=...&job=...&system=...
-apiLatestBuildsHandler :: Maybe Int -> Maybe Text -> Maybe Text
-                       -> Maybe Text -> Maybe Text -> AppM [APIBuild]
+apiLatestBuildsHandler ::
+  Maybe Int ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe Text ->
+  AppM [APIBuild]
 apiLatestBuildsHandler mNr mProject mJobset mJob mSystem = do
   pool <- asks appPool
   let nr = max 1 (min 1000 (fromMaybe 10 mNr))

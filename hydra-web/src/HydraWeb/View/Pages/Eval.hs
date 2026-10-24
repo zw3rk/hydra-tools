@@ -1,45 +1,51 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Evaluation page HTML: eval info, inputs, build diff tabs with progress bar.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Evaluation page HTML: eval info, inputs, build diff tabs with progress bar.
 module HydraWeb.View.Pages.Eval
-  ( evalPage
-  , evalTabContent
-  , latestEvalsPage
-  ) where
+  ( evalPage,
+    evalTabContent,
+    latestEvalsPage,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Lucid
-
-import HydraWeb.Models.Eval
 import HydraWeb.Models.Build (Build (..))
+import HydraWeb.Models.Eval
 import HydraWeb.View.BuildDiff (BuildDiff (..), defaultCategory)
 import HydraWeb.View.Components
 import HydraWeb.View.HTMX (hxGet_, hxTarget_)
 import HydraWeb.View.Pager (pager)
+import Lucid
 
 -- | Render the eval detail page with breadcrumb and build diff tabs.
-evalPage :: Text -> JobsetEval -> [JobsetEvalInput] -> Maybe EvaluationError
-         -> BuildDiff -> Html ()
+evalPage ::
+  Text ->
+  JobsetEval ->
+  [JobsetEvalInput] ->
+  Maybe EvaluationError ->
+  BuildDiff ->
+  Html ()
 evalPage bp eval inputs evalErr diff = do
   -- Breadcrumb: Home / Project / Jobset / Eval #N
-  breadcrumb [ ("Projects", bp <> "/")
-             , (evalProject eval, projectURL bp (evalProject eval))
-             , (evalJobset eval, jobsetURL bp (evalProject eval) (evalJobset eval))
-             , ("Eval #" <> showT (evalId eval), "")
-             ]
+  breadcrumb
+    [ ("Projects", bp <> "/"),
+      (evalProject eval, projectURL bp (evalProject eval)),
+      (evalJobset eval, jobsetURL bp (evalProject eval) (evalJobset eval)),
+      ("Eval #" <> showT (evalId eval), "")
+    ]
 
   h1_ $ toHtml ("Evaluation #" <> showT (evalId eval))
 
   -- Summary progress bar (all builds in this eval).
   let nrBuilds = fromMaybe 0 (evalNrBuilds eval)
-      nrSucc   = fromMaybe 0 (evalNrSucceeded eval)
-      nrFail   = nrBuilds - nrSucc
+      nrSucc = fromMaybe 0 (evalNrSucceeded eval)
+      nrFail = nrBuilds - nrSucc
   progressBar nrSucc nrFail 0
 
   -- Eval info.
@@ -59,7 +65,7 @@ evalPage bp eval inputs evalErr diff = do
   -- Inputs.
   case inputs of
     [] -> pure ()
-    _  -> details_ $ do
+    _ -> details_ $ do
       summary_ $ toHtml ("Inputs (" <> showT (length inputs) <> ")")
       table_ $ do
         thead_ $ tr_ $ do
@@ -87,14 +93,14 @@ evalPage bp eval inputs evalErr diff = do
   -- Default tab content.
   div_ [id_ "tab-content"] $ do
     let defBuilds = case defaultCategory diff of
-          Just "now-fail"      -> bdNowFail diff
-          Just "still-fail"    -> bdStillFail diff
-          Just "now-succeed"   -> bdNowSucceed diff
-          Just "unfinished"    -> bdUnfinished diff
+          Just "now-fail" -> bdNowFail diff
+          Just "still-fail" -> bdStillFail diff
+          Just "now-succeed" -> bdNowSucceed diff
+          Just "unfinished" -> bdUnfinished diff
           Just "still-succeed" -> bdStillSucceed diff
-          Just "new"           -> bdNew diff
-          Just "aborted"       -> bdAborted diff
-          _                    -> []
+          Just "new" -> bdNew diff
+          Just "aborted" -> bdAborted diff
+          _ -> []
     buildListTable bp defBuilds
 
 -- | Render a tab button (only if the category is non-empty).
@@ -102,25 +108,29 @@ tabButton :: Text -> JobsetEval -> Text -> Text -> Text -> [Build] -> Html ()
 tabButton bp eval tabName label cls builds =
   case builds of
     [] -> pure ()
-    _  -> button_ ([role_ "tab"
-                   , hxGet_ (evalURL bp (evalId eval) <> "/tab/" <> tabName)
-                   , hxTarget_ "#tab-content"
-                   ] ++ if Text.null cls then [] else [class_ cls]) $
-            toHtml (label <> " (" <> showT (length builds) <> ")")
+    _ ->
+      button_
+        ( [ role_ "tab",
+            hxGet_ (evalURL bp (evalId eval) <> "/tab/" <> tabName),
+            hxTarget_ "#tab-content"
+          ]
+            ++ if Text.null cls then [] else [class_ cls]
+        )
+        $ toHtml (label <> " (" <> showT (length builds) <> ")")
 
 -- | Render tab content (HTMX partial response).
 evalTabContent :: Text -> Text -> BuildDiff -> Html ()
 evalTabContent bp tabName diff =
   let builds = case tabName of
-        "now-fail"      -> bdNowFail diff
-        "now-succeed"   -> bdNowSucceed diff
-        "new"           -> bdNew diff
-        "still-fail"    -> bdStillFail diff
+        "now-fail" -> bdNowFail diff
+        "now-succeed" -> bdNowSucceed diff
+        "new" -> bdNew diff
+        "still-fail" -> bdStillFail diff
         "still-succeed" -> bdStillSucceed diff
-        "unfinished"    -> bdUnfinished diff
-        "aborted"       -> bdAborted diff
-        _               -> []
-  in  buildListTable bp builds
+        "unfinished" -> bdUnfinished diff
+        "aborted" -> bdAborted diff
+        _ -> []
+   in buildListTable bp builds
 
 -- | Render a build list table (used in eval tabs).
 buildListTable :: Text -> [Build] -> Html ()
@@ -150,7 +160,10 @@ latestEvalsPage bp evals total page perPage = do
   h1_ "Latest Evaluations"
   table_ $ do
     thead_ $ tr_ $ do
-      th_ "#"; th_ "Project"; th_ "Jobset"; th_ "Time"
+      th_ "#"
+      th_ "Project"
+      th_ "Jobset"
+      th_ "Time"
       th_ "Progress"
       th_ [class_ "num"] "Succeeded"
       th_ [class_ "num"] "Failed"
@@ -163,8 +176,9 @@ latestEvalsPage bp evals total page perPage = do
       tr_ $ do
         td_ $ a_ [href_ (evalURL bp (evalId eval))] $ toHtml (showT (evalId eval))
         td_ $ a_ [href_ (projectURL bp (evalProject eval))] $ toHtml (evalProject eval)
-        td_ $ a_ [href_ (jobsetURL bp (evalProject eval) (evalJobset eval))]
-          $ toHtml (evalJobset eval)
+        td_ $
+          a_ [href_ (jobsetURL bp (evalProject eval) (evalJobset eval))] $
+            toHtml (evalJobset eval)
         td_ $ toHtml (fmtTime (evalTimestamp eval))
         td_ $ progressBar (eiNrSucceeded ei) (eiNrFailed ei) (eiNrScheduled ei)
         td_ [class_ "num status-succeeded"] $ toHtml (showT (eiNrSucceeded ei))

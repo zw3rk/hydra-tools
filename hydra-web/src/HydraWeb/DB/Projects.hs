@@ -1,32 +1,34 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database queries for projects and jobsets.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Database queries for projects and jobsets.
 module HydraWeb.DB.Projects
-  ( visibleProjects
-  , getProject
-  , getJobset
-  , jobsetOverview
-  , isProjectHidden
-  , getProjectNameByBuild
-  ) where
+  ( visibleProjects,
+    getProject,
+    getJobset,
+    jobsetOverview,
+    isProjectHidden,
+    getProjectNameByBuild,
+  )
+where
 
 import Data.Text (Text)
-import Database.PostgreSQL.Simple (Connection, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
-
-import HydraWeb.Models.Project (Project (..), Jobset (..))
+import Database.PostgreSQL.Simple.Types ((:.) ((:.)))
+import HydraWeb.Models.Project (Jobset (..), Project (..))
 
 -- | Fetch all visible (non-hidden) projects.
 visibleProjects :: Connection -> IO [Project]
 visibleProjects conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT name, displayname, description, enabled, hidden, owner, homepage
     FROM projects
     WHERE hidden = 0
@@ -35,33 +37,77 @@ visibleProjects conn = do
   pure $ map toProject rows
   where
     toProject (name, displayname, desc, enabled, hidden, owner, homepage) =
-      Project name displayname desc enabled hidden owner homepage
-             Nothing Nothing Nothing []
+      Project
+        name
+        displayname
+        desc
+        enabled
+        hidden
+        owner
+        homepage
+        Nothing
+        Nothing
+        Nothing
+        []
 
 -- | Fetch a single project by name, with its jobset names.
 getProject :: Connection -> Text -> IO (Maybe Project)
 getProject conn name = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT name, displayname, description, enabled, hidden, owner, homepage,
            declfile, decltype, declvalue
     FROM projects
     WHERE name = ?
-  |] (Only name)
+  |]
+      (Only name)
   case rows of
     [] -> pure Nothing
-    ((pname, displayname, desc, enabled, hidden, owner, homepage,
-      declfile, decltype', declvalue):_) -> do
-      jrows <- query conn [sql|
+    ( ( pname,
+        displayname,
+        desc,
+        enabled,
+        hidden,
+        owner,
+        homepage,
+        declfile,
+        decltype',
+        declvalue
+        )
+        : _
+      ) -> do
+        jrows <-
+          query
+            conn
+            [sql|
         SELECT name FROM jobsets WHERE project = ? ORDER BY name
-      |] (Only name)
-      let jobsets = map (\(Only jn) -> jn) jrows
-      pure $ Just $ Project pname displayname desc enabled hidden owner homepage
-                            declfile decltype' declvalue jobsets
+      |]
+            (Only name)
+        let jobsets = map (\(Only jn) -> jn) jrows
+        pure $
+          Just $
+            Project
+              pname
+              displayname
+              desc
+              enabled
+              hidden
+              owner
+              homepage
+              declfile
+              decltype'
+              declvalue
+              jobsets
 
 -- | Fetch a single jobset by project and name, with build count subqueries.
 getJobset :: Connection -> Text -> Text -> IO (Maybe Jobset)
 getJobset conn project name = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT j.name, j.id, j.project, j.description,
            j.nixexprinput, j.nixexprpath,
            j.errormsg, j.errortime, j.lastcheckedtime, j.triggertime,
@@ -74,15 +120,19 @@ getJobset conn project name = do
            (SELECT count(*) FROM builds WHERE jobset_id = j.id AND iscurrent = 1)
     FROM jobsets j
     WHERE j.project = ? AND j.name = ?
-  |] (project, name)
+  |]
+      (project, name)
   case rows of
     [] -> pure Nothing
-    (r:_) -> pure $ Just (scanJobsetRow r)
+    (r : _) -> pure $ Just (scanJobsetRow r)
 
 -- | Fetch jobsets for a project with build count summaries.
 jobsetOverview :: Connection -> Text -> IO [Jobset]
 jobsetOverview conn project = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT j.name, j.id, j.project, j.description,
            j.nixexprinput, j.nixexprpath,
            j.errormsg, j.errortime, j.lastcheckedtime, j.triggertime,
@@ -96,47 +146,80 @@ jobsetOverview conn project = do
     FROM jobsets j
     WHERE j.project = ?
     ORDER BY j.hidden ASC, j.enabled DESC, j.name
-  |] (Only project)
+  |]
+      (Only project)
   pure $ map scanJobsetRow rows
 
 -- | Look up whether a project is hidden by name.
 -- Returns True if hidden or if the project does not exist.
 isProjectHidden :: Connection -> Text -> IO Bool
 isProjectHidden conn name = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT hidden FROM projects WHERE name = ?
-  |] (Only name)
+  |]
+      (Only name)
   case rows of
-    []          -> pure True   -- Non-existent projects are treated as hidden
-    (Only h):_ -> pure (h /= (0 :: Int))
+    [] -> pure True -- Non-existent projects are treated as hidden
+    (Only h) : _ -> pure (h /= (0 :: Int))
 
 -- | Get the project name for a build by its ID. Returns Nothing if the build
 -- doesn't exist or has no associated project.
 getProjectNameByBuild :: Connection -> Int -> IO (Maybe Text)
 getProjectNameByBuild conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT j.project
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
     WHERE b.id = ?
-  |] (Only buildId')
+  |]
+      (Only buildId')
   case rows of
-    []         -> pure Nothing
-    (Only p):_ -> pure (Just p)
+    [] -> pure Nothing
+    (Only p) : _ -> pure (Just p)
 
 -- | Scan a full jobset row (25 columns) into a Jobset value.
 -- Uses nested tuples via (:.) to work around postgresql-simple's
 -- FromRow instance limit of ~10 elements per tuple.
-scanJobsetRow :: ( (Text, Int, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Text, Maybe Int, Maybe Int)
-                 :. (Maybe Int, Int, Int, Int, Text, Int, Int, Int)
-                 :. (Maybe Text, Maybe Int, Int, Maybe Text, Int, Int, Int, Int) )
-              -> Jobset
-scanJobsetRow ( (name, jid, proj, desc, nixExprInput, nixExprPath, errMsg, errTime, lastChecked)
-              :. (triggerTime, enabled, enableEmail, hidden, emailOverride, keepNr, checkInterval, schedulingShares)
-              :. (fetchErrMsg, startTime, typ, flake, nrScheduled, nrFailed, nrSucceeded, nrTotal) ) =
-  Jobset name jid proj desc nixExprInput nixExprPath
-         errMsg errTime lastChecked triggerTime
-         enabled enableEmail hidden emailOverride
-         keepNr checkInterval schedulingShares
-         fetchErrMsg startTime typ flake
-         nrScheduled nrFailed nrSucceeded nrTotal
+scanJobsetRow ::
+  ( (Text, Int, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Text, Maybe Int, Maybe Int)
+      :. (Maybe Int, Int, Int, Int, Text, Int, Int, Int)
+      :. (Maybe Text, Maybe Int, Int, Maybe Text, Int, Int, Int, Int)
+  ) ->
+  Jobset
+scanJobsetRow
+  ( (name, jid, proj, desc, nixExprInput, nixExprPath, errMsg, errTime, lastChecked)
+      :. (triggerTime, enabled, enableEmail, hidden, emailOverride, keepNr, checkInterval, schedulingShares)
+      :. (fetchErrMsg, startTime, typ, flake, nrScheduled, nrFailed, nrSucceeded, nrTotal)
+    ) =
+    Jobset
+      name
+      jid
+      proj
+      desc
+      nixExprInput
+      nixExprPath
+      errMsg
+      errTime
+      lastChecked
+      triggerTime
+      enabled
+      enableEmail
+      hidden
+      emailOverride
+      keepNr
+      checkInterval
+      schedulingShares
+      fetchErrMsg
+      startTime
+      typ
+      flake
+      nrScheduled
+      nrFailed
+      nrSucceeded
+      nrTotal

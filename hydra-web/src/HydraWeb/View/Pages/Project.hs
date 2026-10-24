@@ -1,19 +1,19 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Project page HTML: jobset listing with progress bars and breadcrumbs.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Project page HTML: jobset listing with progress bars and breadcrumbs.
 module HydraWeb.View.Pages.Project
-  ( projectPage
-  ) where
+  ( projectPage,
+  )
+where
 
 import Data.Text (Text)
+import HydraWeb.Models.Project (Jobset (..), Project (..), hasErrorMsg)
+import HydraWeb.View.Components (breadcrumb, jobsetURL, progressBar, renderJobsetName, showT)
 import Lucid
-
-import HydraWeb.Models.Project (Project (..), Jobset (..), hasErrorMsg)
-import HydraWeb.View.Components (jobsetURL, progressBar, breadcrumb, showT, renderJobsetName)
 
 -- | Render the project page content with breadcrumb and jobset cards.
 -- The @mOrgRepo@ parameter enables PR link rendering when a GitHub org/repo
@@ -26,7 +26,7 @@ projectPage bp mOrgRepo project jobsets = do
   hgroup_ $ do
     h1_ $ toHtml (projDisplayName project)
     case projDescription project of
-      Just d  -> p_ $ toHtml d
+      Just d -> p_ $ toHtml d
       Nothing -> pure ()
 
   h2_ "Jobsets"
@@ -47,15 +47,16 @@ projectPage bp mOrgRepo project jobsets = do
 -- PR jobsets show a GitHub PR link; descriptions are shown alongside the name.
 renderJobset :: Text -> Maybe (Text, Text) -> Jobset -> Html ()
 renderJobset bp mOrgRepo js = do
-  let cls | jsHidden js == 1 = [class_ "hidden-jobset"]
-          | jsEnabled js == 0 = [class_ "disabled"]
-          | otherwise = []
+  let cls
+        | jsHidden js == 1 = [class_ "hidden-jobset"]
+        | jsEnabled js == 0 = [class_ "disabled"]
+        | otherwise = []
   tr_ cls $ do
     td_ $ do
       a_ [href_ (jobsetURL bp (jsProject js) (jsName js))] $
         renderJobsetName mOrgRepo (jsName js)
       case jsDescription js of
-        Just d  -> span_ [class_ "jobset-desc"] $ toHtml (" \x2014 " <> d)
+        Just d -> span_ [class_ "jobset-desc"] $ toHtml (" \x2014 " <> d)
         Nothing -> pure ()
     td_ $ if jsType js == 1 then "flake" else "legacy"
     td_ $ progressBar (jsNrSucceeded js) (jsNrFailed js) (jsNrScheduled js)

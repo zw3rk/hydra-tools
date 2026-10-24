@@ -1,31 +1,34 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for the bridge status page.
--- SSE streaming is now handled by the unified stream endpoints.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Handler for the bridge status page.
+-- SSE streaming is now handled by the unified stream endpoints.
 module HydraWeb.Handlers.Bridges
-  ( bridgesHandler
-  ) where
+  ( bridgesHandler,
+  )
+where
 
 import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import Lucid (Html)
-
 import Data.Text (Text)
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
-import HydraWeb.DB.Pool (withConn)
+import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Bridges (bridgeFullStatus)
-import HydraWeb.Models.Bridge (BridgeStatus (..), GitHubBridgeStatus (..),
-                               GitHubRepoRow (..), GitHubRecentSend (..))
-import HydraWeb.Visibility (filterByRepoAccess)
+import HydraWeb.DB.Pool (withConn)
+import HydraWeb.Models.Bridge
+  ( BridgeStatus (..),
+    GitHubBridgeStatus (..),
+    GitHubRecentSend (..),
+    GitHubRepoRow (..),
+  )
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Bridges (bridgesPage)
+import HydraWeb.Visibility (filterByRepoAccess)
+import Lucid (Html)
 
 -- | GET /bridges — render the bridge status page with live SSE wrapper.
 -- Filters GitHub bridge data by project visibility so hidden/private
@@ -33,22 +36,23 @@ import HydraWeb.View.Pages.Bridges (bridgesPage)
 bridgesHandler :: Maybe Text -> AppM (Html ())
 bridgesHandler mCookie = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   filtered <- liftIO $ withConn pool $ \conn -> do
-    s  <- bridgeFullStatus conn
+    s <- bridgeFullStatus conn
     -- Filter GitHub bridge data by (owner, repo) → project visibility.
     filterGitHubBridge conn mUser s
-  let pd = PageData
-        { pdTitle    = "Bridge Status"
-        , pdBasePath = bp
-        , pdCounts   = counts
-        , pdUser     = mUser
-        }
+  let pd =
+        PageData
+          { pdTitle = "Bridge Status",
+            pdBasePath = bp,
+            pdCounts = counts,
+            pdUser = mUser
+          }
   pure $ pageLayout pd $ bridgesPage bp filtered
   where
-    -- | Filter owner/repo breakdowns and recent sends in the GitHub bridge.
+    -- \| Filter owner/repo breakdowns and recent sends in the GitHub bridge.
     -- Aggregate counts (total/sent/pending/failed) are kept unfiltered
     -- since they don't reveal project names.
     filterGitHubBridge conn mUser bs = case bsGitHub bs of
@@ -56,5 +60,12 @@ bridgesHandler mCookie = do
       Just gh -> do
         byRepo <- filterByRepoAccess conn mUser grrOwner grrRepo (ghsByRepo gh)
         recent <- filterByRepoAccess conn mUser grsOwner grsRepo (ghsRecentSent gh)
-        pure bs { bsGitHub = Just gh { ghsByRepo = byRepo
-                                     , ghsRecentSent = recent } }
+        pure
+          bs
+            { bsGitHub =
+                Just
+                  gh
+                    { ghsByRepo = byRepo,
+                      ghsRecentSent = recent
+                    }
+            }

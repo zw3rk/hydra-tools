@@ -1,27 +1,28 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | HTMX attribute helpers for use with Lucid.
 -- Provides type-safe wrappers for common hx-* attributes so they compose
 -- naturally with Lucid's HTML combinator style.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.View.HTMX
-  ( hxGet_
-  , hxPost_
-  , hxTarget_
-  , hxSwap_
-  , hxSwapOob_
-  , hxTrigger_
-  , hxPushUrl_
-  , hxIndicator_
-  , hxVals_
-  , hxBoost_
-  , hxExt_
-  , sseConnect_
-  , sseSwap_
-  , sseClose_
-  ) where
+  ( hxGet_,
+    hxPost_,
+    hxTarget_,
+    hxSwap_,
+    hxSwapOob_,
+    hxTrigger_,
+    hxPushUrl_,
+    hxIndicator_,
+    hxVals_,
+    hxBoost_,
+    hxExt_,
+    sseConnect_,
+    sseSwap_,
+    sseClose_,
+  )
+where
 
 import Data.Text (Text)
 import Lucid.Base (Attribute, makeAttribute)

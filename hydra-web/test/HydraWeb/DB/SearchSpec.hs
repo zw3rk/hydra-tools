@@ -1,14 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Tests for search query validation and ILIKE escaping in DB.Search.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Tests for search query validation and ILIKE escaping in DB.Search.
 module HydraWeb.DB.SearchSpec (spec) where
 
+import HydraWeb.DB.Search (escapeLike, isValidQuery)
 import Test.Hspec
-
-import HydraWeb.DB.Search (isValidQuery, escapeLike)
 
 spec :: Spec
 spec = do
