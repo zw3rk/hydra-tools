@@ -1,14 +1,15 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database schema migration for gf_* tables (auth system).
--- Creates tables if they don't already exist. Safe to run repeatedly.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
+-- | Database schema migration for gf_* tables (auth system).
+-- Creates tables if they don't already exist. Safe to run repeatedly.
 module HydraWeb.DB.Migrate
-  ( runMigrations
-  ) where
+  ( runMigrations,
+  )
+where
 
 import Control.Exception (SomeException, try)
 import Data.Int (Int64)
@@ -20,7 +21,10 @@ import Database.PostgreSQL.Simple.SqlQQ (sql)
 runMigrations :: Connection -> IO ()
 runMigrations conn = do
   -- Users authenticated via GitHub.
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_users (
       id              serial PRIMARY KEY,
       github_id       bigint UNIQUE NOT NULL,
@@ -34,7 +38,10 @@ runMigrations conn = do
     )
   |]
   -- GitHub user access tokens (encrypted at rest).
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_github_tokens (
       user_id          integer PRIMARY KEY REFERENCES gf_users(id) ON DELETE CASCADE,
       access_token_enc bytea NOT NULL,
@@ -42,7 +49,10 @@ runMigrations conn = do
     )
   |]
   -- Browser sessions (server-side).
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_sessions (
       id              text PRIMARY KEY,
       user_id         integer NOT NULL REFERENCES gf_users(id) ON DELETE CASCADE,
@@ -51,14 +61,23 @@ runMigrations conn = do
       last_active_at  timestamptz NOT NULL DEFAULT now()
     )
   |]
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE INDEX IF NOT EXISTS idx_gf_sessions_user ON gf_sessions(user_id)
   |]
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE INDEX IF NOT EXISTS idx_gf_sessions_expires ON gf_sessions(expires_at)
   |]
   -- API tokens for curl/machine access.
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_api_tokens (
       id              serial PRIMARY KEY,
       user_id         integer NOT NULL REFERENCES gf_users(id) ON DELETE CASCADE,
@@ -70,14 +89,23 @@ runMigrations conn = do
       expires_at      timestamptz
     )
   |]
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE INDEX IF NOT EXISTS idx_gf_api_tokens_user ON gf_api_tokens(user_id)
   |]
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE INDEX IF NOT EXISTS idx_gf_api_tokens_hash ON gf_api_tokens(token_hash)
   |]
   -- Cached GitHub repo access checks.
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_repo_access_cache (
       user_id         integer NOT NULL REFERENCES gf_users(id) ON DELETE CASCADE,
       owner           text NOT NULL,
@@ -88,7 +116,10 @@ runMigrations conn = do
     )
   |]
   -- Project-to-GitHub repo mapping.
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_project_repos (
       project_name    text NOT NULL,
       jobset_name     text NOT NULL,
@@ -100,7 +131,10 @@ runMigrations conn = do
     )
   |]
   -- Repo public/private cache.
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_repo_visibility_cache (
       owner           text NOT NULL,
       repo            text NOT NULL,
@@ -111,7 +145,10 @@ runMigrations conn = do
   |]
 
   -- GitHub App installations (replaces HYDRA_WEB_GITHUB_INSTALLATION_IDS env var).
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_github_installations (
       id                serial PRIMARY KEY,
       org_name          text UNIQUE NOT NULL,
@@ -123,7 +160,10 @@ runMigrations conn = do
   |]
 
   -- Project → org/repo mapping (auto-detected from flake URLs + manual override).
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE TABLE IF NOT EXISTS gf_org_project_map (
       project_name      text PRIMARY KEY,
       org_name          text NOT NULL,
@@ -132,7 +172,10 @@ runMigrations conn = do
       created_at        timestamptz NOT NULL DEFAULT now()
     )
   |]
-  _ <- execute_ conn [sql|
+  _ <-
+    execute_
+      conn
+      [sql|
     CREATE INDEX IF NOT EXISTS idx_gf_org_project_map_org_repo
       ON gf_org_project_map(org_name, repo_name)
   |]
@@ -140,9 +183,15 @@ runMigrations conn = do
   -- Allow the hydra user (used by hydra-github-bridge) to read mappings
   -- for periodic PR/jobset sync reconciliation.
   -- Silently ignored if the 'hydra' role doesn't exist in this DB cluster.
-  _ <- try (execute_ conn [sql|
+  _ <-
+    try
+      ( execute_
+          conn
+          [sql|
     GRANT SELECT ON gf_org_project_map TO hydra
-  |]) :: IO (Either SomeException Int64)
+  |]
+      ) ::
+      IO (Either SomeException Int64)
 
   -- NOTE: UPDATE grants on hydra-owned tables (jobsets, builds) are handled
   -- in web-service-hydra.nix postgresql.postStart, which runs as the postgres

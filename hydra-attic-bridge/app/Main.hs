@@ -56,9 +56,11 @@ processDrvPath conn cache = do
   more <- withTransaction conn $ do
     -- Select by primary key so that DELETE/UPDATE below only touches
     -- one row, eliminating deadlocks from duplicate drvpath entries.
-    result <- query conn
-      "SELECT id, drvpath FROM DrvpathsToUpload WHERE last < NOW() AND tries < ? FOR UPDATE SKIP LOCKED LIMIT 1;"
-      (Only maxRetries)
+    result <-
+      query
+        conn
+        "SELECT id, drvpath FROM DrvpathsToUpload WHERE last < NOW() AND tries < ? FOR UPDATE SKIP LOCKED LIMIT 1;"
+        (Only maxRetries)
     case result of
       [(rowId, drvPath) :: (Int, String)] -> do
         -- Fast local check: is the store path already in our store?
@@ -105,9 +107,11 @@ cleanupLoop connectInfo =
       -- Sleep 1 hour between cleanup runs.
       threadDelay (60 * 60 * 1000000)
       catch
-        ( do n <- cleanupExhausted conn
-             when (n > 0) $
-               putStrLn $ "Cleanup: removed " ++ show n ++ " exhausted entries (tries >= " ++ show maxRetries ++ ")"
+        ( do
+            n <- cleanupExhausted conn
+            when (n > 0) $
+              putStrLn $
+                "Cleanup: removed " ++ show n ++ " exhausted entries (tries >= " ++ show maxRetries ++ ")"
         )
         $ \err ->
           putStrLn $ "Cleanup error: " ++ displayException (err :: SomeException)
@@ -166,12 +170,13 @@ main = do
       withConnect connectInfo $ \startupConn -> do
         n <- cleanupExhausted startupConn
         when (n > 0) $
-          putStrLn $ "Startup cleanup: removed " ++ show n ++ " exhausted entries"
+          putStrLn $
+            "Startup cleanup: removed " ++ show n ++ " exhausted entries"
       -- Periodic wake-up timer: re-check deferred items whose backoff
       -- has expired.  Without this, workers sleep forever on readChan
       -- after a transient network outage defers all in-flight items.
       void $ forkIO $ forever $ do
-        threadDelay (5 * 60 * 1000000)  -- every 5 minutes
+        threadDelay (5 * 60 * 1000000) -- every 5 minutes
         replicateM_ workerCount $ writeChan wakeChan ()
       withConnect connectInfo $ \listenConn -> do
         _ <- execute_ listenConn "LISTEN step_finished" -- (build id, step id, logpath)

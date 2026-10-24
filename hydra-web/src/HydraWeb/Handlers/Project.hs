@@ -1,38 +1,38 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for the project page (GET /project/:name).
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Handler for the project page (GET /project/:name).
 module HydraWeb.Handlers.Project
-  ( projectHandler
-  ) where
+  ( projectHandler,
+  )
+where
 
 import Control.Concurrent.STM (readTVarIO)
+import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
-import Lucid
-import Servant (err404)
-import Control.Monad.Error.Class (throwError)
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
+import HydraWeb.Config (Config (..))
+import HydraWeb.DB.OrgMap (lookupByProject)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
-import HydraWeb.DB.OrgMap (lookupByProject)
-import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
+import HydraWeb.Models.Project (Jobset (..), Project (..))
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
+import Lucid
+import Servant (err404)
 
 -- | Render the project page with jobset overview.
 -- Returns 404 if the project is hidden and the user is not a super-admin.
 projectHandler :: Maybe Text -> Text -> AppM (Html ())
 projectHandler mCookie name = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   (mProject, accessible, jobsets, mOrgRepo) <- liftIO $ withConn pool $ \conn -> do
@@ -47,13 +47,15 @@ projectHandler mCookie name = do
       | not accessible -> throwError err404
       | otherwise -> do
           -- Filter hidden jobsets for non-admin users.
-          let visibleJs = if isSuperAdmin mUser
-                            then jobsets
-                            else filter (\j -> jsHidden j == 0) jobsets
-              pd = PageData
-                { pdTitle    = projDisplayName project
-                , pdBasePath = bp
-                , pdCounts   = counts
-                , pdUser     = mUser
-                }
+          let visibleJs =
+                if isSuperAdmin mUser
+                  then jobsets
+                  else filter (\j -> jsHidden j == 0) jobsets
+              pd =
+                PageData
+                  { pdTitle = projDisplayName project,
+                    pdBasePath = bp,
+                    pdCounts = counts,
+                    pdUser = mUser
+                  }
           pure $ pageLayout pd $ projectPage bp mOrgRepo project visibleJs

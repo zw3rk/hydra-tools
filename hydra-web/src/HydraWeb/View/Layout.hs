@@ -1,31 +1,35 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Page layout wrapper: HTML head, navigation bar, and footer.
 -- All pages use 'pageLayout' to get a consistent shell. The nav bar
 -- includes live badge counts for queue, machines, bridges, and evaluating,
 -- and shows the logged-in user or a "Sign in" link.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.View.Layout
-  ( PageData (..)
-  , pageLayout
-  ) where
+  ( PageData (..),
+    pageLayout,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Lucid
-
 import HydraWeb.Models.Queue (NavCounts (..))
 import HydraWeb.Models.User (GFUser (..))
 import HydraWeb.View.Components (showT)
+import Lucid
 
 -- | Data passed to every page render: title, nav counts, optional user.
 data PageData = PageData
-  { pdTitle    :: !Text             -- ^ Page title (appears in <title> tag)
-  , pdBasePath :: !Text             -- ^ URL prefix for reverse proxy sub-path
-  , pdCounts   :: !NavCounts        -- ^ Queue/running/bridge/evaluating badge counts
-  , pdUser     :: !(Maybe GFUser)   -- ^ Authenticated user (Nothing = not logged in)
+  { -- | Page title (appears in <title> tag)
+    pdTitle :: !Text,
+    -- | URL prefix for reverse proxy sub-path
+    pdBasePath :: !Text,
+    -- | Queue/running/bridge/evaluating badge counts
+    pdCounts :: !NavCounts,
+    -- | Authenticated user (Nothing = not logged in)
+    pdUser :: !(Maybe GFUser)
   }
 
 -- | Render a full HTML page with navigation, main content, and footer.
@@ -45,7 +49,8 @@ pageLayout pd content = doctypehtml_ $ do
   body_ $ do
     nav_ [class_ "site-nav"] $ do
       div_ [class_ "nav-brand"] $
-        a_ [href_ (url pd "/")] $ strong_ "Hydra CI"
+        a_ [href_ (url pd "/")] $
+          strong_ "Hydra CI"
       ul_ [class_ "nav-links"] $ do
         li_ $ a_ [href_ (url pd "/queue")] $ do
           toHtml ("Queue" :: Text)
@@ -65,8 +70,9 @@ pageLayout pd content = doctypehtml_ $ do
         -- Show user info or sign-in link.
         case pdUser pd of
           Just user -> do
-            li_ $ a_ [href_ (url pd "/profile"), class_ "nav-user"] $
-              toHtml (gfuGitHubLogin user)
+            li_ $
+              a_ [href_ (url pd "/profile"), class_ "nav-user"] $
+                toHtml (gfuGitHubLogin user)
             li_ $ a_ [href_ (url pd "/logout"), class_ "nav-signin"] "Sign out"
           Nothing ->
             li_ $ a_ [href_ (url pd "/auth/github"), class_ "nav-signin"] "Sign in"
@@ -81,8 +87,9 @@ pageLayout pd content = doctypehtml_ $ do
 navBadge :: Int -> Text -> Html ()
 navBadge count' cls
   | count' <= 0 = pure ()
-  | otherwise   = span_ [class_ ("nav-badge" <> if Text.null cls then "" else " " <> cls)] $
-                    toHtml (showT count')
+  | otherwise =
+      span_ [class_ ("nav-badge" <> if Text.null cls then "" else " " <> cls)] $
+        toHtml (showT count')
 
 -- | Prepend the base path to a relative URL.
 url :: PageData -> Text -> Text

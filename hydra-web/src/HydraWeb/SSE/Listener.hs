@@ -1,37 +1,37 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -- | SSE broadcaster for bridge status updates and nav-count refresher.
 -- Two concurrent loops both broadcast to TopicBridges:
 -- 1. PostgreSQL LISTEN — real-time on github_status/step_finished
 -- 2. Periodic poll — 10-second nav-count refresh + 30-second bridge heartbeat
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module HydraWeb.SSE.Listener
-  ( listenAndBroadcast
-  ) where
+  ( listenAndBroadcast,
+  )
+where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
 import Control.Concurrent.STM (TVar, atomically, writeTVar)
-import Control.Exception (SomeException, try, bracket)
+import Control.Exception (SomeException, bracket, try)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Pool (Pool)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
-import Database.PostgreSQL.Simple (Connection, connectPostgreSQL, close, execute_)
+import Database.PostgreSQL.Simple (Connection, close, connectPostgreSQL, execute_)
 import Database.PostgreSQL.Simple.Notification (getNotification)
-import System.IO (hPutStrLn, stderr)
-import System.Timeout (timeout)
-
 import HydraWeb.DB.Bridges (bridgeFullStatus)
 import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Queue (navCounts)
 import HydraWeb.Models.Queue (NavCounts)
 import HydraWeb.SSE.Hub (Hub, Topic (..), broadcastTo)
-import HydraWeb.View.Pages.Bridges (renderGitHubDataBS, renderAtticDataBS)
+import HydraWeb.View.Pages.Bridges (renderAtticDataBS, renderGitHubDataBS)
+import System.IO (hPutStrLn, stderr)
+import System.Timeout (timeout)
 
 -- | Start both the PG LISTEN loop and the polling loop. Blocks forever.
 -- Shutdown is handled by the parent thread via 'withAsync' cancellation.
@@ -90,7 +90,7 @@ drainNotifications :: Connection -> IO ()
 drainNotifications conn = do
   mNotif <- timeout 0 (getNotification conn)
   case mNotif of
-    Just _  -> drainNotifications conn
+    Just _ -> drainNotifications conn
     Nothing -> pure ()
 
 -- ── Global polling loop ───────────────────────────────────────────────
@@ -140,11 +140,11 @@ broadcastBridgeStatus pool hub = do
   broadcastTo hub TopicBridges (formatSSE "github-bridge-update" (renderGitHubDataBS status))
   broadcastTo hub TopicBridges (formatSSE "attic-bridge-update" (renderAtticDataBS status))
 
-
 -- | Format an HTML fragment as an SSE event.
 -- event: <eventName>\ndata: <line1>\ndata: <line2>\n...\n\n
 formatSSE :: ByteString -> ByteString -> ByteString
-formatSSE eventName html = BS8.unlines $
-  ("event: " <> eventName) :
-  map ("data: " <>) (BS8.lines html) ++
-  [""]
+formatSSE eventName html =
+  BS8.unlines $
+    ("event: " <> eventName)
+      : map ("data: " <>) (BS8.lines html)
+      ++ [""]

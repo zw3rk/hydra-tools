@@ -1,14 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Tests for configuration parsing functions.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Tests for configuration parsing functions.
 module HydraWeb.ConfigSpec (spec) where
 
-import Test.Hspec
-
 import HydraWeb.Config (parseInstallationIDs, parseSuperAdmins)
+import Test.Hspec
 
 spec :: Spec
 spec = do

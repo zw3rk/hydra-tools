@@ -1,27 +1,27 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Bridge status page with client-side tabs.
 -- Tab buttons and panel wrappers live outside the SSE zone so they are
 -- never replaced.  Each tab panel has its own SSE target that only
 -- replaces the data inside the panel, preserving tab state.
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.View.Pages.Bridges
-  ( bridgesPage
-  , renderGitHubDataBS
-  , renderAtticDataBS
-  ) where
+  ( bridgesPage,
+    renderGitHubDataBS,
+    renderAtticDataBS,
+  )
+where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
-import Lucid
-
 import HydraWeb.Models.Bridge
-import HydraWeb.View.Components (fmtTime, showT, shortPath)
+import HydraWeb.View.Components (fmtTime, shortPath, showT)
 import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
+import Lucid
 
 -- | Full bridges page.  Tab buttons and panel structure are rendered
 -- here (never replaced by SSE).  Only the data divs inside each panel
@@ -40,12 +40,17 @@ bridgesPage bp status = do
         atBadge = case bsAttic status of
           Just at | absPending at > 0 -> " (" <> showT (absPending at) <> ")"
           _ -> ""
-    button_ [ role_ "tab", class_ "active"
-            , data_ "tab-target" "tab-github"
-            ] (toHtml ghLabel)
-    button_ [ role_ "tab"
-            , data_ "tab-target" "tab-attic"
-            ] (toHtml atLabel)
+    button_
+      [ role_ "tab",
+        class_ "active",
+        data_ "tab-target" "tab-github"
+      ]
+      (toHtml ghLabel)
+    button_
+      [ role_ "tab",
+        data_ "tab-target" "tab-attic"
+      ]
+      (toHtml atLabel)
 
   -- SSE connection — wraps both panels but only targets the inner data divs.
   div_ [hxExt_ "sse", sseConnect_ (bp <> "/stream/bridges")] $ do

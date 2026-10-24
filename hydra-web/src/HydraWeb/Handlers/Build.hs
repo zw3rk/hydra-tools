@@ -1,39 +1,38 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for build pages (GET /build/:id) and HTMX tab partials.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Handler for build pages (GET /build/:id) and HTMX tab partials.
 module HydraWeb.Handlers.Build
-  ( buildHandler
-  ) where
+  ( buildHandler,
+  )
+where
 
 import Control.Concurrent.STM (readTVarIO)
+import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import Control.Monad.Error.Class (throwError)
-import Lucid
-import Servant (err404)
-
 import Data.Text (Text)
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
-import HydraWeb.DB.Pool (withConn)
+import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Builds
+import HydraWeb.DB.Pool (withConn)
 import HydraWeb.Models.Build (Build (..))
-import HydraWeb.Visibility (isProjectAccessible, isAuthenticated)
+import HydraWeb.Types (App (..), AppM)
+import HydraWeb.View.Components (showT)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Build (buildPage)
-import HydraWeb.View.Components (showT)
+import HydraWeb.Visibility (isAuthenticated, isProjectAccessible)
+import Lucid
+import Servant (err404)
 
 -- | Render the build detail page with steps, outputs, products, etc.
 -- Returns 404 if the build's parent project is hidden and user is not super-admin.
 buildHandler :: Maybe Text -> Int -> AppM (Html ())
 buildHandler mCookie bid = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
@@ -45,24 +44,43 @@ buildHandler mCookie bid = do
         if not accessible
           then pure Nothing
           else do
-            steps    <- getBuildSteps conn bid
-            outputs  <- getBuildOutputs conn bid
+            steps <- getBuildSteps conn bid
+            outputs <- getBuildOutputs conn bid
             products <- getBuildProducts conn bid
-            metrics  <- getBuildMetrics conn bid
-            inputs   <- getBuildInputs conn bid
-            evalIDs  <- getBuildEvals conn bid
+            metrics <- getBuildMetrics conn bid
+            inputs <- getBuildInputs conn bid
+            evalIDs <- getBuildEvals conn bid
             constits <- getConstituents conn bid
-            pure $ Just (build, steps, outputs, products, metrics,
-                         inputs, evalIDs, constits)
+            pure $
+              Just
+                ( build,
+                  steps,
+                  outputs,
+                  products,
+                  metrics,
+                  inputs,
+                  evalIDs,
+                  constits
+                )
   case result of
     Nothing -> throwError err404
-    Just (build, steps, outputs, products, metrics,
-          inputs, evalIDs, constits) -> do
-      let pd = PageData
-            { pdTitle    = "Build #" <> showT bid
-            , pdBasePath = bp
-            , pdCounts   = counts
-            , pdUser     = mUser
-            }
-      pure $ pageLayout pd $
-        buildPage bp build steps outputs products metrics inputs evalIDs constits (isAuthenticated mUser)
+    Just
+      ( build,
+        steps,
+        outputs,
+        products,
+        metrics,
+        inputs,
+        evalIDs,
+        constits
+        ) -> do
+        let pd =
+              PageData
+                { pdTitle = "Build #" <> showT bid,
+                  pdBasePath = bp,
+                  pdCounts = counts,
+                  pdUser = mUser
+                }
+        pure $
+          pageLayout pd $
+            buildPage bp build steps outputs products metrics inputs evalIDs constits (isAuthenticated mUser)

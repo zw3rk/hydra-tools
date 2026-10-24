@@ -1,21 +1,21 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database queries for bridge status (GitHub notifications + Attic uploads).
--- All queries gracefully handle missing bridge tables (SQLSTATE 42P01),
--- returning Nothing when the bridge is not deployed.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Database queries for bridge status (GitHub notifications + Attic uploads).
+-- All queries gracefully handle missing bridge tables (SQLSTATE 42P01),
+-- returning Nothing when the bridge is not deployed.
 module HydraWeb.DB.Bridges
-  ( bridgeFullStatus
-  ) where
+  ( bridgeFullStatus,
+  )
+where
 
 import Control.Exception (try)
-import Database.PostgreSQL.Simple (Connection, query_, SqlError (..))
+import Database.PostgreSQL.Simple (Connection, SqlError (..), query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-
 import HydraWeb.Models.Bridge
 
 -- | Check if a SQL error is "undefined_table" (42P01).
@@ -30,7 +30,7 @@ tryQuery act = do
   case result of
     Right a -> pure (Just a)
     Left e | isTableMissing e -> pure Nothing
-    Left e                    -> do
+    Left e -> do
       -- Table exists but query failed — re-throw.
       ioError (userError (show e))
 
@@ -39,7 +39,10 @@ tryQuery act = do
 -- | Summary counts for the GitHub notification queue: (total, sent, pending, failed).
 gitHubCounts :: Connection -> IO (Int, Int, Int, Int)
 gitHubCounts conn = do
-  [(total, sent, pending, failed)] <- query_ conn [sql|
+  [(total, sent, pending, failed)] <-
+    query_
+      conn
+      [sql|
     SELECT count(*)                                             AS total,
            count(*) FILTER (WHERE sent IS NOT NULL)             AS sent,
            count(*) FILTER (WHERE sent IS NULL AND tries < 5)   AS pending,
@@ -51,7 +54,10 @@ gitHubCounts conn = do
 -- | Per-owner/repo breakdown of unsent notifications.
 gitHubByRepo :: Connection -> IO [GitHubRepoRow]
 gitHubByRepo conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT g.owner, g.repo,
            count(*) FILTER (WHERE p.tries < 5)  AS pending,
            count(*) FILTER (WHERE p.tries >= 5) AS failed
@@ -66,7 +72,10 @@ gitHubByRepo conn = do
 -- | Last 20 successfully sent notifications.
 gitHubRecentSent :: Connection -> IO [GitHubRecentSend]
 gitHubRecentSent conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT g.owner, g.repo, g.name, EXTRACT(EPOCH FROM p.sent)::int
     FROM github_status_payload p
     JOIN github_status g ON g.id = p.status_id
@@ -80,23 +89,27 @@ gitHubRecentSent conn = do
 gitHubBridgeStatus :: Connection -> IO (Maybe GitHubBridgeStatus)
 gitHubBridgeStatus conn = tryQuery $ do
   (total, sent, pending, failed) <- gitHubCounts conn
-  byRepo  <- gitHubByRepo conn
-  recent  <- gitHubRecentSent conn
-  pure GitHubBridgeStatus
-    { ghsTotal      = total
-    , ghsSent       = sent
-    , ghsPending    = pending
-    , ghsFailed     = failed
-    , ghsByRepo     = byRepo
-    , ghsRecentSent = recent
-    }
+  byRepo <- gitHubByRepo conn
+  recent <- gitHubRecentSent conn
+  pure
+    GitHubBridgeStatus
+      { ghsTotal = total,
+        ghsSent = sent,
+        ghsPending = pending,
+        ghsFailed = failed,
+        ghsByRepo = byRepo,
+        ghsRecentSent = recent
+      }
 
 -- ── Attic bridge ─────────────────────────────────────────────────────
 
 -- | 20 most recently active items in the upload queue (tries < 20).
 atticRecentActive :: Connection -> IO [AtticQueueItem]
 atticRecentActive conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT id, drvpath, EXTRACT(EPOCH FROM last)::int, tries
     FROM drvpathstoupload
     WHERE tries < 20
@@ -108,7 +121,10 @@ atticRecentActive conn = do
 -- | Full Attic bridge status, or Nothing if table doesn't exist.
 atticBridgeStatus :: Connection -> IO (Maybe AtticBridgeStatus)
 atticBridgeStatus conn = tryQuery $ do
-  [(total, pending, waiting, failed)] <- query_ conn [sql|
+  [(total, pending, waiting, failed)] <-
+    query_
+      conn
+      [sql|
     SELECT count(*)                                              AS total,
            count(*) FILTER (WHERE last < NOW() AND tries < 20)   AS pending,
            count(*) FILTER (WHERE last >= NOW() AND tries < 20)  AS waiting,
@@ -116,19 +132,20 @@ atticBridgeStatus conn = tryQuery $ do
     FROM drvpathstoupload
   |]
   recent <- atticRecentActive conn
-  pure AtticBridgeStatus
-    { absTotal        = total
-    , absPending      = pending
-    , absWaiting      = waiting
-    , absFailed       = failed
-    , absRecentActive = recent
-    }
+  pure
+    AtticBridgeStatus
+      { absTotal = total,
+        absPending = pending,
+        absWaiting = waiting,
+        absFailed = failed,
+        absRecentActive = recent
+      }
 
 -- ── Combined ─────────────────────────────────────────────────────────
 
 -- | Assemble the complete bridge status for the bridges page.
 bridgeFullStatus :: Connection -> IO BridgeStatus
 bridgeFullStatus conn = do
-  gh    <- gitHubBridgeStatus conn
+  gh <- gitHubBridgeStatus conn
   attic <- atticBridgeStatus conn
-  pure BridgeStatus { bsGitHub = gh, bsAttic = attic }
+  pure BridgeStatus {bsGitHub = gh, bsAttic = attic}

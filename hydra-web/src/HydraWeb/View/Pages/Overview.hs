@@ -1,21 +1,21 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Overview page HTML: dashboard with metric cards, project grid, and news.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Overview page HTML: dashboard with metric cards, project grid, and news.
 module HydraWeb.View.Pages.Overview
-  ( overviewPage
-  ) where
+  ( overviewPage,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Lucid
-
 import HydraWeb.Models.Project (Project (..))
 import HydraWeb.Models.Queue (NavCounts (..), NewsItem (..))
-import HydraWeb.View.Components (projectURL, fmtTime, metricCard)
+import HydraWeb.View.Components (fmtTime, metricCard, projectURL)
+import Lucid
 
 -- | Render the overview page content with dashboard metrics and project cards.
 overviewPage :: Text -> NavCounts -> [Project] -> [NewsItem] -> Html ()
@@ -33,7 +33,7 @@ overviewPage bp counts projects news = do
   -- News section (if any items).
   case news of
     [] -> pure ()
-    _  -> details_ [open_ ""] $ do
+    _ -> details_ [open_ ""] $ do
       summary_ "News"
       mapM_ renderNewsItem news
 

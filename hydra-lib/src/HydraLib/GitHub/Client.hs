@@ -1,9 +1,6 @@
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | GitHub REST API client utilities.
--- Provides a monad for GitHub API calls with configurable endpoint URL,
--- and helpers for GitHub App authentication (JWT signing, installation tokens).
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
@@ -11,19 +8,23 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 
+-- | GitHub REST API client utilities.
+-- Provides a monad for GitHub API calls with configurable endpoint URL,
+-- and helpers for GitHub App authentication (JWT signing, installation tokens).
 module HydraLib.GitHub.Client
-  ( GitHubRestT (..)
-  , GitHubRestConfig (..)
-  , GitHubRestManager (..)
-  , DecodeError (..)
-  , RESTKeyValue (..)
-  , runGitHubRestT
-  , gitHubRestConfig
-  , gitHubApiVersion
-  , loadSigner
-  , fetchInstallations
-  , fetchAppInstallationToken
-  ) where
+  ( GitHubRestT (..),
+    GitHubRestConfig (..),
+    GitHubRestManager (..),
+    DecodeError (..),
+    RESTKeyValue (..),
+    runGitHubRestT,
+    gitHubRestConfig,
+    gitHubApiVersion,
+    loadSigner,
+    fetchInstallations,
+    fetchAppInstallationToken,
+  )
+where
 
 import Control.Exception (Exception, throwIO)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -42,48 +43,48 @@ import Data.Time.Format.ISO8601 (iso8601ParseM)
 import Data.X509 (PrivKey (..))
 import Data.X509.File (readKeyFile)
 import GitHub.REST
-  ( GHEndpoint (..)
-  , GitHubSettings (..)
-  , KeyValue (..)
-  , MonadGitHubREST (..)
-  , StdMethod (..)
-  , Token (..)
-  , (.:)
+  ( GHEndpoint (..),
+    GitHubSettings (..),
+    KeyValue (..),
+    MonadGitHubREST (..),
+    StdMethod (..),
+    Token (..),
+    (.:),
   )
 import GitHub.REST.Auth (fromToken, getJWTToken)
 import GitHub.REST.Endpoint (endpointPath, renderMethod)
 import GitHub.REST.KeyValue (kvToValue)
 import GitHub.REST.PageLinks (PageLinks, parsePageLinks)
+import HydraLib.GitHub.Types (TokenLease (..))
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (hAccept, hAuthorization, hUserAgent)
 
-import HydraLib.GitHub.Types (TokenLease (..))
-
 -- | A monad for GitHub REST API requests with configurable endpoint URL.
 -- Similar to @GitHubT@ from github-rest, but allows overriding the API URL
 -- for testing with a fake API.
 newtype GitHubRestT m a = GitHubRestT
-  { unRestT :: ReaderT GitHubRestConfig m a }
+  {unRestT :: ReaderT GitHubRestConfig m a}
   deriving (Functor, Applicative, Monad, MonadFail, MonadIO, MonadTrans)
 
 data GitHubRestConfig = GitHubRestConfig
-  { cfgSettings  :: GitHubSettings
-  , cfgManager   :: Manager
-  , cfgGitHubUrl :: Text
+  { cfgSettings :: GitHubSettings,
+    cfgManager :: Manager,
+    cfgGitHubUrl :: Text
   }
 
 data GitHubRestManager = GitHubManager
-  { mgrSettings :: GitHubSettings
-  , mgrUrl      :: Text
-  , mgrManager  :: Manager
+  { mgrSettings :: GitHubSettings,
+    mgrUrl :: Text,
+    mgrManager :: Manager
   }
 
 data DecodeError = DecodeError
-  { decodeErrorMessage  :: Text
-  , decodeErrorResponse :: Text
-  } deriving (Show)
+  { decodeErrorMessage :: Text,
+    decodeErrorResponse :: Text
+  }
+  deriving (Show)
 
 instance Exception DecodeError
 
@@ -109,14 +110,15 @@ queryGitHubRestPage (GitHubRestConfig {..}) ghEndpoint = do
         | otherwise = [("X-GitHub-Api-Version", apiVersion)]
       request =
         (HTTP.parseRequest_ $ Text.unpack $ cfgGitHubUrl <> endpointPath ghEndpoint)
-          { HTTP.method = renderMethod ghEndpoint
-          , HTTP.requestHeaders =
-              [ (hAccept, "application/vnd.github+json")
-              , (hUserAgent, userAgent)
-              ] ++ apiVersionHeader
-                ++ maybe [] ((: []) . (hAuthorization,) . fromToken) token
-          , HTTP.requestBody = HTTP.RequestBodyLBS $ Aeson.encode $ kvToValue $ ghData ghEndpoint
-          , HTTP.checkResponse = HTTP.throwErrorStatusCodes
+          { HTTP.method = renderMethod ghEndpoint,
+            HTTP.requestHeaders =
+              [ (hAccept, "application/vnd.github+json"),
+                (hUserAgent, userAgent)
+              ]
+                ++ apiVersionHeader
+                ++ maybe [] ((: []) . (hAuthorization,) . fromToken) token,
+            HTTP.requestBody = HTTP.RequestBodyLBS $ Aeson.encode $ kvToValue $ ghData ghEndpoint,
+            HTTP.checkResponse = HTTP.throwErrorStatusCodes
           }
   response <- HTTP.httpLbs request cfgManager
   let body = HTTP.responseBody response
@@ -124,10 +126,12 @@ queryGitHubRestPage (GitHubRestConfig {..}) ghEndpoint = do
       pageLinks = maybe mempty parsePageLinks . lookupHeader "Link" $ response
   case Aeson.eitherDecode nonEmptyBody of
     Right payload -> return (payload, pageLinks)
-    Left e -> throwIO $ DecodeError
-      { decodeErrorMessage = Text.pack e
-      , decodeErrorResponse = Text.decodeUtf8 $ LByteString.toStrict body
-      }
+    Left e ->
+      throwIO $
+        DecodeError
+          { decodeErrorMessage = Text.pack e,
+            decodeErrorResponse = Text.decodeUtf8 $ LByteString.toStrict body
+          }
   where
     lookupHeader headerName = fmap Text.decodeUtf8 . lookup headerName . HTTP.responseHeaders
 
@@ -139,11 +143,12 @@ runGitHubRestT settings url action = do
 gitHubRestConfig :: GitHubSettings -> Text -> IO GitHubRestConfig
 gitHubRestConfig ghSettings ghUrl = do
   ghManager <- HTTP.newManager tlsManagerSettings
-  pure $ GitHubRestConfig
-    { cfgSettings = ghSettings
-    , cfgGitHubUrl = ghUrl
-    , cfgManager = ghManager
-    }
+  pure $
+    GitHubRestConfig
+      { cfgSettings = ghSettings,
+        cfgGitHubUrl = ghUrl,
+        cfgManager = ghManager
+      }
 
 -- | GitHub API version header value.
 gitHubApiVersion :: ByteString
@@ -162,47 +167,59 @@ fetchInstallations :: Text -> Int -> FilePath -> ByteString -> IO [(Text, Int)]
 fetchInstallations ghEndpointUrl appId appKeyFile ghUserAgent = do
   signer <- loadSigner appKeyFile
   jwt <- getJWTToken signer appId
-  let githubSettings = GitHubSettings
-        { token = Just jwt
-        , userAgent = ghUserAgent
-        , apiVersion = gitHubApiVersion
-        }
-  response <- liftIO $ runGitHubRestT githubSettings ghEndpointUrl $ queryGitHub
-    GHEndpoint
-      { method = GET
-      , endpoint = "/app/installations"
-      , endpointVals = []
-      , ghData = []
-      }
-  return $ map (\inst ->
-    let account = inst .: "account" :: Value
-    in (account .: "login", inst .: "id")
-    ) response
+  let githubSettings =
+        GitHubSettings
+          { token = Just jwt,
+            userAgent = ghUserAgent,
+            apiVersion = gitHubApiVersion
+          }
+  response <-
+    liftIO $
+      runGitHubRestT githubSettings ghEndpointUrl $
+        queryGitHub
+          GHEndpoint
+            { method = GET,
+              endpoint = "/app/installations",
+              endpointVals = [],
+              ghData = []
+            }
+  return $
+    map
+      ( \inst ->
+          let account = inst .: "account" :: Value
+           in (account .: "login", inst .: "id")
+      )
+      response
 
 -- | Fetch an installation access token for a specific GitHub App installation.
 fetchAppInstallationToken :: Text -> Int -> FilePath -> ByteString -> Int -> IO TokenLease
 fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
   signer <- loadSigner appKeyFile
   jwt <- getJWTToken signer appId
-  let githubSettings = GitHubSettings
-        { token = Just jwt
-        , userAgent = ghUserAgent
-        , apiVersion = gitHubApiVersion
-        }
-  response <- liftIO $ runGitHubRestT githubSettings ghEndpointUrl $ queryGitHub
-    GHEndpoint
-      { method = POST
-      , endpoint = "/app/installations/:appInstallId/access_tokens"
-      , endpointVals = ["appInstallId" := appInstallationId]
-      , ghData =
-          [ "permissions" :=
-              [ "checks" := ("write" :: String)
-              , "statuses" := ("write" :: String)
-              ]
-          ]
-      }
+  let githubSettings =
+        GitHubSettings
+          { token = Just jwt,
+            userAgent = ghUserAgent,
+            apiVersion = gitHubApiVersion
+          }
+  response <-
+    liftIO $
+      runGitHubRestT githubSettings ghEndpointUrl $
+        queryGitHub
+          GHEndpoint
+            { method = POST,
+              endpoint = "/app/installations/:appInstallId/access_tokens",
+              endpointVals = ["appInstallId" := appInstallationId],
+              ghData =
+                [ "permissions"
+                    := [ "checks" := ("write" :: String),
+                         "statuses" := ("write" :: String)
+                       ]
+                ]
+            }
   expiry <- iso8601ParseM (response .: "expires_at" :: String)
-  return $ TokenLease
-    { token = BearerToken $ cs (response .: "token" :: String)
-    , expiry = Just expiry
-    }
+  return $
+    TokenLease
+      { token = BearerToken $ cs (response .: "token" :: String),
+        expiry = Just expiry
+      }

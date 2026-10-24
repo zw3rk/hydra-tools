@@ -15,15 +15,13 @@ import Control.Monad
 import Data.Aeson (toJSON)
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.List (find)
-import Data.Maybe (catMaybes)
+import Data.IORef (IORef, newIORef)
 import Data.Set qualified as Set
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
-import Data.Time.Clock (NominalDiffTime, addUTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
@@ -32,6 +30,7 @@ import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
+import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
@@ -85,20 +84,24 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
           execute_ conn "NOTIFY github_status"
       )
 
--- | Fetch tokens for the app's installations that are also listed in
--- GITHUB_APP_INSTALL_IDS.  Anyone can install a public GitHub App, so the
--- installation list can include owners we do not serve; a token for one of
--- those could never be refreshed (see 'getValidGitHubToken').
+-- | Fetch tokens only for app installations listed in GITHUB_APP_INSTALL_IDS.
+-- Anyone can install a public GitHub App, so the discovered list may include
+-- owners this bridge does not serve.
 fetchGitHubTokens :: Int -> FilePath -> Text -> ByteString -> [(String, Int)] -> IO [(String, TokenLease)]
 fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds = do
   putStrLn "Fetching GitHub App installations..."
   allInstalls <- fetchInstallations ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent
   putStrLn $ "Found " <> show (length allInstalls) <> " installations"
-  let configured (owner, _) = Text.unpack owner `elem` map fst ghAppInstallIds
-      ghAppInstalls = filter configured allInstalls
+  let configuredOwners = map (Text.pack . fst) ghAppInstallIds
+      configured (owner, _) = owner `elem` configuredOwners
+      ghAppInstalls = retainConfiguredOwners configuredOwners allInstalls
   forM_ allInstalls $ \inst@(owner, installId) -> do
     Text.putStrLn $
-      "\t- " <> owner <> " (" <> Text.pack (show installId) <> ")"
+      "\t- "
+        <> owner
+        <> " ("
+        <> Text.pack (show installId)
+        <> ")"
         <> if configured inst then "" else " skipped: not in GITHUB_APP_INSTALL_IDS"
 
   forM ghAppInstalls $ \(owner, installId) -> do
@@ -111,33 +114,15 @@ getValidGitHubToken ::
   Text ->
   ByteString ->
   IO [(String, TokenLease)]
-getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent =
-  let buffer = 5 :: NominalDiffTime
-   in getValidToken buffer ghTokens $ \owner -> do
-        putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
-        ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
-        ghAppInstallIds <- getEnv "GITHUB_APP_INSTALL_IDS" >>= return . read @[(String, Int)]
-        let ghAppInstallId = fmap snd . find ((owner ==) . fst) $ ghAppInstallIds
-        ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
-        case ghAppInstallId of
-          -- Raising here used to fail every caller (status delivery and the
-          -- PR sync alike) once an hour, when the leases expired.  Drop the
-          -- owner instead.
-          Nothing -> do
-            putStrLn $ "No configured GitHub App Installation ID for " <> owner <> ", dropping its token"
-            return Nothing
-          Just installId -> Just <$> fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
-
-getValidToken :: NominalDiffTime -> IORef [(String, TokenLease)] -> (String -> IO (Maybe TokenLease)) -> IO [(String, TokenLease)]
-getValidToken buffer lease fetch = do
-  leases' <- readIORef lease
+getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent = do
   now <- getCurrentTime
-  leases'' <- fmap catMaybes . forM leases' $ \(owner, tok) -> do
-    case tok.expiry of
-      Just expiry' | addUTCTime buffer now < expiry' -> return (Just (owner, tok))
-      _ -> fmap (owner,) <$> fetch owner
-  writeIORef lease leases''
-  return leases''
+  let buffer = 5 :: NominalDiffTime
+  refreshTokensAt now buffer (.expiry) ghTokens $ \lease -> do
+    putStrLn $ "GitHub token expired or will expire within the next " <> show buffer <> ", fetching a new one..."
+    ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
+    ghAppKeyFile <- getEnv "GITHUB_APP_KEY_FILE"
+    -- Renew the same installation that issued the lease.
+    fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent lease.installationId
 
 main :: IO ()
 main = do
@@ -161,7 +146,7 @@ main = do
   ghKey <- do
     v <- lookupEnv "GITHUB_WEBHOOK_SECRET"
     case v of
-      Just k  -> pure (C8.pack k)
+      Just k -> pure (C8.pack k)
       Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
   filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
@@ -190,10 +175,14 @@ main = do
 
   putStrLn $ "Server is starting on port " ++ show port
   when sseEnabled $
-    putStrLn $ "SSE server will start on port " ++ show ssePort
+    putStrLn $
+      "SSE server will start on port " ++ show ssePort
   when syncEnabled $
-    putStrLn $ "Sync worker will run every " ++ show syncInterval ++ "s"
-      ++ if syncDryRun then " (DRY RUN)" else ""
+    putStrLn $
+      "Sync worker will run every "
+        ++ show syncInterval
+        ++ "s"
+        ++ if syncDryRun then " (DRY RUN)" else ""
 
   -- Initialize SSE status cache
   cache <- newStatusCache
@@ -207,65 +196,70 @@ main = do
   -- dedicated connection with autocommit.
   withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \migConn -> do
     putStrLn "Ensuring partial index idx_github_status_payload_unsent exists..."
-    _ <- execute_ migConn
-      "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
-      \idx_github_status_payload_unsent \
-      \ON github_status_payload (status_id, id DESC) \
-      \WHERE sent IS NULL AND tries < 5"
+    _ <-
+      execute_
+        migConn
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
+        \idx_github_status_payload_unsent \
+        \ON github_status_payload (status_id, id DESC) \
+        \WHERE sent IS NULL AND tries < 5"
     putStrLn "Index ready."
 
   Async.mapConcurrently_
-    id $
-    [ Async.replicateConcurrently_
-        numWorkers
-        ( withConnect
-            (ConnectInfo db 5432 db_user db_pass "hydra")
-            (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
-        ),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-        hydraClient env conn,
-      -- Use the SSE-broadcasting variant of the notification watcher.
-      withConnect
-        (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
-      -- Periodically prune stale notifications for old commits that
-      -- have already been superseded by newer evaluations.  Only marks
-      -- a payload as sent when a later payload for the same
-      -- (owner, repo, name) has already been successfully delivered.
-      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-        forever $ do
-          threadDelay (5 * 60 * 1000000) -- 5 minutes
-          pruned <- execute_ conn
-            "UPDATE github_status_payload SET sent = NOW() \
-            \WHERE id IN ( \
-            \  SELECT p.id \
-            \  FROM github_status_payload p \
-            \  JOIN github_status s ON s.id = p.status_id \
-            \  WHERE p.sent IS NULL AND p.tries < 5 \
-            \    AND EXISTS ( \
-            \      SELECT 1 \
-            \      FROM github_status_payload p2 \
-            \      JOIN github_status s2 ON s2.id = p2.status_id \
-            \      WHERE s2.owner = s.owner AND s2.repo = s.repo AND s2.name = s.name \
-            \        AND p2.sent IS NOT NULL AND p2.id > p.id \
-            \    ) \
-            \)"
-          when (pruned > 0) $
-            putStrLn $ "Pruned " ++ show pruned ++ " stale notification(s)"
-    ]
-    ++ [ runSSEServer cache ssePort sseTtl | sseEnabled ]
-    ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-           syncLoop
-             SyncConfig
-               { scInterval = syncInterval,
-                 scDryRun = syncDryRun,
-                 scEndpoint = ghEndpointUrl,
-                 scUserAgent = ghUserAgent,
-                 scTokensRef = ghTokens,
-                 scGetTokens = getValidGitHubToken'
-               }
-             conn
-       | syncEnabled
-       ]
+    id
+    $ [ Async.replicateConcurrently_
+          numWorkers
+          ( withConnect
+              (ConnectInfo db 5432 db_user db_pass "hydra")
+              (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
+          ),
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          hydraClient env conn,
+        -- Use the SSE-broadcasting variant of the notification watcher.
+        withConnect
+          (ConnectInfo db 5432 db_user db_pass "hydra")
+          (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
+          run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
+        -- Periodically prune stale notifications for old commits that
+        -- have already been superseded by newer evaluations.  Only marks
+        -- a payload as sent when a later payload for the same
+        -- (owner, repo, name) has already been successfully delivered.
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          forever $ do
+            threadDelay (5 * 60 * 1000000) -- 5 minutes
+            pruned <-
+              execute_
+                conn
+                "UPDATE github_status_payload SET sent = NOW() \
+                \WHERE id IN ( \
+                \  SELECT p.id \
+                \  FROM github_status_payload p \
+                \  JOIN github_status s ON s.id = p.status_id \
+                \  WHERE p.sent IS NULL AND p.tries < 5 \
+                \    AND EXISTS ( \
+                \      SELECT 1 \
+                \      FROM github_status_payload p2 \
+                \      JOIN github_status s2 ON s2.id = p2.status_id \
+                \      WHERE s2.owner = s.owner AND s2.repo = s.repo AND s2.name = s.name \
+                \        AND p2.sent IS NOT NULL AND p2.id > p.id \
+                \    ) \
+                \)"
+            when (pruned > 0) $
+              putStrLn $
+                "Pruned " ++ show pruned ++ " stale notification(s)"
+      ]
+      ++ [runSSEServer cache ssePort sseTtl | sseEnabled]
+      ++ [ withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+             syncLoop
+               SyncConfig
+                 { scInterval = syncInterval,
+                   scDryRun = syncDryRun,
+                   scEndpoint = ghEndpointUrl,
+                   scUserAgent = ghUserAgent,
+                   scTokensRef = ghTokens,
+                   scGetTokens = getValidGitHubToken'
+                 }
+               conn
+         | syncEnabled
+         ]

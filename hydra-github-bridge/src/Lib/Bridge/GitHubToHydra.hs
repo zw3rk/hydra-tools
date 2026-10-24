@@ -72,12 +72,14 @@ singleEndpoint orgs env conn =
 isOrgAllowed :: Set Text -> Text -> Bool
 isOrgAllowed orgs repoName =
   let (org, _) = splitRepo repoName
-  in Set.member org orgs
+   in Set.member org orgs
 
 pushHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
 pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
-  | not (isOrgAllowed orgs repoName) = liftIO $
-      putStrLn $ "Ignoring push from non-allowed org: " ++ Text.unpack repoName
+  | not (isOrgAllowed orgs repoName) =
+      liftIO $
+        putStrLn $
+          "Ignoring push from non-allowed org: " ++ Text.unpack repoName
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
     Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
     "0000000000000000000000000000000000000000" == headSha =
@@ -167,8 +169,10 @@ pullRequestHook
         evPullReqRepo = HookRepository {whRepoFullName = repoName}
       }
     )
-    | not (isOrgAllowed orgs repoName) = liftIO $
-        putStrLn $ "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
+    | not (isOrgAllowed orgs repoName) =
+        liftIO $
+          putStrLn $
+            "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
     | action
         `elem` [ PullRequestOpenedAction,
                  PullRequestReopenedAction,
@@ -305,16 +309,17 @@ checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventA
 
   if not (isOrgAllowed orgs repoName)
     then putStrLn $ "Ignoring check-run from non-allowed org: " ++ Text.unpack repoName
-    else if "ci/eval" `Text.isPrefixOf` checkRunName
-      then forM_ prs $ \pr -> do
-        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+    else
+      if "ci/eval" `Text.isPrefixOf` checkRunName
+        then forM_ prs $ \pr -> do
+          let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
-      else do
-        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
-        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.RestartBuild externalId
+          putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+          Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
+        else do
+          let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
+          putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+          Hydra.writeCommand conn $ Hydra.RestartBuild externalId
 checkRunHook _orgs _ _ (_, ev) =
   liftIO . putStrLn $
     "Unhandled checkRunEvent with action: "
