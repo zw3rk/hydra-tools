@@ -23,6 +23,7 @@
         flake/packages/mockoon-cli
         flake/nixosModules.nix
         flake/tests.nix
+        flake/iog-scenarios
       ];
 
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
