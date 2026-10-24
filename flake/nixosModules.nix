@@ -84,6 +84,16 @@
                 '';
               };
 
+              hydraPublicUrl = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                example = "https://hydra.example.com/ci";
+                description = ''
+                  Public Hydra URL used in GitHub check-run details links. When
+                  unset, HYDRA_HOST is used for backwards compatibility.
+                '';
+              };
+
               hydraUser = mkOption {
                 type = types.str;
                 default = "";
@@ -148,6 +158,17 @@
                 description = ''
                   When true, log reconciliation actions without actually
                   queuing create/disable commands.
+                '';
+              };
+
+              repoFlakeDirs = mkOption {
+                type = types.str;
+                default = "[]";
+                example = "[(\"zw3rk/infra\", \"ops\")]";
+                description = ''
+                  Optional (owner/repo, directory) pairs for repositories whose
+                  Nix flake lives below the repository root. Formatted as a
+                  Haskell list, for example [("zw3rk/infra", "ops")].
                 '';
               };
 
@@ -225,6 +246,9 @@
                   HYDRA_DB = iCfg.hydraDb;
                   PORT = toString iCfg.port;
                 }
+                // lib.optionalAttrs (iCfg.hydraPublicUrl != null) {
+                  HYDRA_PUBLIC_URL = iCfg.hydraPublicUrl;
+                }
                 // lib.optionalAttrs (iCfg.ghUserAgent != null) {
                   GITHUB_USER_AGENT = iCfg.ghUserAgent;
                 }
@@ -245,6 +269,9 @@
                   SYNC_ENABLED = lib.boolToString iCfg.enableSync;
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
+                }
+                // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
+                  REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;
                 };
 
               script = ''

@@ -27,6 +27,8 @@ import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.PublicUrl (normalizePublicBase)
+import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
@@ -35,6 +37,7 @@ import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
 import System.Environment (getEnv, lookupEnv)
+import System.Exit (die)
 import System.IO
   ( BufferMode (LineBuffering),
     hSetBuffering,
@@ -47,13 +50,13 @@ import System.IO
 -- statuses to the SSE cache for real-time client consumption.
 notificationWatcherWithSSE ::
   StatusCache ->
-  String ->
+  Text ->
   String ->
   Text ->
   Bool ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = do
+notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -66,7 +69,7 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
   forever $ do
     putStrLn "Waiting for notification..."
     note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs note
 
     -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
     broadcastCheckRuns cache statuses
@@ -132,6 +135,12 @@ main = do
 
   -- Read environment variables
   host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
+  publicUrl <- lookupEnv "HYDRA_PUBLIC_URL"
+  publicBase <-
+    either
+      (\err -> die $ "Invalid Hydra public URL: " <> Text.unpack err)
+      pure
+      (normalizePublicBase $ Text.pack $ maybe host id publicUrl)
   db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
   db_user <- maybe mempty id <$> lookupEnv "HYDRA_DB_USER"
   db_pass <- maybe mempty id <$> lookupEnv "HYDRA_DB_PASS"
@@ -160,6 +169,8 @@ main = do
   syncEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_ENABLED"
   syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
+  repoFlakeDirsRaw <- maybe "[]" id <$> lookupEnv "REPO_FLAKE_DIRS"
+  repoFlakeDirs <- either die pure (parseRepoFlakeDirs repoFlakeDirsRaw)
 
   -- Authenticate to GitHub and derive the set of allowed orgs from
   -- configured installations. Only webhooks from these orgs will be processed.
@@ -218,9 +229,9 @@ main = do
         -- Use the SSE-broadcasting variant of the notification watcher.
         withConnect
           (ConnectInfo db 5432 db_user db_pass "hydra")
-          (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
+          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs),
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
+          run port (app allowedOrgs repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
         -- Periodically prune stale notifications for old commits that
         -- have already been superseded by newer evaluations.  Only marks
         -- a payload as sent when a later payload for the same
@@ -258,7 +269,8 @@ main = do
                    scEndpoint = ghEndpointUrl,
                    scUserAgent = ghUserAgent,
                    scTokensRef = ghTokens,
-                   scGetTokens = getValidGitHubToken'
+                   scGetTokens = getValidGitHubToken',
+                   scRepoFlakeDirs = repoFlakeDirs
                  }
                conn
          | syncEnabled

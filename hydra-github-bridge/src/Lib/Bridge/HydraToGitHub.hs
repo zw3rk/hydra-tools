@@ -63,6 +63,7 @@ import GitHub.REST
     queryGitHub,
   )
 import Lib (binarySearch)
+import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
@@ -89,6 +90,7 @@ tshow = cs . show
 
 notificationWatcher :: String -> String -> Text -> Bool -> Connection -> IO ()
 notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
+  publicBase <- either (ioError . userError . Text.unpack . ("Invalid Hydra public URL: " <>)) pure (normalizePublicBase $ cs host)
   _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
   _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
   _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
@@ -101,7 +103,7 @@ notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
   forever $ do
     putStrLn "Waiting for notification..."
     note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs note
     forM_ statuses $
       ( \(GitHub.CheckRun owner repo payload) -> do
           Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
@@ -261,7 +263,7 @@ parseGitHubFlakeURI uri
         _ -> Nothing
 
 handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Bool -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
+handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
   -- Evaluations
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -273,7 +275,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             GitHub.CheckRunPayload
               { name = "ci/eval",
                 headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/jobset/" <> proj <> "/" <> name,
+                detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
                 externalId = Just $ tshow jid,
                 status = GitHub.InProgress,
                 conclusion = Nothing,
@@ -294,7 +296,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             GitHub.CheckRunPayload
               { name = "ci/eval",
                 headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/jobset/" <> proj <> "/" <> name,
+                detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
                 externalId = Just $ tshow jid,
                 status = GitHub.Completed,
                 conclusion = Just GitHub.Failure,
@@ -328,7 +330,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             GitHub.CheckRunPayload
               { name = checkRunPrefix <> job,
                 headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                 externalId = Just $ tshow bid,
                 status = GitHub.Queued,
                 conclusion = Nothing,
@@ -350,7 +352,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             GitHub.CheckRunPayload
               { name = checkRunPrefix <> job,
                 headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                 externalId = Just $ tshow bid,
                 status = GitHub.InProgress,
                 conclusion = Nothing,
@@ -400,7 +402,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
                       GitHub.CheckRunPayload
                         { name = "ci/eval",
                           headSha = hash,
-                          detailsUrl = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors",
+                          detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid <> "#tabs-errors"),
                           externalId = Just $ tshow eid,
                           status = GitHub.Completed,
                           conclusion = Just GitHub.Failure,
@@ -424,7 +426,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
                            GitHub.CheckRunPayload
                              { name = "ci/eval:" <> job,
                                headSha = hash,
-                               detailsUrl = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors",
+                               detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid <> "#tabs-errors"),
                                externalId = Just $ tshow eid,
                                status = GitHub.Completed,
                                conclusion = Just GitHub.Failure,
@@ -446,7 +448,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
                     GitHub.CheckRunPayload
                       { name = "ci/eval",
                         headSha = hash,
-                        detailsUrl = Just $ "https://" <> host <> "/eval/" <> tshow eid <> "#tabs-errors",
+                        detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid <> "#tabs-errors"),
                         externalId = Just $ tshow eid,
                         status = GitHub.Completed,
                         conclusion = Just GitHub.Failure,
@@ -466,7 +468,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
                 GitHub.CheckRunPayload
                   { name = "ci/eval",
                     headSha = hash,
-                    detailsUrl = Just $ "https://" <> host <> "/eval/" <> tshow eid,
+                    detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid),
                     externalId = Just $ tshow eid,
                     status = GitHub.Completed,
                     conclusion = Just GitHub.Success,
@@ -552,7 +554,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
               GitHub.CheckRunPayload
                 { name = checkRunPrefix <> job,
                   headSha = hash,
-                  detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                  detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                   externalId = Just $ tshow bid,
                   status = GitHub.Completed,
                   conclusion = Just ghCheckRunConclusion,

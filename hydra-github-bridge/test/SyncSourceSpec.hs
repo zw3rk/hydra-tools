@@ -13,10 +13,12 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Char8 qualified as ByteString
 import Data.Either (isRight)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute, execute_, query, query_)
 import GitHub.REST (Token (..))
+import Lib.Bridge.Source (flakeSourceUri, flakeSourceUriFor, parseRepoFlakeDirs)
 import Lib.Bridge.Sync
 import Lib.GitHub.Client (TokenLease (..))
 import Lib.Hydra qualified as Hydra
@@ -102,7 +104,7 @@ main = do
       let lease = TokenLease (BearerToken "fixture-token") Nothing 17
       tokens <- newIORef [("example", lease), ("IntersectMBO", lease)]
       testWithApplication (pure $ api reply pushes) $ \port -> do
-        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens)
+        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens) Map.empty
             run config = reconcileProject config conn ("project", "example", "repo")
             prepare flake = do
               reset conn
@@ -128,6 +130,124 @@ main = do
         again <- commands conn
         assert "unchanged source must not enqueue a duplicate evaluation" (again == queued)
         putStrLn "PASS stale source, complete settings preservation, ordinary evaluation, idempotence"
+
+        let configuredDirs = Map.singleton "example/repo" "ops"
+            configuredCfg = cfg {scRepoFlakeDirs = configuredDirs}
+            oldSubdirFlake = flakeSourceUri configuredDirs "example/repo" oldSha
+            currentSubdirFlake = flakeSourceUri configuredDirs "example/repo" currentSha
+            sameShaRootFlake = "github:example/repo/" <> currentSha
+        prepare sameShaRootFlake
+        rootBeforeMigration <- jobset conn
+        _ <- run configuredCfg
+        migrated <- jobset conn
+        migrationCommands <- commands conn
+        assert
+          "configured sync did not migrate the exact old root URI at the same SHA"
+          (migrated == withFlake currentSubdirFlake rootBeforeMigration)
+        assert
+          "root URI migration must enqueue one ordinary evaluation"
+          (migrationCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
+        _ <- run configuredCfg
+        afterMigrationCommands <- commands conn
+        assert "same-SHA root migration was not idempotent" (afterMigrationCommands == migrationCommands)
+        putStrLn "PASS same-SHA root-to-subdirectory migration and idempotence"
+
+        prepare oldSubdirFlake
+        _ <- run configuredCfg
+        refreshedSubdir <- jobset conn
+        subdirCommands <- commands conn
+        assert "configured subdirectory source was not refreshed" (refreshedSubdir == withFlake currentSubdirFlake before)
+        assert
+          "configured subdirectory refresh must enqueue an ordinary evaluation"
+          (subdirCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
+        putStrLn "PASS configured subdirectory source refresh"
+
+        mapM_
+          ( \flake -> do
+              prepare flake
+              original <- jobset conn
+              _ <- run configuredCfg
+              unchanged "configured sync rewrote a custom or noncanonical source" original
+          )
+          [ "github:example/repo/" <> oldSha <> "?dir=custom",
+            "github:example/repo/" <> oldSha <> "?dir=ops&rev=main",
+            "github:example/repo/main?dir=ops"
+          ]
+        putStrLn "PASS configured sync leaves custom queries and branch sources unchanged"
+
+        let inheritedForkFlake = flakeSourceUriFor configuredDirs "example/repo" "fork/repo" oldSha
+            inheritedForkTarget = flakeSourceUriFor configuredDirs "example/repo" "fork/repo" currentSha
+        prepare inheritedForkFlake
+        forkBefore <- jobset conn
+        _ <- run configuredCfg
+        forkAfter <- jobset conn
+        forkCommands <- commands conn
+        assert
+          "fork source did not inherit the configured base-repository directory"
+          (forkAfter == withFlake inheritedForkTarget forkBefore)
+        assert
+          "fork source refresh must enqueue one ordinary evaluation"
+          (forkCommands == [toJSON $ Hydra.EvaluateJobset "project" "pullrequest-7" False])
+        putStrLn "PASS inherited fork directory and settings preservation"
+
+        prepare oldFlake
+        void $ execute_ conn "DELETE FROM jobsets WHERE project = 'project' AND name = 'pullrequest-7'"
+        _ <- run configuredCfg
+        createdForkCommands <- commands conn
+        let createdForkJobset =
+              Hydra.defHydraFlakeJobset
+                { Hydra.hjName = "pullrequest-7",
+                  Hydra.hjDescription = "PR 7: PR title",
+                  Hydra.hjFlake = flakeSourceUriFor configuredDirs "example/repo" "fork/repo" currentSha
+                }
+        assert
+          "missing fork jobset did not inherit the configured base directory"
+          (createdForkCommands == [toJSON $ Hydra.CreateOrUpdateJobset "example/repo" "project" "pullrequest-7" createdForkJobset])
+        putStrLn "PASS configured directory on a newly created fork-source jobset"
+
+        let explicitForkDirs = Map.insert "fork/repo" "fork-ops" configuredDirs
+            explicitForkCfg = cfg {scRepoFlakeDirs = explicitForkDirs}
+            explicitForkFlake = flakeSourceUriFor explicitForkDirs "example/repo" "fork/repo" oldSha
+            explicitForkTarget = flakeSourceUriFor explicitForkDirs "example/repo" "fork/repo" currentSha
+        prepare explicitForkFlake
+        explicitForkBefore <- jobset conn
+        _ <- run explicitForkCfg
+        explicitForkAfter <- jobset conn
+        assert
+          "explicit fork directory did not take precedence over the base mapping"
+          (explicitForkAfter == withFlake explicitForkTarget explicitForkBefore)
+        putStrLn "PASS explicit fork directory precedence"
+
+        assert
+          "valid repository directory list did not parse"
+          (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/subdir\")]" == Right (Map.singleton "zw3rk/infra" "ops/subdir"))
+        assert
+          "empty map did not preserve root Flake URIs"
+          (flakeSourceUri Map.empty "zw3rk/infra" oldSha == "github:zw3rk/infra/" <> oldSha)
+        assert
+          "configured URI did not encode a query value"
+          ( flakeSourceUri (Map.singleton "zw3rk/infra" "ops dir/sub?part#frag") "zw3rk/infra" oldSha
+              == "github:zw3rk/infra/" <> oldSha <> "?dir=ops%20dir%2Fsub%3Fpart%23frag"
+          )
+        assert
+          "parent traversal directory was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops/../root\")]"))
+        assert
+          "absolute directory was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"/ops\")]"))
+        assert
+          "duplicate repository mappings were accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra\", \"ops\"), (\"zw3rk/infra\", \"other\")]"))
+        assert
+          "repository key with whitespace was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra bad\", \"ops\")]"))
+        assert
+          "repository key with query or fragment syntax was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs "[(\"zw3rk/infra?x#y\", \"ops\")]"))
+        assert
+          "repository key with control syntax was accepted"
+          (either (const True) (const False) (parseRepoFlakeDirs (show ([("zw3rk/infra" ++ [toEnum 9] ++ "bad", "ops")] :: [(String, String)]))))
+        putStrLn "PASS repository directory validation"
 
         mapM_
           ( \flake -> do

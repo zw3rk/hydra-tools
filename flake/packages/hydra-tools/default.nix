@@ -79,6 +79,7 @@ in {
 
     checks.sync-source = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.sync-source;
     checks.token-refresh = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.token-refresh;
+    checks.public-url = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.public-url;
 
     packages = {
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";

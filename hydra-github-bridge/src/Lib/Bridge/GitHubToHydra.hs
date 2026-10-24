@@ -38,6 +38,7 @@ import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
 import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
+import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri)
 import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
 import Lib.Hydra qualified as Hydra
@@ -52,19 +53,19 @@ import Servant.Server (serveWithContext)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-app :: Set Text -> ClientEnv -> Connection -> GitHubKey -> Application
-app orgs env conn key =
+app :: Set Text -> RepoFlakeDirs -> ClientEnv -> Connection -> GitHubKey -> Application
+app orgs flakeDirs env conn key =
   serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint orgs env conn)
+    (singleEndpoint orgs flakeDirs env conn)
 
-singleEndpoint :: Set Text -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint orgs env conn =
-  (pushHook orgs conn)
+singleEndpoint :: Set Text -> RepoFlakeDirs -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
+singleEndpoint orgs flakeDirs env conn =
+  (pushHook orgs flakeDirs conn)
     :<|> issueCommentHook
-    :<|> (pullRequestHook orgs conn)
-    :<|> (checkSuiteHook orgs env conn)
+    :<|> (pullRequestHook orgs flakeDirs conn)
+    :<|> (checkSuiteHook orgs flakeDirs env conn)
     :<|> (checkRunHook orgs conn)
 
 -- | Check if a repo's org is in the allowed set. Extracts the org from
@@ -74,8 +75,8 @@ isOrgAllowed orgs repoName =
   let (org, _) = splitRepo repoName
    in Set.member org orgs
 
-pushHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
+pushHook :: Set Text -> RepoFlakeDirs -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook orgs flakeDirs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
   | not (isOrgAllowed orgs repoName) =
       liftIO $
         putStrLn $
@@ -91,7 +92,7 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
                   Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha,
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha,
                   -- setting visiblity seems to have no effect...
                   Hydra.hjVisible = False,
                   -- ... so we just disable it.
@@ -110,7 +111,7 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
                   Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha
                 }
 
             projName = escapeHydraName repoName
@@ -129,13 +130,13 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = jobsetName,
                   Hydra.hjDescription = refName <> " " <> if "refs/heads/" `Text.isPrefixOf` ref then "branch" else "tag",
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha
                 }
 
         do
           putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
           Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pushHook _orgs _conn _ (_, ev) = liftIO $ do
+pushHook _orgs _flakeDirs _conn _ (_, ev) = liftIO $ do
   putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
   print $ (fromJust . evPushHeadSha) ev
 
@@ -157,9 +158,10 @@ issueCommentHook _ (_, ev) = liftIO $ do
   putStrLn "An issue comment was posted:"
   print $ (whIssueCommentBody . evIssueCommentPayload) ev
 
-pullRequestHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook :: Set Text -> RepoFlakeDirs -> Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
 pullRequestHook
   orgs
+  flakeDirs
   conn
   _
   ( _,
@@ -232,10 +234,10 @@ pullRequestHook
                   { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
                     Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
                     Hydra.hjFlake =
-                      "github:"
-                        <> repoName
-                        <> "/"
-                        <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
+                      flakeSourceUri
+                        flakeDirs
+                        repoName
+                        (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)))
                   }
 
               projName = escapeHydraName repoName
@@ -244,7 +246,7 @@ pullRequestHook
           liftIO $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
+pullRequestHook _orgs flakeDirs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
   let repoName = whRepoFullName (evPullReqRepo ev)
       projName = escapeHydraName repoName
       jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
@@ -254,10 +256,10 @@ pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequ
           { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
             Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
             Hydra.hjFlake =
-              "github:"
-                <> repoName
-                <> "/"
-                <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)),
+              flakeSourceUri
+                flakeDirs
+                repoName
+                (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))),
             -- setting visiblity seems to have no effect...
             Hydra.hjVisible = False,
             -- ... so we just disable it.
@@ -270,11 +272,11 @@ pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequ
   liftIO $ do
     putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
     Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _orgs _ _ (_, ev) =
+pullRequestHook _orgs _flakeDirs _ _ (_, ev) =
   liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
-checkSuiteHook :: Set Text -> ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook orgs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
+checkSuiteHook :: Set Text -> RepoFlakeDirs -> ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook orgs flakeDirs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
   let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
       repoName = whRepoFullName $ evCheckSuiteRepository ev
       projName = escapeHydraName repoName
@@ -295,9 +297,9 @@ checkSuiteHook orgs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = Chec
       Hydra.writeCommand conn $
         Hydra.UpdateJobset repoName projName jobsetName $
           jobset
-            { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
+            { Hydra.hjFlake = flakeSourceUri flakeDirs repoName (whChecksPullRequestTargetSha (whChecksPullRequestHead pr))
             }
-checkSuiteHook _ _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
+checkSuiteHook _ _ _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
 checkRunHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
 checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
