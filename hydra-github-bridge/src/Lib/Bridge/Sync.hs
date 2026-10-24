@@ -373,12 +373,21 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
 -- | Fetch org/project mappings from the @gf_org_project_map@ table.
 -- Returns @(project_name, org_name, repo_name)@ triples.
 -- Gracefully returns empty list if the table doesn't exist.
+--
+-- Mappings whose Hydra project is disabled are skipped: reconciling one
+-- would re-enable (and re-trigger) its PR jobsets.  That is how a repo
+-- transferred to a new owner ends up building every PR twice, once in the
+-- old project and once in the new one, since hydra-web re-detects the old
+-- mapping from the old jobsets' flake URLs.  A mapping whose project does
+-- not exist yet is kept, so new repos still get their project created.
 fetchOrgProjectMappings :: Connection -> IO [(Text, Text, Text)]
 fetchOrgProjectMappings conn = do
   result <-
     try
       ( query_ conn
-          "SELECT project_name, org_name, repo_name FROM gf_org_project_map"
+          "SELECT m.project_name, m.org_name, m.repo_name FROM gf_org_project_map m \
+          \LEFT JOIN projects p ON p.name = m.project_name \
+          \WHERE p.name IS NULL OR p.enabled <> 0"
       )
   case result of
     Right rows -> pure rows

@@ -77,13 +77,18 @@ listMappings conn = do
 -- | Auto-detect org/repo mappings by scanning jobsets.flake fields
 -- and falling back to parsing the project name (e.g. "zw3rk-repo" → zw3rk/repo).
 -- Only overwrites auto-detected entries (manual overrides are preserved).
+-- Disabled projects are skipped: a disabled project is usually one whose
+-- repo has moved (its jobsets still name the old owner), and a mapping for
+-- it would have the github bridge's PR sync re-enable its jobsets.
 autoDetectMappings :: Connection -> IO ()
 autoDetectMappings conn = do
   -- Phase 1: Parse flake URIs from jobsets.
   flakeRows <- query_ conn [sql|
     SELECT DISTINCT j.project, j.flake
     FROM jobsets j
+    JOIN projects p ON p.name = j.project
     WHERE j.flake IS NOT NULL AND j.flake LIKE 'github:%'
+      AND p.enabled <> 0
   |] `catch` (\(_ :: SomeException) -> pure [])
   mapM_ processFlakeRow flakeRows
 
@@ -96,7 +101,8 @@ autoDetectMappings conn = do
     |] `catch` (\(_ :: SomeException) -> pure []))
   unmapped <- query_ conn [sql|
     SELECT p.name FROM projects p
-    WHERE NOT EXISTS (
+    WHERE p.enabled <> 0
+      AND NOT EXISTS (
       SELECT 1 FROM gf_org_project_map m WHERE m.project_name = p.name
     )
   |] `catch` (\(_ :: SomeException) -> pure [])
