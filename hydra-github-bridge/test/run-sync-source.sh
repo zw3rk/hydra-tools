@@ -11,8 +11,12 @@ fi
 # PostgreSQL refuses to run as root. When a root launcher invokes this
 # fixture, re-exec it as the existing unprivileged `nobody` identity so the
 # throwaway cluster is created by an ordinary user. Non-root invocations skip
-# this block unchanged. No accounts are created or modified; when no supported
-# drop mechanism exists, fail instead of skipping or faking success.
+# this block unchanged. No accounts are created or modified; the drop uses
+# setpriv only (guaranteed on Linux by the Nix testWrapper's util-linux
+# input). When setpriv is unavailable, fail instead of skipping or faking
+# success. The fixture file is mode 0644 and the wrapper invokes it via Bash,
+# so the re-exec names an explicit Bash interpreter and never relies on the
+# fixture itself being executable.
 if [ "$(id -u)" -eq 0 ]; then
   drop_user=nobody
   drop_uid=$(id -u "$drop_user" 2>/dev/null || true)
@@ -21,12 +25,14 @@ if [ "$(id -u)" -eq 0 ]; then
     echo "run-sync-source.sh: running as root but user '$drop_user' is unavailable; refusing to run PostgreSQL as root" >&2
     exit 3
   fi
+  if [ "$drop_uid" -eq 0 ]; then
+    echo "run-sync-source.sh: refusing to run PostgreSQL as root: '$drop_user' resolves to uid 0" >&2
+    exit 3
+  fi
   if command -v setpriv >/dev/null 2>&1; then
-    exec setpriv --reuid="$drop_uid" --regid="$drop_gid" --clear-groups "$0" "$@"
-  elif command -v runuser >/dev/null 2>&1; then
-    exec runuser -u "$drop_user" -g "$drop_gid" -- "$0" "$@"
+    exec setpriv --reuid="$drop_uid" --regid="$drop_gid" --clear-groups "${BASH:-/bin/bash}" "$0" "$@"
   else
-    echo "run-sync-source.sh: running as root but neither setpriv nor runuser is available; refusing to run PostgreSQL as root" >&2
+    echo "run-sync-source.sh: running as root but setpriv is unavailable; refusing to run PostgreSQL as root" >&2
     exit 4
   fi
 fi
