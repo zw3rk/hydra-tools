@@ -10,10 +10,11 @@
 #   Lib.Bridge.Source), not `git+https:...&submodules=1`;
 # - webhook delivery via local ./send-webhook.nix (`iog-send-webhook`).
 #
-# PENDING (RED, not implemented here): upstream fix-retries (#52,
-# iog/master 11a0629/9bf8629/1e33bb3) — per-job eval failure check-runs
-# (`ci/eval:<job>`) and clearing stale failure statuses on Hydra retry.
-# The product change is intentionally out of scope; see README.md.
+# Retry coverage: upstream fix-retries (#52, iog/master
+# 11a0629/9bf8629/1e33bb3) — per-job eval failure check-runs
+# (`ci/eval:<job>`) and clearing stale failure statuses on Hydra retry —
+# is exercised by the "Retrying a failed eval ..." subtest below;
+# see README.md.
 {inputs, ...} @ parts: {
   perSystem = {
     config,
@@ -254,14 +255,121 @@
                 "iog-send-webhook http://localhost:8811/hook pull_request"
               )
 
-            # PENDING (RED): retry clears stale per-job eval failures.
-            # Upstream fix-retries (#52) reports per-job eval failures as
-            # `ci/eval:<job>` check-runs and, on the success branch of
-            # eval-done, overwrites stale failure payloads with
-            # "Evaluation succeeded on retry". That product change is
-            # intentionally NOT ported here; when it lands, add a subtest
-            # that fails an eval, retries it to success, and asserts the
-            # stale failure check-run was overwritten.
+            with subtest("Retrying a failed eval clears stale per-job eval failures"):
+              # Upstream fix-retries (#52: 11a0629, 9bf8629, 1e33bb3):
+              # per-job eval failures are reported as `ci/eval:<job>`
+              # check-runs, and a later successful eval overwrites each
+              # stale failure with "Evaluation succeeded on retry". Forge
+              # the fail-then-retry sequence against the PR jobset: point
+              # it at a per-job eval error and notify the bridge, then
+              # clear the error and notify again. Each phase is a single
+              # statement so the shared jobset row cannot race Hydra's
+              # evaluator between the update and the notification.
+              # NOTE: the forged errormsg carries real newlines via \n escapes
+              # (a literal source newline would be a Python syntax error):
+              # `parseFailedJobEvals` only matches `in job ...` on its own line.
+              hydra.succeed(
+                "psql hydra hydra -c \""
+                "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), "
+                "u AS (UPDATE jobsets SET errormsg = 'evaluation failed\nin job ‘retry-job’:\n  boom', fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), "
+                "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) "
+                "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) "
+                "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
+              )
+
+              # The per-job failure is reported alongside the `ci/eval` failure.
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "map(.request.body | fromjson) | "
+                "map(select(.name == \"ci/eval:retry-job\" and .conclusion == \"failure\")) | length >= 1'",
+                timeout=20
+              )
+
+              # A failed eval never clears: no retry-success payload exists yet.
+              hydra.succeed(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | " +
+                "jq --exit-status '" +
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
+                "map(.request.body | fromjson) | " +
+                "map(select(.name == \"ci/eval:retry-job\" and .conclusion == \"success\" and .output.title == \"Evaluation succeeded on retry\")) | length == 0'"
+              )
+
+              # Baseline `ci/eval` successes before the retry so the next
+              # assertion proves the retry re-emitted success (all evals
+              # share one flake hash, so an unscoped `>= 1` could match
+              # history).
+              ci_eval_success_before = int(hydra.succeed(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | "
+                "jq 'map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "map(.request.body | fromjson) | "
+                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length'"
+              ).strip())
+
+              # Retry the eval to success and notify the bridge again.
+              hydra.succeed(
+                "psql hydra hydra -c \""
+                "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), "
+                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), "
+                "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) "
+                "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) "
+                "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
+              )
+
+              # The retry re-emits `ci/eval` as success ...
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "map(.request.body | fromjson) | "
+                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > \" + str(ci_eval_success_before) + \"'",
+                timeout=20
+              )
+
+              # ... and overwrites the stale per-job failure.
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | "
+                "jq --exit-status '"
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
+                "map(.request.body | fromjson) | "
+                "map(select(.name == \"ci/eval:retry-job\" and .conclusion == \"success\" and .output.title == \"Evaluation succeeded on retry\")) | length == 1'",
+                timeout=20
+              )
+
+              # A second successful eval finds nothing left to clear: the
+              # cleared payload is not re-emitted.
+              ci_eval_success_retry = int(hydra.succeed(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | " +
+                "jq 'map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
+                "map(.request.body | fromjson) | " +
+                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length'"
+              ).strip())
+              hydra.succeed(
+                "psql hydra hydra -c \"" +
+                "WITH j AS (SELECT id FROM jobsets WHERE project = 'input-output-hk-sample' AND name = 'pullrequest-1347'), " +
+                "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), " +
+                "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) " +
+                "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) " +
+                "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""""
+              )
+              hydra.wait_until_succeeds(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | " +
+                "jq --exit-status '" +
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
+                "map(.request.body | fromjson) | " +
+                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > \" + str(ci_eval_success_retry) + \"'",
+                timeout=20
+              )
+              hydra.succeed(
+                "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | " +
+                "jq --exit-status '" +
+                "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
+                "map(.request.body | fromjson) | " +
+                "map(select(.name == \"ci/eval:retry-job\" and .conclusion == \"success\" and .output.title == \"Evaluation succeeded on retry\")) | length == 1'"
+              )
+
+              hydra.succeed("systemctl is-active hydra-github-bridge-all.service")
           '';
         });
     };

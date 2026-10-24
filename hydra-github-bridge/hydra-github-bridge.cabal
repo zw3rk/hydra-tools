@@ -52,6 +52,7 @@ library
     hs-source-dirs:   src
     exposed-modules:    Lib
                       , Lib.Bridge
+                      , Lib.Bridge.DB
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.Sync
@@ -77,6 +78,7 @@ executable hydra-github-bridge
     hs-source-dirs:   app, src
     other-modules:      Lib
                       , Lib.Bridge
+                      , Lib.Bridge.DB
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.Sync
@@ -119,4 +121,11 @@ test-suite public-url
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          PublicUrlSpec.hs
+    build-depends:    hydra-github-bridge
+
+test-suite bridge-status
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          BridgeStatusSpec.hs
     build-depends:    hydra-github-bridge

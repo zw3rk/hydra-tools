@@ -33,10 +33,18 @@ nix build .#checks.x86_64-linux.iog-integration-local
 nix build .#checks.x86_64-linux.iog-scenarios-local
 ```
 
-## Pending RED (not implemented, not claimed green)
+## Retry coverage
 
 Upstream `fix-retries` (#52: `11a0629`, `9bf8629`, `1e33bb3`): per-job eval
 failures reported as `ci/eval:<job>` check-runs, and stale failure statuses
 cleared ("Evaluation succeeded on retry") when Hydra retries an eval. The
-product change is out of scope for this batch; the integration file carries
-a PENDING marker where the subtest belongs.
+`integration-local` batch covers this contract with a runnable subtest
+("Retrying a failed eval clears stale per-job eval failures"): it fails an
+eval with a per-job error, asserts the `ci/eval:<job>` failure check-run
+was reported, retries the eval to success, and asserts the stale failure
+was overwritten. The fail/retry sequence is forged directly against the PR
+jobset (`UPDATE jobsets` + `INSERT INTO jobsetevals` +
+`pg_notify('eval_added')` in one statement per phase); the mock-GitHub log
+assertions reuse the batch's existing `check-runs` log pattern. The bridge
+product implementation itself lives in `hydra-github-bridge` and is not
+duplicated here.
