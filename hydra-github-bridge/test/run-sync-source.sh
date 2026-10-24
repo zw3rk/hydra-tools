@@ -14,23 +14,19 @@ db_uid=
 db_gid=
 db_role=hydra_sync_test
 if [ "$(id -u)" -eq 0 ]; then
-  drop_user=nobody
-  drop_uid=$(id -u "$drop_user" 2>/dev/null || true)
-  drop_gid=$(id -g "$drop_user" 2>/dev/null || true)
-  if [ -z "$drop_uid" ] || [ -z "$drop_gid" ]; then
-    echo "run-sync-source.sh: running as root but user '$drop_user' is unavailable; refusing to run PostgreSQL as root" >&2
-    exit 3
-  fi
-  if [ "$drop_uid" -eq 0 ]; then
-    echo "run-sync-source.sh: refusing to run PostgreSQL as root: '$drop_user' resolves to uid 0" >&2
+  # Build workers need not provide any ordinary account in /etc/passwd.
+  # Only database children receive this fixture-local NSS mapping, after a
+  # real UID/GID drop. PostgreSQL itself must still run with a nonzero EUID.
+  db_uid=65534
+  db_gid=65534
+  if [ ! -r "${HYDRA_SYNC_TEST_NSS_WRAPPER:-}" ]; then
+    echo 'run-sync-source.sh: root launcher requires the declared nss_wrapper library' >&2
     exit 3
   fi
   if ! command -v setpriv >/dev/null 2>&1; then
     echo "run-sync-source.sh: running as root but setpriv is unavailable; refusing to run PostgreSQL as root" >&2
     exit 4
   fi
-  db_uid=$drop_uid
-  db_gid=$drop_gid
 fi
 
 test_dir=$(mktemp -d /tmp/hydra-sync-source.XXXXXX)
@@ -39,7 +35,9 @@ as_postgres() {
   if [ -n "$db_uid" ]; then
     # The caller's cwd may also be private. Database subprocesses need only
     # their own directory; the test command continues in the original cwd.
-    (cd "$test_dir" && exec setpriv --reuid="$db_uid" --regid="$db_gid" --clear-groups "$@")
+    (cd "$test_dir" && exec setpriv --reuid="$db_uid" --regid="$db_gid" --clear-groups \
+      env LD_PRELOAD="$HYDRA_SYNC_TEST_NSS_WRAPPER" \
+      NSS_WRAPPER_PASSWD="$test_dir/passwd" NSS_WRAPPER_GROUP="$test_dir/group" "$@")
   else
     "$@"
   fi
@@ -57,7 +55,14 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [ -n "$db_uid" ]; then chown "$db_uid:$db_gid" "$test_dir"; fi
+if [ -n "$db_uid" ]; then
+  printf 'hydra_sync_fixture:x:%s:%s:Private PostgreSQL fixture:%s:/bin/false\n' "$db_uid" "$db_gid" "$test_dir" >"$test_dir/passwd"
+  printf 'hydra_sync_fixture:x:%s:\n' "$db_gid" >"$test_dir/group"
+  chown "$db_uid:$db_gid" "$test_dir/passwd" "$test_dir/group"
+  chown "$db_uid:$db_gid" "$test_dir"
+  [ "$(as_postgres id -u)" = "$db_uid" ]
+  [ "$(as_postgres id -un)" = hydra_sync_fixture ]
+fi
 as_postgres mkdir "$test_dir/socket"
 as_postgres initdb --auth=trust --username="$db_role" --no-locale -E UTF8 -D "$test_dir/db" >/dev/null
 started=true
