@@ -44,14 +44,14 @@
 
             # Wait for Hydra to start
             hydra.wait_for_unit("hydra-server.service")
+            # A running Starman unit can precede its listening socket.
+            hydra.wait_for_open_port(3000)
+            hydra.wait_for_unit("mock-github.service")
+            hydra.wait_for_open_port(4010)
 
             # Create the bridge user and start the bridge
             hydra.succeed("hydra-create-user bridge --password hydra --role admin")
             hydra.systemctl("start hydra-github-bridge-all.service")
-
-            # Wait for GitHub Mock server
-            hydra.wait_for_unit("mock-github.service")
-            hydra.wait_for_open_port(4010)
 
             # Wait for hydra-github-bridge (webhooks on 8811, SSE on 8812)
             hydra.wait_for_unit("hydra-github-bridge-all.service")

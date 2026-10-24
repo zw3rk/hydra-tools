@@ -18,11 +18,12 @@ import Control.Exception (bracket)
 import Control.Monad (unless, void)
 import Data.Aeson (object, toJSON, (.=))
 import Data.ByteString.Char8 qualified as ByteString
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (sort)
 import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection, close, connectPostgreSQL, execute, execute_)
 import Lib.Bridge.DB qualified as BridgeDB
-import Lib.Bridge.HydraToGitHub (EmitDecision (..), decideEmit, hasRequiredKeyword)
+import Lib.Bridge.HydraToGitHub (EmitDecision (..), decideEmit, hasRequiredKeyword, whenStatusOrJob)
 import Lib.GitHub.Client (CheckRunConclusion (..), conclusionText, failureConclusions)
 import System.Environment (getEnv)
 
@@ -179,6 +180,42 @@ failedEvalJobs = withBridgeDb $ \conn -> do
   insertPayload conn "o" "r" "h" "ci/eval:100%_x" "success"
   assertEqual "cleared jobs are not cleared again" [] =<< fetch
 
+-- Exercise the production emission gate with real bridge records. The
+-- fixture has no BuildSteps table, so unrelated Hydra step history cannot
+-- supply the prior-failure decision.
+retryTransitions :: IO ()
+retryTransitions = withBridgeDb $ \conn -> do
+  resetBridgeTables conn
+  emitted <- newIORef ([] :: [Text])
+  let checkName = "custom-check:quiet-job"
+      prior = BridgeDB.hasPriorReportedFailure conn "o" "r" "h" checkName
+      emit phase = modifyIORef' emitted (<> [phase]) >> pure []
+      transition conclusion phase =
+        void $ whenStatusOrJob True conclusion prior "quiet-job" (emit phase)
+  transition Nothing "unreported-queued"
+  assertEqual "quiet job without prior failure stays quiet" [] =<< readIORef emitted
+  transition (Just Failure) "failed"
+  -- notificationWatcher persists emitted statuses in the same tables.
+  insertPayload conn "o" "r" "h" checkName "failure"
+  transition Nothing "queued"
+  transition Nothing "started"
+  transition (Just Success) "success"
+  assertEqual "failed retry emits all transitions" ["failed", "queued", "started", "success"] =<< readIORef emitted
+  void $
+    whenStatusOrJob
+      True
+      Nothing
+      (BridgeDB.hasPriorReportedFailure conn "o" "r" "h" "other-prefix:quiet-job")
+      "quiet-job"
+      (emit "wrong-prefix")
+  assertEqual "custom prefixes remain isolated" ["failed", "queued", "started", "success"] =<< readIORef emitted
+  void $ whenStatusOrJob False Nothing (fail "unfiltered jobs must not query prior failure") "quiet-job" (emit "unfiltered")
+  void $ whenStatusOrJob True Nothing (fail "required jobs must not query prior failure") "x86_64-linux.required" (emit "required")
+  assertEqual
+    "filter flag and required job bypass lookup"
+    ["failed", "queued", "started", "success", "unfiltered", "required"]
+    =<< readIORef emitted
+
 withBridgeDb :: (Connection -> IO ()) -> IO ()
 withBridgeDb action = do
   -- This must name the throwaway cluster created by run-sync-source.sh.
@@ -194,6 +231,8 @@ main = do
   putStrLn "Pure emission-policy regressions passed"
   priorFailure
   putStrLn "Prior-failure lookup regressions passed"
+  retryTransitions
+  putStrLn "Retry transition and filtering regressions passed"
   failedEvalJobs
   putStrLn "Failed-eval cleanup regressions passed"
   putStrLn "All bridge-status regressions passed"

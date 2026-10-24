@@ -49,6 +49,10 @@
                 # HYDRA_SYNC_TEST_DATABASE); only the exercised queries differ.
                 packages.hydra-github-bridge.components.tests.bridge-status.testWrapper = [
                   "${final.writeShellScript "bridge-status-postgresql" ''
+                    set -euo pipefail
+                    ${lib.optionalString final.stdenv.isLinux ''
+                      export HYDRA_SYNC_TEST_NSS_WRAPPER=${final.nss_wrapper}/lib/libnss_wrapper.so
+                    ''}
                     export PATH=${lib.makeBinPath ([final.postgresql final.coreutils]
                       # Root launchers run only PostgreSQL as an ordinary user.
                       ++ lib.optionals final.stdenv.isLinux [final.util-linux]

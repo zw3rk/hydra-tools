@@ -59,14 +59,14 @@
 
             # Wait for Hydra to start
             hydra.wait_for_unit("hydra-server.service")
+            # A running Starman unit can precede its listening socket.
+            hydra.wait_for_open_port(3000)
+            hydra.wait_for_unit("mock-github.service")
+            hydra.wait_for_open_port(4010)
 
             # Create the bridge user and start the bridge
             hydra.succeed("hydra-create-user bridge --password hydra --role admin")
             hydra.systemctl("start hydra-github-bridge-all.service")
-
-            # Wait for GitHub Mock server
-            hydra.wait_for_unit("mock-github.service")
-            hydra.wait_for_open_port(4010)
 
             # Wait for hydra-github-bridge (webhooks on 8811, SSE on 8812)
             hydra.wait_for_unit("hydra-github-bridge-all.service")
@@ -351,7 +351,7 @@
                 "u AS (UPDATE jobsets SET errormsg = NULL, fetcherrmsg = NULL WHERE id = (SELECT id FROM j)), " +
                 "e AS (INSERT INTO jobsetevals (jobset_id, timestamp, checkouttime, evaltime, hasnewbuilds, hash, flake) " +
                 "SELECT id, extract(epoch from now())::int, 1, 1, 1, 'd6fde92930d4715a2b49857d24b940956b26d2d3', 'github:input-output-hk/sample/d6fde92930d4715a2b49857d24b940956b26d2d3' FROM j RETURNING id, jobset_id) " +
-                "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""""
+                "SELECT pg_notify('eval_added', '0 ' || (SELECT jobset_id FROM e) || ' ' || (SELECT id FROM e))\""
               )
               hydra.wait_until_succeeds(
                 "curl -s 'http://localhost:4010/mockoon-admin/logs?limit=200' | " +
