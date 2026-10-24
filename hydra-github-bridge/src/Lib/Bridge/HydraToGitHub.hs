@@ -63,6 +63,7 @@ import GitHub.REST
     queryGitHub,
   )
 import Lib (binarySearch)
+import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
@@ -70,7 +71,6 @@ import Lib.GitHub (CheckRunConclusion)
 import Lib.GitHub qualified as GitHub
 import Lib.Hydra (BuildStatus)
 import Lib.Hydra qualified as Hydra
-import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Network.HTTP.Client qualified as HTTP
 import System.FilePath
   ( takeFileName,
