@@ -255,6 +255,15 @@
                 "iog-send-webhook http://localhost:8811/hook pull_request"
               )
 
+            # The remaining cases control evaluation rows explicitly. Drain
+            # webhook commands first, then stop only the private VM producers
+            # so they cannot overwrite the notification fixture's SQL state.
+            hydra.wait_until_succeeds(
+              "psql -At hydra hydra -c 'SELECT count(*) FROM github_commands WHERE processed IS NULL' | grep -qx 0",
+              timeout=20
+            )
+            hydra.systemctl("stop hydra-evaluator.service hydra-queue-runner.service")
+
             with subtest("Retrying a failed eval clears stale per-job eval failures"):
               # Upstream fix-retries (#52: 11a0629, 9bf8629, 1e33bb3):
               # per-job eval failures are reported as `ci/eval:<job>`
@@ -323,7 +332,7 @@
                 "jq --exit-status '"
                 "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | "
                 "map(.request.body | fromjson) | "
-                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > \" + str(ci_eval_success_before) + \"'",
+                f"map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > {ci_eval_success_before}'",
                 timeout=20
               )
 
@@ -358,7 +367,7 @@
                 "jq --exit-status '" +
                 "map(select(.request.urlPath == \"/repos/input-output-hk/sample/check-runs\")) | " +
                 "map(.request.body | fromjson) | " +
-                "map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > \" + str(ci_eval_success_retry) + \"'",
+                f"map(select(.name == \"ci/eval\" and .conclusion == \"success\")) | length > {ci_eval_success_retry}'",
                 timeout=20
               )
               hydra.succeed(

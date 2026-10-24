@@ -48,3 +48,11 @@ jobset (`UPDATE jobsets` + `INSERT INTO jobsetevals` +
 assertions reuse the batch's existing `check-runs` log pattern. The bridge
 product implementation itself lives in `hydra-github-bridge` and is not
 duplicated here.
+
+The VM workflow cases use synthetic GitHub revisions and exercise evaluation
+requests and fetch-failure status delivery; they do not build a compiler or
+qualify production builds. Fetch retries are bounded inside these private VMs.
+After webhook commands drain, the manual evaluation-notification cases stop the
+VM evaluator/queue runner to keep their SQL state controlled. The real bridge,
+PostgreSQL notifications and mock HTTP status delivery remain active, and the
+assertions verify successful delivery as well as request content.

@@ -25,7 +25,15 @@
   ];
 
   # The fixture creates flake jobsets and exercises Hydra's flake evaluator.
-  nix.settings.experimental-features = ["nix-command" "flakes"];
+  nix.settings = {
+    experimental-features = ["nix-command" "flakes"];
+    # Webhooks use synthetic GitHub revisions. Fetch-failure status reporting
+    # must finish within the test's existing assertion bound, without retries
+    # depending on the surrounding build sandbox's DNS/network availability.
+    connect-timeout = 1;
+    download-attempts = 1;
+    stalled-download-timeout = 1;
+  };
 
   environment.variables = {
     # Required by `iog-send-webhook` in the test scripts.
