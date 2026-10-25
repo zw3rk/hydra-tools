@@ -30,7 +30,7 @@ module Lib.GitHub.Client
   )
 where
 
-import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Exception (Exception, SomeException, throwIO)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader (..), ReaderT (..))
 import Control.Monad.Trans (MonadTrans)
@@ -63,6 +63,7 @@ import GitHub.REST.Auth (fromToken, getJWTToken)
 import GitHub.REST.Endpoint (endpointPath, renderMethod)
 import GitHub.REST.KeyValue (kvToValue)
 import GitHub.REST.PageLinks (PageLinks, parsePageLinks)
+import Lib.Exception (tryNonAsync)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -371,7 +372,7 @@ fetchAppInstallationToken :: Text -> Int -> FilePath -> ByteString -> Int -> IO 
 fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
   -- Try extended permissions first (needed for PR sync on private repos).
   -- If the installation doesn't grant them, fall back to basic permissions.
-  result <- try $ requestToken extendedPermissions
+  result <- tryNonAsync $ requestToken extendedPermissions
   case result of
     Right lease -> return lease
     Left (_e :: SomeException) -> do

@@ -29,7 +29,7 @@ module Lib.Bridge.Sync
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException)
 import Data.Aeson (Value, (.:), (.:?))
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString (ByteString)
@@ -50,6 +50,7 @@ import GitHub.REST
     StdMethod (..),
   )
 import GitHub.REST.PageLinks (PageLinks)
+import Lib.Exception (tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
     TokenLease,
@@ -165,7 +166,7 @@ reconcileAll cfg conn = do
 -- | Wrapper that isolates per-project errors.
 reconcileOne :: SyncConfig -> Connection -> (Text, Text, Text) -> IO SyncStats
 reconcileOne cfg conn mapping@(_project, org, repo) = do
-  result <- try (reconcileProject cfg conn mapping)
+  result <- tryNonAsync (reconcileProject cfg conn mapping)
   case result of
     Right stats -> pure stats
     Left (e :: SomeException) -> do
@@ -349,7 +350,7 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
 fetchOrgProjectMappings :: Connection -> IO [(Text, Text, Text)]
 fetchOrgProjectMappings conn = do
   result <-
-    try
+    tryNonAsync
       ( query_ conn
           "SELECT m.project_name, m.org_name, m.repo_name FROM gf_org_project_map m \
           \LEFT JOIN projects p ON p.name = m.project_name \

@@ -65,6 +65,7 @@ library
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
 
 executable hydra-github-bridge
     import:           common
@@ -87,4 +88,5 @@ executable hydra-github-bridge
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
     main-is:          Main.hs

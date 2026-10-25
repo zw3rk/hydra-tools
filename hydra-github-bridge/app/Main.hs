@@ -66,24 +66,27 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
   _ <- execute_ conn "LISTEN cached_build_finished"
   forever $ do
     putStrLn "Waiting for notification..."
-    note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+    n <- traceShowId <$> getNotification conn
+    case toHydraNotification n of
+      Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
+      Just note -> do
+        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
 
-    -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
-    broadcastCheckRuns cache statuses
+        -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
+        broadcastCheckRuns cache statuses
 
-    -- Queue for GitHub API delivery (existing behaviour).
-    forM_ statuses $
-      ( \(GitHub.CheckRun owner repo payload) -> do
-          Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-          [Only _id'] <-
-            query
-              conn
-              "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-              (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-              IO [Only Int]
-          execute_ conn "NOTIFY github_status"
-      )
+        -- Queue for GitHub API delivery (existing behaviour).
+        forM_ statuses $
+          ( \(GitHub.CheckRun owner repo payload) -> do
+              Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+              [Only _id'] <-
+                query
+                  conn
+                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
+                  IO [Only Int]
+              execute_ conn "NOTIFY github_status"
+          )
 
 -- | Fetch tokens for the app's installations that are also listed in
 -- GITHUB_APP_INSTALL_IDS.  Anyone can install a public GitHub App, so the
