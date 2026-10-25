@@ -27,7 +27,6 @@ import Control.Exception
     fromException,
     throw,
     toException,
-    try,
   )
 import Control.Monad
 import Control.Monad.IO.Class
@@ -66,6 +65,7 @@ import Lib (binarySearch)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
+import Lib.Exception (tryNonAsync)
 import Lib.GitHub (CheckRunConclusion)
 import Lib.GitHub qualified as GitHub
 import Lib.Hydra (BuildStatus)
@@ -90,9 +90,9 @@ tshow = cs . show
 notificationWatcher :: String -> String -> Text -> Bool -> Connection -> IO ()
 notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
   _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
-  _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id)
+  _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id, error_changed)
   _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
-  _ <- execute_ conn "LISTEN eval_failed" -- (opaque id, jobset id)
+  _ <- execute_ conn "LISTEN eval_failed" -- (opaque id, jobset id, error_changed)
   _ <- execute_ conn "LISTEN build_queued" -- (build id)
   _ <- execute_ conn "LISTEN cached_build_queued" -- (eval id, build id)
   _ <- execute_ conn "LISTEN build_started" -- (build id)
@@ -100,19 +100,22 @@ notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
   _ <- execute_ conn "LISTEN cached_build_finished" -- (eval id, build id)
   forever $ do
     putStrLn "Waiting for notification..."
-    note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
-    forM_ statuses $
-      ( \(GitHub.CheckRun owner repo payload) -> do
-          Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-          [Only _id'] <-
-            query
-              conn
-              "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-              (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-              IO [Only Int]
-          execute_ conn "NOTIFY github_status"
-      )
+    n <- traceShowId <$> getNotification conn
+    case toHydraNotification n of
+      Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
+      Just note -> do
+        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+        forM_ statuses $
+          ( \(GitHub.CheckRun owner repo payload) -> do
+              Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+              [Only _id'] <-
+                query
+                  conn
+                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
+                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
+                  IO [Only Int]
+              execute_ conn "NOTIFY github_status"
+          )
 
 statusHandlers ::
   Text ->
@@ -210,18 +213,23 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
         when executed loop
   loop
 
-toHydraNotification :: Notification -> Hydra.Notification
+-- | Hydra appends fields to some payloads over time (e.g. @eval_added@ and
+-- @eval_failed@ gained a trailing @error_changed@ flag), so the eval patterns
+-- ignore anything after the fields we use.  Anything still unrecognised is
+-- 'Nothing' for the caller to log and skip, rather than an 'error' that takes
+-- the whole bridge down.
+toHydraNotification :: Notification -> Maybe Hydra.Notification
 toHydraNotification Notification {notificationChannel = chan, notificationData = payload}
-  | chan == "eval_started", [_, jid] <- words (cs payload) = Hydra.EvalStarted (read jid)
-  | chan == "eval_added", [_, jid, eid] <- words (cs payload) = Hydra.EvalAdded (read jid) (read eid)
-  | chan == "eval_cached", [_, jid, eid] <- words (cs payload) = Hydra.EvalCached (read jid) (read eid)
-  | chan == "eval_failed", [_, jid] <- words (cs payload) = Hydra.EvalFailed (read jid)
-  | chan == "build_queued", [bid] <- words (cs payload) = Hydra.BuildQueued (read bid)
-  | chan == "cached_build_queued", [_, bid] <- words (cs payload) = Hydra.BuildQueued (read bid)
-  | chan == "build_started", [bid] <- words (cs payload) = Hydra.BuildStarted (read bid)
-  | chan == "build_finished", (bid : depBids) <- words (cs payload) = Hydra.BuildFinished (read bid) (map read depBids)
-  | chan == "cached_build_finished", [_, bid] <- words (cs payload) = Hydra.BuildFinished (read bid) []
-  | otherwise = error $ "Unhandled payload for chan: " ++ cs chan ++ ": " ++ cs payload
+  | chan == "eval_started", (_ : jid : _) <- words (cs payload) = Just $ Hydra.EvalStarted (read jid)
+  | chan == "eval_added", (_ : jid : eid : _) <- words (cs payload) = Just $ Hydra.EvalAdded (read jid) (read eid)
+  | chan == "eval_cached", (_ : jid : eid : _) <- words (cs payload) = Just $ Hydra.EvalCached (read jid) (read eid)
+  | chan == "eval_failed", (_ : jid : _) <- words (cs payload) = Just $ Hydra.EvalFailed (read jid)
+  | chan == "build_queued", [bid] <- words (cs payload) = Just $ Hydra.BuildQueued (read bid)
+  | chan == "cached_build_queued", [_, bid] <- words (cs payload) = Just $ Hydra.BuildQueued (read bid)
+  | chan == "build_started", [bid] <- words (cs payload) = Just $ Hydra.BuildStarted (read bid)
+  | chan == "build_finished", (bid : depBids) <- words (cs payload) = Just $ Hydra.BuildFinished (read bid) (map read depBids)
+  | chan == "cached_build_finished", [_, bid] <- words (cs payload) = Just $ Hydra.BuildFinished (read bid) []
+  | otherwise = Nothing
 
 -- | Filter which build notifications become GitHub check-runs.
 -- When @filterEnabled@ is 'False', every job is reported unconditionally.
@@ -745,7 +753,7 @@ statusHandler ghEndpointUrl ghUserAgent getGitHubToken checkRun = do
             userAgent = ghUserAgent,
             apiVersion = GitHub.gitHubApiVersion
           }
-  try . liftIO . GitHub.runGitHubRestT githubSettings ghEndpointUrl $
+  tryNonAsync . liftIO . GitHub.runGitHubRestT githubSettings ghEndpointUrl $
     queryGitHub
       GHEndpoint
         { method = POST,
