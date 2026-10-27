@@ -159,7 +159,7 @@
               };
 
               notificationTimeoutSec = mkOption {
-                type = types.int;
+                type = types.ints.positive;
                 default = 120;
                 description = ''
                   Seconds without a PostgreSQL notification after which the
