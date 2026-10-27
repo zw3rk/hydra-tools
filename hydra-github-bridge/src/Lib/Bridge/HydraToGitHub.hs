@@ -448,7 +448,18 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
 
     handleEvalDone :: Hydra.JobSetId -> Hydra.EvalId -> Text -> IO [GitHub.CheckRun]
     handleEvalDone jid eid eventName = do
-      [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
+      [(proj, name, flake, fetcherrmsg)] <- query conn "select project, name, flake, fetcherrormsg from jobsets where id = ?" (Only jid)
+      -- The evaluation error belongs to this evaluation, not the jobset: by the
+      -- time a backlogged notification is handled the jobset may already hold
+      -- a later evaluation's errors (or none), and those must not be
+      -- reported, or cleared, for this commit.  Hydra links every evaluation
+      -- to an evaluationerrors row (an empty message when it succeeded); fall
+      -- back to the jobset only for evaluations without one.
+      [Only errmsg] <-
+        query
+          conn
+          "select coalesce(e.errormsg, j.errormsg) from jobsetevals je join jobsets j on j.id = je.jobset_id left join evaluationerrors e on e.id = je.evaluationerror_id where je.id = ?"
+          (Only eid)
       [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
       Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
       withGithubFlake flake' $ \owner repo hash -> do
@@ -512,8 +523,12 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                                 }
                         }
                 )
-                  -- Creates a failed check run for each job that failed to evaluate.
-                  ++ ( parseFailedJobEvals err <&> \(job, msg) ->
+                  -- Creates a failed check run for each job that failed to evaluate,
+                  -- up to a limit: a jobset with hundreds of broken jobs would
+                  -- otherwise put hundreds of red check-runs on every commit,
+                  -- ahead of all build check-runs.  The ci/eval check-run above
+                  -- carries the whole error message either way.
+                  ++ ( take maxFailedJobEvalChecks (parseFailedJobEvals err) <&> \(job, msg) ->
                          GitHub.CheckRun owner repo $
                            GitHub.CheckRunPayload
                              { name = "ci/eval:" <> job,
@@ -708,6 +723,9 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                   }
 
     -- Given an evaluation's error message, returns the jobs that could not be evaluated and their excerpt from the error message.
+    maxFailedJobEvalChecks :: Int
+    maxFailedJobEvalChecks = 20
+
     parseFailedJobEvals :: Text -> [(Text, Text)]
     parseFailedJobEvals errormsg =
       (internal errormsg) <&> \(_, job, msg) -> (job, msg)
