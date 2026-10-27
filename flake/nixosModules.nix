@@ -84,6 +84,16 @@
                 '';
               };
 
+              hydraPublicUrl = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                example = "https://hydra.example.com/ci";
+                description = ''
+                  Public Hydra URL used in GitHub check-run details links. When
+                  unset, HYDRA_HOST is used for backwards compatibility.
+                '';
+              };
+
               hydraUser = mkOption {
                 type = types.str;
                 default = "";
@@ -173,6 +183,17 @@
                 '';
               };
 
+              repoFlakeDirs = mkOption {
+                type = types.str;
+                default = "[]";
+                example = "[(\"zw3rk/infra\", \"ops\")]";
+                description = ''
+                  Optional (owner/repo, directory) pairs for repositories whose
+                  Nix flake lives below the repository root. Formatted as a
+                  Haskell list, for example [("zw3rk/infra", "ops")].
+                '';
+              };
+
               jobsetAllowlist = mkOption {
                 type = types.attrsOf (types.listOf types.str);
                 default = {};
@@ -258,6 +279,9 @@
                   HYDRA_DB = iCfg.hydraDb;
                   PORT = toString iCfg.port;
                 }
+                // lib.optionalAttrs (iCfg.hydraPublicUrl != null) {
+                  HYDRA_PUBLIC_URL = iCfg.hydraPublicUrl;
+                }
                 // lib.optionalAttrs (iCfg.ghUserAgent != null) {
                   GITHUB_USER_AGENT = iCfg.ghUserAgent;
                 }
@@ -282,6 +306,9 @@
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
                   STATUS_WORKERS = toString iCfg.statusWorkers;
+                }
+                // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
+                  REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;
                 }
                 // lib.optionalAttrs (iCfg.checkRunGroups != {}) {
                   CHECK_RUN_GROUPS = "[" + lib.concatStringsSep ", " (lib.mapAttrsToList (repo: depth: "(\"${repo}\", ${toString depth})") iCfg.checkRunGroups) + "]";

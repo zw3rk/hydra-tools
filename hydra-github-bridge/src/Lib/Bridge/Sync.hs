@@ -28,6 +28,7 @@ module Lib.Bridge.Sync
     fetchOpenPRs,
     fetchEnabledPRJobsets,
     fetchOrgProjectMappings,
+    sourceRefreshTarget,
   )
 where
 
@@ -54,6 +55,7 @@ import GitHub.REST
   )
 import GitHub.REST.PageLinks (PageLinks)
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
+import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
 import Lib.Exception (tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
@@ -123,7 +125,9 @@ data SyncConfig = SyncConfig
     -- | Action to refresh tokens when expired
     scGetTokens :: !(IO [(String, TokenLease)]),
     -- | Jobsets the sync may create or disable, per repo
-    scJobsetAllowlist :: !JobsetAllowlist
+    scJobsetAllowlist :: !JobsetAllowlist,
+    -- | Optional repository-specific Flake directories
+    scRepoFlakeDirs :: !RepoFlakeDirs
   }
 
 -- | Repos where draft PRs should NOT create jobsets (replicates existing
@@ -254,7 +258,7 @@ reconcileProject cfg conn (project, org, repo) = do
           allowed n,
           Just pr <- [Map.lookup n openPRMap],
           Just jobset <- [Map.lookup n enabledJobsets],
-          Just newFlake <- [sourceRefreshTarget repoFullName pr jobset]
+          Just newFlake <- [sourceRefreshTarget (scRepoFlakeDirs cfg) repoFullName pr jobset]
         ]
 
   putStrLn $
@@ -445,21 +449,29 @@ parsePRNumber name =
 -- Command generation
 ------------------------------------------------------------------------
 
--- | Only rewrite the immutable, root-directory GitHub sources emitted by
--- the bridge. Custom sources (including URL parameters) and legacy jobsets
--- are deliberately left alone. Preserve whether creation used the base
--- repository or the PR's head repository.
-sourceRefreshTarget :: Text -> PRInfo -> EnabledPRJobset -> Maybe Text
-sourceRefreshTarget repoFullName pr jobset
+-- | Refresh only immutable canonical GitHub sources emitted by the bridge.
+-- When a repository gains a configured directory, also migrate its exact
+-- former root URI. Preserve whether creation used the base or head repository.
+sourceRefreshTarget :: RepoFlakeDirs -> Text -> PRInfo -> EnabledPRJobset -> Maybe Text
+sourceRefreshTarget flakeDirs repoFullName pr jobset
   | ejType jobset /= 1 = Nothing
   | ejName jobset /= "pullrequest-" <> Text.pack (show $ prNumber pr) = Nothing
   | otherwise = do
       oldFlake <- ejFlake jobset
-      let prefixes = ["github:" <> repo <> "/" | repo <- [repoFullName, prRepoFullName pr]]
-      prefix <- find (\p -> maybe False immutableSha (Text.stripPrefix p oldFlake)) prefixes
-      let newFlake = prefix <> prHeadSha pr
+      repo <- find (matchesSource oldFlake) [repoFullName, prRepoFullName pr]
+      let newFlake = flakeSourceUriFor flakeDirs repoFullName repo (prHeadSha pr)
       if immutableSha (prHeadSha pr) && newFlake /= oldFlake then Just newFlake else Nothing
   where
+    matchesSource oldFlake repo =
+      case Text.stripPrefix ("github:" <> repo <> "/") oldFlake of
+        Nothing -> False
+        Just remainder ->
+          let oldSha = Text.takeWhile (/= '?') remainder
+              configuredUri = flakeSourceUriFor flakeDirs repoFullName repo oldSha
+              formerRootUri = "github:" <> repo <> "/" <> oldSha
+              hasConfiguredDir = Map.member repo flakeDirs || Map.member repoFullName flakeDirs
+           in immutableSha oldSha
+                && (oldFlake == configuredUri || (hasConfiguredDir && oldFlake == formerRootUri))
     immutableSha sha = Text.length sha == 40 && Text.all isHexDigit sha
 
 -- | Compare-and-swap only the source, then queue its ordinary evaluation in
@@ -500,7 +512,7 @@ createMissingJobset cfg conn project repoFullName pr = do
         Hydra.defHydraFlakeJobset
           { Hydra.hjName = jobsetName,
             Hydra.hjDescription = "PR " <> Text.pack (show (prNumber pr)) <> ": " <> prTitle pr,
-            Hydra.hjFlake = "github:" <> prRepoFullName pr <> "/" <> prHeadSha pr
+            Hydra.hjFlake = flakeSourceUriFor (scRepoFlakeDirs cfg) repoFullName (prRepoFullName pr) (prHeadSha pr)
           }
   if scDryRun cfg
     then putStrLn $ "[sync] DRY-RUN: would create " <> Text.unpack project <> "/" <> Text.unpack jobsetName
@@ -516,7 +528,7 @@ disableStaleJobset cfg conn project repoFullName prNum = do
         Hydra.defHydraFlakeJobset
           { Hydra.hjName = jobsetName,
             Hydra.hjDescription = "PR " <> Text.pack (show prNum) <> " (closed)",
-            Hydra.hjFlake = "github:" <> repoFullName <> "/0000000000000000000000000000000000000000",
+            Hydra.hjFlake = flakeSourceUri (scRepoFlakeDirs cfg) repoFullName "0000000000000000000000000000000000000000",
             Hydra.hjVisible = False,
             Hydra.hjEnabled = 0
           }

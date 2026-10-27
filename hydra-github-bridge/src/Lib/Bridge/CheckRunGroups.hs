@@ -45,9 +45,12 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), query)
+import Lib.Bridge.PublicUrl (hydraDetailsUrl)
 import Lib.GitHub qualified as GitHub
+import Network.HTTP.Types.URI (urlEncode)
 import Text.Read (readMaybe)
 
 -- | Group depth per lower-cased @owner/repo@.
@@ -101,17 +104,17 @@ markGroupDirty (GroupTracker ref) key grp =
 -- | Every @interval@ seconds, recompute the check-runs of the groups marked
 -- dirty since the last flush and pass them to @report@.
 groupFlusher :: Int -> Text -> Text -> CheckRunGroups -> GroupTracker -> ([GitHub.CheckRun] -> IO ()) -> Connection -> IO ()
-groupFlusher interval host checkRunPrefix groups (GroupTracker ref) report conn = forever $ do
+groupFlusher interval publicBase checkRunPrefix groups (GroupTracker ref) report conn = forever $ do
   threadDelay (interval * 1000000)
   dirty <- atomicModifyIORef' ref (Map.empty,)
   forM_ (Map.toList dirty) $ \(key, grps) ->
-    (groupCheckRuns host checkRunPrefix groups key grps conn >>= report)
+    (groupCheckRuns publicBase checkRunPrefix groups key grps conn >>= report)
       `catch` \e -> case fromException e of
         Just (async :: SomeAsyncException) -> throwIO async
         Nothing -> putStrLn $ "ERROR: check-run groups " ++ show key ++ ": " ++ displayException (e :: SomeException)
 
 groupCheckRuns :: Text -> Text -> CheckRunGroups -> GroupKey -> Set Text -> Connection -> IO [GitHub.CheckRun]
-groupCheckRuns host checkRunPrefix groups key grps conn = do
+groupCheckRuns publicBase checkRunPrefix groups key grps conn = do
   rows <-
     query
       conn
@@ -143,7 +146,7 @@ groupCheckRuns host checkRunPrefix groups key grps conn = do
        in GitHub.CheckRunPayload
             { name = checkRunPrefix <> grp,
               headSha = key.gkHeadSha,
-              detailsUrl = Just $ "https://" <> host <> "/eval/" <> tshow key.gkEval <> "?full=1&filter=" <> grp,
+              detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow key.gkEval <> "?full=1&filter=" <> urlEncodeText grp),
               externalId = Just $ tshow key.gkEval,
               status = if done then GitHub.Completed else GitHub.InProgress,
               conclusion = if done then Just (if null failed then GitHub.Success else GitHub.Failure) else Nothing,
@@ -176,3 +179,4 @@ groupCheckRuns host checkRunPrefix groups key grps conn = do
             }
     tshow :: (Show a) => a -> Text
     tshow = Text.pack . show
+    urlEncodeText = Text.decodeUtf8 . urlEncode True . Text.encodeUtf8

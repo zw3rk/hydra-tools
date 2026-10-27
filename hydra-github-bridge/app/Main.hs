@@ -28,6 +28,8 @@ import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
+import Lib.Bridge.PublicUrl (normalizePublicBase)
+import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
@@ -48,7 +50,7 @@ import System.IO
 -- statuses to the SSE cache for real-time client consumption.
 notificationWatcherWithSSE ::
   StatusCache ->
-  String ->
+  Text ->
   String ->
   Text ->
   Bool ->
@@ -56,7 +58,7 @@ notificationWatcherWithSSE ::
   GroupTracker ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs groups tracker conn = do
+notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs groups tracker conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -72,7 +74,7 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs groups 
     case toHydraNotification n of
       Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
       Just note -> do
-        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs groups tracker note
+        statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs groups tracker note
 
         -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
         broadcastCheckRuns cache statuses
@@ -128,6 +130,12 @@ main = do
 
   -- Read environment variables
   host <- maybe "localhost" id <$> lookupEnv "HYDRA_HOST"
+  publicUrl <- lookupEnv "HYDRA_PUBLIC_URL"
+  publicBase <-
+    either
+      (\err -> die $ "Invalid Hydra public URL: " <> Text.unpack err)
+      pure
+      (normalizePublicBase $ Text.pack $ maybe host id publicUrl)
   db <- maybe "localhost" id <$> lookupEnv "HYDRA_DB"
   db_user <- maybe mempty id <$> lookupEnv "HYDRA_DB_USER"
   db_pass <- maybe mempty id <$> lookupEnv "HYDRA_DB_PASS"
@@ -157,6 +165,8 @@ main = do
   syncEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_ENABLED"
   syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
+  repoFlakeDirsRaw <- maybe "[]" id <$> lookupEnv "REPO_FLAKE_DIRS"
+  repoFlakeDirs <- either die pure (parseRepoFlakeDirs repoFlakeDirsRaw)
 
   -- Optional per-repo jobset allowlist, e.g.
   -- {"simplex-chat/simplex-chat": ["pullrequest-7729"]}.  Listed repos only
@@ -278,19 +288,19 @@ main = do
         -- Use the SSE-broadcasting variant of the notification watcher.
         withConnect
           (ConnectInfo db 5432 db_user db_pass "hydra")
-          (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs checkRunGroups groupTracker),
+          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs checkRunGroups groupTracker),
         -- Report the check-run groups the watcher marked as out of date.
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
           groupFlusher
             20
-            (Text.pack host)
+            publicBase
             checkRunPrefix
             checkRunGroups
             groupTracker
             (\runs -> broadcastCheckRuns cache runs >> mapM_ (queueCheckRun conn) runs)
             conn,
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          run port (app allowedOrgs jobsetAllowlist (hceClientEnv env) conn (gitHubKey ghKey)),
+          run port (app allowedOrgs jobsetAllowlist repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
         -- Periodically prune stale notifications for old commits that
         -- have already been superseded by newer evaluations.  Only marks
         -- a payload as sent when a later payload for the same
@@ -329,7 +339,8 @@ main = do
                    scUserAgent = ghUserAgent,
                    scTokensRef = ghTokens,
                    scGetTokens = getValidGitHubToken',
-                   scJobsetAllowlist = jobsetAllowlist
+                   scJobsetAllowlist = jobsetAllowlist,
+                   scRepoFlakeDirs = repoFlakeDirs
                  }
                conn
          | syncEnabled
