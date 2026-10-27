@@ -124,9 +124,9 @@ groupCheckRuns host checkRunPrefix groups key grps conn = do
         Map.fromListWith
           (++)
           [ (grp, [row])
-            | row@(job, _, _, _, _) <- rows,
-              Just grp <- [jobGroup groups key.gkOwner key.gkRepo job],
-              grp `Set.member` grps
+          | row@(job, _, _, _, _) <- rows,
+            Just grp <- [jobGroup groups key.gkOwner key.gkRepo job],
+            grp `Set.member` grps
           ]
   pure [GitHub.CheckRun key.gkOwner key.gkRepo (groupPayload grp builds) | (grp, builds) <- Map.toList members]
   where
@@ -158,9 +158,12 @@ groupCheckRuns host checkRunPrefix groups key grps conn = do
                           | null failed -> tshow total <> " jobs succeeded"
                           | otherwise -> tshow (length failed) <> " of " <> tshow total <> " jobs failed",
                       summary =
-                        tshow (length finished - length failed) <> " succeeded, "
-                          <> tshow (length failed) <> " failed, "
-                          <> tshow pending <> " pending.",
+                        tshow (length finished - length failed)
+                          <> " succeeded, "
+                          <> tshow (length failed)
+                          <> " failed, "
+                          <> tshow pending
+                          <> " pending.",
                       text =
                         if null failed
                           then Nothing

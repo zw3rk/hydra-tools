@@ -175,8 +175,8 @@
 
               jobsetAllowlist = mkOption {
                 type = types.attrsOf (types.listOf types.str);
-                default = { };
-                example = { "simplex-chat/simplex-chat" = [ "pullrequest-7729" ]; };
+                default = {};
+                example = {"simplex-chat/simplex-chat" = ["pullrequest-7729"];};
                 description = ''
                   Per-repository allowlist of Hydra jobsets the bridge may
                   create, update, disable or evaluate (webhooks and sync).
@@ -270,7 +270,7 @@
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
                   HYDRA_USER = iCfg.hydraUser;
                 }
-                // lib.optionalAttrs (iCfg.jobsetAllowlist != { }) {
+                // lib.optionalAttrs (iCfg.jobsetAllowlist != {}) {
                   JOBSET_ALLOWLIST = builtins.toJSON iCfg.jobsetAllowlist;
                 }
                 // {
@@ -362,7 +362,7 @@
           partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
 
           # nix is needed for the local store probe (nix path-info --offline).
-          path = [ pkgs.nix ];
+          path = [pkgs.nix];
 
           startLimitIntervalSec = 0;
 
@@ -533,7 +533,7 @@
           isSystemUser = true;
           group = "hydra-web";
           # Member of hydra group to read build logs from /var/lib/hydra/build-logs/.
-          extraGroups = [ "hydra" ];
+          extraGroups = ["hydra"];
           description = "Hydra Web Frontend";
         };
         users.groups.hydra-web = {};

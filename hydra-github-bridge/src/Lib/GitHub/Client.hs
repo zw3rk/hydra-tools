@@ -260,7 +260,8 @@ instance FromJSON CheckRun where
 
 data TokenLease = TokenLease
   { token :: Token,
-    expiry :: Maybe UTCTime
+    expiry :: Maybe UTCTime,
+    installationId :: Int
   }
   deriving (Show)
 
@@ -377,18 +378,21 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
   case result of
     Right lease -> return lease
     Left (_e :: SomeException) -> do
-      putStrLn $ "Extended permissions not available for installation "
-        <> show appInstallationId <> ", falling back to basic permissions"
+      putStrLn $
+        "Extended permissions not available for installation "
+          <> show appInstallationId
+          <> ", falling back to basic permissions"
       requestToken basicPermissions
   where
     basicPermissions =
       [ "checks" := ("write" :: String),
         "statuses" := ("write" :: String)
       ]
-    extendedPermissions = basicPermissions ++
-      [ "pull_requests" := ("read" :: String),
-        "contents" := ("read" :: String)
-      ]
+    extendedPermissions =
+      basicPermissions
+        ++ [ "pull_requests" := ("read" :: String),
+             "contents" := ("read" :: String)
+           ]
     requestToken perms = do
       signer <- loadSigner appKeyFile
       jwt <- getJWTToken signer appId
@@ -406,11 +410,12 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
                 { method = POST,
                   endpoint = "/app/installations/:appInstallId/access_tokens",
                   endpointVals = ["appInstallId" := appInstallationId],
-                  ghData = [ "permissions" := perms ]
+                  ghData = ["permissions" := perms]
                 }
       expiry <- iso8601ParseM (response .: "expires_at" :: String)
       return $
         TokenLease
           { token = BearerToken $ cs (response .: "token" :: String),
-            expiry = Just expiry
+            expiry = Just expiry,
+            installationId = appInstallationId
           }

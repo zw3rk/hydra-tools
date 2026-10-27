@@ -1,20 +1,22 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Environment-based configuration for hydra-web.
 -- All settings are read from environment variables with sensible defaults,
 -- matching the Go hydra-web's HYDRA_WEB_* variable names exactly.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.Config
-  ( Config (..)
-  , GitHubConfig (..)
-  , loadConfig
-  , validateConfig
+  ( Config (..),
+    GitHubConfig (..),
+    loadConfig,
+    validateConfig,
+
     -- * Parsing helpers (exported for testing)
-  , parseInstallationIDs
-  , parseSuperAdmins
-  ) where
+    parseInstallationIDs,
+    parseSuperAdmins,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -27,53 +29,69 @@ import Text.Read (readMaybe)
 
 -- | Application configuration. All fields correspond to HYDRA_WEB_* env vars.
 data Config = Config
-  { cfgListenAddr      :: !Text          -- ^ HYDRA_WEB_LISTEN (default "127.0.0.1:4000")
-  , cfgBaseURL         :: !Text          -- ^ HYDRA_WEB_BASE_URL
-  , cfgBasePath        :: !Text          -- ^ HYDRA_WEB_BASE_PATH (URL prefix for reverse proxy)
-  , cfgDatabaseURL     :: !Text          -- ^ HYDRA_WEB_DATABASE_URL
-  , cfgHydraBackendURL :: !Text          -- ^ HYDRA_WEB_HYDRA_BACKEND (upstream Hydra for proxied writes)
-  , cfgStaticDir       :: !FilePath      -- ^ HYDRA_WEB_STATIC_DIR
-  , cfgEncryptionKey   :: !Text          -- ^ HYDRA_WEB_ENCRYPTION_KEY (AES-256-GCM)
-  , cfgSuperAdmins     :: ![Text]        -- ^ HYDRA_WEB_SUPER_ADMINS (comma-separated)
-  , cfgHydraDataDir    :: !FilePath      -- ^ HYDRA_WEB_HYDRA_DATA_DIR (default "/var/lib/hydra")
-  , cfgGitHub          :: !GitHubConfig  -- ^ GitHub App/OAuth settings
+  { -- | HYDRA_WEB_LISTEN (default "127.0.0.1:4000")
+    cfgListenAddr :: !Text,
+    -- | HYDRA_WEB_BASE_URL
+    cfgBaseURL :: !Text,
+    -- | HYDRA_WEB_BASE_PATH (URL prefix for reverse proxy)
+    cfgBasePath :: !Text,
+    -- | HYDRA_WEB_DATABASE_URL
+    cfgDatabaseURL :: !Text,
+    -- | HYDRA_WEB_HYDRA_BACKEND (upstream Hydra for proxied writes)
+    cfgHydraBackendURL :: !Text,
+    -- | HYDRA_WEB_STATIC_DIR
+    cfgStaticDir :: !FilePath,
+    -- | HYDRA_WEB_ENCRYPTION_KEY (AES-256-GCM)
+    cfgEncryptionKey :: !Text,
+    -- | HYDRA_WEB_SUPER_ADMINS (comma-separated)
+    cfgSuperAdmins :: ![Text],
+    -- | HYDRA_WEB_HYDRA_DATA_DIR (default "/var/lib/hydra")
+    cfgHydraDataDir :: !FilePath,
+    -- | GitHub App/OAuth settings
+    cfgGitHub :: !GitHubConfig
   }
 
 -- | GitHub App and OAuth configuration.
 data GitHubConfig = GitHubConfig
-  { ghAppID           :: !Int            -- ^ HYDRA_WEB_GITHUB_APP_ID
-  , ghAppKeyFile      :: !FilePath       -- ^ HYDRA_WEB_GITHUB_APP_KEY_FILE
-  , ghClientID        :: !Text           -- ^ HYDRA_WEB_GITHUB_CLIENT_ID
-  , ghClientSecret    :: !Text           -- ^ HYDRA_WEB_GITHUB_CLIENT_SECRET
-  , ghInstallationIDs :: ![(Text, Int)]  -- ^ DEPRECATED: use DB-backed gf_github_installations instead.
-                                        -- ^ HYDRA_WEB_GITHUB_INSTALLATION_IDS — parsed for one-time seed migration.
+  { -- | HYDRA_WEB_GITHUB_APP_ID
+    ghAppID :: !Int,
+    -- | HYDRA_WEB_GITHUB_APP_KEY_FILE
+    ghAppKeyFile :: !FilePath,
+    -- | HYDRA_WEB_GITHUB_CLIENT_ID
+    ghClientID :: !Text,
+    -- | HYDRA_WEB_GITHUB_CLIENT_SECRET
+    ghClientSecret :: !Text,
+    -- | DEPRECATED: use DB-backed gf_github_installations instead.
+    -- ^ HYDRA_WEB_GITHUB_INSTALLATION_IDS — parsed for one-time seed migration.
+    ghInstallationIDs :: ![(Text, Int)]
   }
 
 -- | Load configuration from environment variables.
 loadConfig :: IO Config
 loadConfig = do
-  listen     <- envOr "HYDRA_WEB_LISTEN" "127.0.0.1:4000"
-  baseURL    <- envOr "HYDRA_WEB_BASE_URL" "http://localhost:4000"
-  basePath   <- Text.dropWhileEnd (== '/') <$> envOr "HYDRA_WEB_BASE_PATH" ""
-  dbURL      <- envOr "HYDRA_WEB_DATABASE_URL" "postgres://hydra-web@/hydra?host=/run/postgresql"
-  backend    <- envOr "HYDRA_WEB_HYDRA_BACKEND" "http://127.0.0.1:3000"
-  staticDir  <- envOrStr "HYDRA_WEB_STATIC_DIR" "static"
-  dataDir    <- envOrStr "HYDRA_WEB_HYDRA_DATA_DIR" "/var/lib/hydra"
-  encKey     <- envOr "HYDRA_WEB_ENCRYPTION_KEY" ""
-  admins     <- parseSuperAdmins <$> envOr "HYDRA_WEB_SUPER_ADMINS" ""
-  gh         <- loadGitHubConfig
-  pure Config
-    { cfgListenAddr      = listen
-    , cfgBaseURL         = baseURL
-    , cfgBasePath        = basePath
-    , cfgDatabaseURL     = dbURL
-    , cfgHydraBackendURL = backend
-    , cfgStaticDir       = staticDir
-    , cfgEncryptionKey   = encKey
-    , cfgSuperAdmins     = admins
-    , cfgHydraDataDir    = dataDir
-    , cfgGitHub          = gh
-    }
+  listen <- envOr "HYDRA_WEB_LISTEN" "127.0.0.1:4000"
+  baseURL <- envOr "HYDRA_WEB_BASE_URL" "http://localhost:4000"
+  basePath <- Text.dropWhileEnd (== '/') <$> envOr "HYDRA_WEB_BASE_PATH" ""
+  dbURL <- envOr "HYDRA_WEB_DATABASE_URL" "postgres://hydra-web@/hydra?host=/run/postgresql"
+  backend <- envOr "HYDRA_WEB_HYDRA_BACKEND" "http://127.0.0.1:3000"
+  staticDir <- envOrStr "HYDRA_WEB_STATIC_DIR" "static"
+  dataDir <- envOrStr "HYDRA_WEB_HYDRA_DATA_DIR" "/var/lib/hydra"
+  encKey <- envOr "HYDRA_WEB_ENCRYPTION_KEY" ""
+  admins <- parseSuperAdmins <$> envOr "HYDRA_WEB_SUPER_ADMINS" ""
+  gh <- loadGitHubConfig
+  pure
+    Config
+      { cfgListenAddr = listen,
+        cfgBaseURL = baseURL,
+        cfgBasePath = basePath,
+        cfgDatabaseURL = dbURL,
+        cfgHydraBackendURL = backend,
+        cfgStaticDir = staticDir,
+        cfgEncryptionKey = encKey,
+        cfgSuperAdmins = admins,
+        cfgHydraDataDir = dataDir,
+        cfgGitHub = gh
+      }
 
 -- | Validate configuration at startup. Exits with a clear error message
 -- if any critical settings are invalid. Warnings are printed to stderr
@@ -88,8 +106,10 @@ validateConfig cfg = do
   -- Encryption key: if provided, must be exactly 64 hex chars (32 bytes for AES-256-GCM).
   let key = cfgEncryptionKey cfg
   if not (Text.null key) && Text.length key /= 64
-    then die $ "HYDRA_WEB_ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes), got "
-             ++ show (Text.length key)
+    then
+      die $
+        "HYDRA_WEB_ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes), got "
+          ++ show (Text.length key)
     else pure ()
 
   -- If GitHub App ID is configured, the key file must exist.
@@ -108,18 +128,19 @@ validateConfig cfg = do
 
 loadGitHubConfig :: IO GitHubConfig
 loadGitHubConfig = do
-  appID      <- fromMaybe 0 . (>>= readMaybe) <$> lookupEnv "HYDRA_WEB_GITHUB_APP_ID"
-  keyFile    <- envOrStr "HYDRA_WEB_GITHUB_APP_KEY_FILE" ""
-  clientID   <- envOr "HYDRA_WEB_GITHUB_CLIENT_ID" ""
-  clientSec  <- envOr "HYDRA_WEB_GITHUB_CLIENT_SECRET" ""
-  instIDs    <- parseInstallationIDs <$> envOr "HYDRA_WEB_GITHUB_INSTALLATION_IDS" ""
-  pure GitHubConfig
-    { ghAppID           = appID
-    , ghAppKeyFile      = keyFile
-    , ghClientID        = clientID
-    , ghClientSecret    = clientSec
-    , ghInstallationIDs = instIDs
-    }
+  appID <- fromMaybe 0 . (>>= readMaybe) <$> lookupEnv "HYDRA_WEB_GITHUB_APP_ID"
+  keyFile <- envOrStr "HYDRA_WEB_GITHUB_APP_KEY_FILE" ""
+  clientID <- envOr "HYDRA_WEB_GITHUB_CLIENT_ID" ""
+  clientSec <- envOr "HYDRA_WEB_GITHUB_CLIENT_SECRET" ""
+  instIDs <- parseInstallationIDs <$> envOr "HYDRA_WEB_GITHUB_INSTALLATION_IDS" ""
+  pure
+    GitHubConfig
+      { ghAppID = appID,
+        ghAppKeyFile = keyFile,
+        ghClientID = clientID,
+        ghClientSecret = clientSec,
+        ghInstallationIDs = instIDs
+      }
 
 -- | Parse comma-separated "org=id" pairs.
 parseInstallationIDs :: Text -> [(Text, Int)]

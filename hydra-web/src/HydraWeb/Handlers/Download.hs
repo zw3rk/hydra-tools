@@ -1,31 +1,31 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Download handler for build products.
 -- Serves files directly from the Nix store using WAI's zero-copy sendfile.
 -- Enforces visibility (hidden projects, private repos) before serving.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.Handlers.Download
-  ( downloadApp
-  ) where
+  ( downloadApp,
+  )
+where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
+import HydraWeb.Auth.Middleware (getOptionalUser)
+import HydraWeb.DB.Builds (getBuildProduct)
+import HydraWeb.DB.Pool (withConn)
+import HydraWeb.DB.Projects (getProjectNameByBuild)
+import HydraWeb.Models.Build (BuildProduct (..))
+import HydraWeb.Types (App (..))
+import HydraWeb.Visibility (isProjectAccessible)
 import Network.HTTP.Types (status200, status404)
 import Network.Mime (defaultMimeLookup)
 import qualified Network.Wai as Wai
-import System.Directory (doesFileExist, doesDirectoryExist)
-
-import HydraWeb.Types (App (..))
-import HydraWeb.Auth.Middleware (getOptionalUser)
-import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Builds (getBuildProduct)
-import HydraWeb.DB.Projects (getProjectNameByBuild)
-import HydraWeb.Models.Build (BuildProduct (..))
-import HydraWeb.Visibility (isProjectAccessible)
+import System.Directory (doesDirectoryExist, doesFileExist)
 
 -- | WAI application that serves a build product file.
 --
@@ -79,12 +79,12 @@ serveProduct prod req respond = do
             then respond notFound
             else do
               isFile <- doesFileExist (Text.unpack pathText)
-              isDir  <- doesDirectoryExist (Text.unpack pathText)
+              isDir <- doesDirectoryExist (Text.unpack pathText)
               case (isFile, isDir, subSegments) of
                 -- Product path is a regular file — serve it directly.
                 (True, _, _) -> serveFile pathText (bpName prod) respond
                 -- Directory + sub-path from URL — serve path/sub/path.
-                (_, True, (_:_)) -> do
+                (_, True, (_ : _)) -> do
                   let subPath = Text.intercalate "/" subSegments
                       fullPath = pathText <> "/" <> subPath
                   exists <- doesFileExist (Text.unpack fullPath)
@@ -92,12 +92,14 @@ serveProduct prod req respond = do
                     then serveFile fullPath (lastSegment subPath) respond
                     else respond notFound
                 -- Directory + no sub-path + defaultpath set — serve default.
-                (_, True, []) | Just dp <- bpDefaultPath prod, not (Text.null dp) -> do
-                  let fullPath = pathText <> "/" <> dp
-                  exists <- doesFileExist (Text.unpack fullPath)
-                  if exists
-                    then serveFile fullPath (lastSegment dp) respond
-                    else respond notFound
+                (_, True, [])
+                  | Just dp <- bpDefaultPath prod,
+                    not (Text.null dp) -> do
+                      let fullPath = pathText <> "/" <> dp
+                      exists <- doesFileExist (Text.unpack fullPath)
+                      if exists
+                        then serveFile fullPath (lastSegment dp) respond
+                        else respond notFound
                 -- Everything else — not found.
                 _ -> respond notFound
 
@@ -105,10 +107,14 @@ serveProduct prod req respond = do
 serveFile :: Text -> Text -> (Wai.Response -> IO Wai.ResponseReceived) -> IO Wai.ResponseReceived
 serveFile filePath fileName respond' = do
   let mime = defaultMimeLookup fileName
-      headers = [ ("Content-Type", mime)
-                , ("Content-Disposition", "attachment; filename=\""
-                    <> TE.encodeUtf8 (sanitizeFilename fileName) <> "\"")
-                ]
+      headers =
+        [ ("Content-Type", mime),
+          ( "Content-Disposition",
+            "attachment; filename=\""
+              <> TE.encodeUtf8 (sanitizeFilename fileName)
+              <> "\""
+          )
+        ]
   respond' $ Wai.responseFile status200 headers (Text.unpack filePath) Nothing
 
 -- | Validate that a store path starts with /nix/store/ and has no traversals.
@@ -134,5 +140,8 @@ sanitizeFilename = Text.filter (`notElem` ("\"\\/\r\n" :: [Char]))
 
 -- | 404 response body.
 notFound :: Wai.Response
-notFound = Wai.responseLBS status404
-  [("Content-Type", "text/plain")] "Not Found"
+notFound =
+  Wai.responseLBS
+    status404
+    [("Content-Type", "text/plain")]
+    "Not Found"

@@ -198,7 +198,8 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
                 -- anything not marked here would stay unsent forever.
                 superseded <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE status_id = ? AND id <= ? AND sent IS NULL" (statusId :: Int, id' :: Int)
                 when (superseded > 1) $
-                  putStrLn $ "MARK " <> show (superseded - 1) <> " superseded payload(s) SENT"
+                  putStrLn $
+                    "MARK " <> show (superseded - 1) <> " superseded payload(s) SENT"
                 -- BSL.putStrLn $ "<- " <> encode res
                 return ()
             return True

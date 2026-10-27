@@ -1,143 +1,148 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Reusable Lucid components: tables, status badges, pagination, formatting.
--- These are the building blocks for all page views.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Reusable Lucid components: tables, status badges, pagination, formatting.
+-- These are the building blocks for all page views.
 module HydraWeb.View.Components
   ( -- * Status rendering
-    statusIcon
-  , statusClass
-  , statusText
+    statusIcon,
+    statusClass,
+    statusText,
 
     -- * Formatting
-  , fmtTime
-  , fmtDuration
-  , timeAgo
-  , humanBytes
-  , shortDrv
-  , shortPath
-  , shortRev
-  , truncateText
-  , showT
+    fmtTime,
+    fmtDuration,
+    timeAgo,
+    humanBytes,
+    shortDrv,
+    shortPath,
+    shortRev,
+    truncateText,
+    showT,
 
     -- * Text utilities
-  , stripSSH
+    stripSSH,
 
     -- * URL builders
-  , projectURL
-  , jobsetURL
-  , buildURL
-  , evalURL
-  , orgRepoURL
+    projectURL,
+    jobsetURL,
+    buildURL,
+    evalURL,
+    orgRepoURL,
 
     -- * PR link rendering
-  , renderJobsetName
-  , parsePRNumber
+    renderJobsetName,
+    parsePRNumber,
 
     -- * New visual components
-  , statusDot
-  , progressBar
-  , metricCard
-  , breadcrumb
-  , cardWithHeader
-  , sseTarget
-  ) where
+    statusDot,
+    progressBar,
+    metricCard,
+    breadcrumb,
+    cardWithHeader,
+    sseTarget,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Data.Time.Format (formatTime, defaultTimeLocale)
+import Data.Time.Format (defaultTimeLocale, formatTime)
+import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 import Lucid
 import Text.Read (readMaybe)
-
-import HydraWeb.View.HTMX (hxExt_, hxSwap_, sseConnect_, sseSwap_)
 
 -- | Status icon character for a build status code.
 -- Hydra codes: 0=success, 1=failed, 2=dep-failed, 3=aborted, 4=cancelled,
 -- 5=failed-with-output, 6=failed-with-output (legacy), 7=timed-out,
 -- 10=log-limit-exceeded, 11=output-size-exceeded, 12=non-deterministic.
 statusIcon :: Maybe Int -> Html ()
-statusIcon Nothing   = span_ [class_ "status-icon queued"]     "\x23F3"
-statusIcon (Just 0)  = span_ [class_ "status-icon success"]    "\x2713"
-statusIcon (Just 1)  = span_ [class_ "status-icon failed"]     "\x2717"
-statusIcon (Just 2)  = span_ [class_ "status-icon depfail"]    "\x26A0"
-statusIcon (Just 3)  = span_ [class_ "status-icon aborted"]    "\x2298"
-statusIcon (Just 4)  = span_ [class_ "status-icon cancelled"]  "\x2298"
-statusIcon (Just 5)  = span_ [class_ "status-icon failed"]     "\x2717"
-statusIcon (Just 6)  = span_ [class_ "status-icon failed"]     "\x2717"
-statusIcon (Just 7)  = span_ [class_ "status-icon timedout"]   "\x23F1"
-statusIcon (Just 10) = span_ [class_ "status-icon aborted"]    "\x2298"
-statusIcon (Just 11) = span_ [class_ "status-icon aborted"]    "\x2298"
-statusIcon (Just 12) = span_ [class_ "status-icon failed"]     "\x2717"
-statusIcon _         = span_ [class_ "status-icon unknown"]    "?"
+statusIcon Nothing = span_ [class_ "status-icon queued"] "\x23F3"
+statusIcon (Just 0) = span_ [class_ "status-icon success"] "\x2713"
+statusIcon (Just 1) = span_ [class_ "status-icon failed"] "\x2717"
+statusIcon (Just 2) = span_ [class_ "status-icon depfail"] "\x26A0"
+statusIcon (Just 3) = span_ [class_ "status-icon aborted"] "\x2298"
+statusIcon (Just 4) = span_ [class_ "status-icon cancelled"] "\x2298"
+statusIcon (Just 5) = span_ [class_ "status-icon failed"] "\x2717"
+statusIcon (Just 6) = span_ [class_ "status-icon failed"] "\x2717"
+statusIcon (Just 7) = span_ [class_ "status-icon timedout"] "\x23F1"
+statusIcon (Just 10) = span_ [class_ "status-icon aborted"] "\x2298"
+statusIcon (Just 11) = span_ [class_ "status-icon aborted"] "\x2298"
+statusIcon (Just 12) = span_ [class_ "status-icon failed"] "\x2717"
+statusIcon _ = span_ [class_ "status-icon unknown"] "?"
 
 -- | CSS class for a build status code.
 statusClass :: Maybe Int -> Text
-statusClass Nothing   = "queued"
-statusClass (Just 0)  = "success"
-statusClass (Just 1)  = "failed"
-statusClass (Just 2)  = "depfail"
-statusClass (Just 3)  = "aborted"
-statusClass (Just 4)  = "cancelled"
-statusClass (Just 5)  = "failed"
-statusClass (Just 6)  = "failed"
-statusClass (Just 7)  = "timedout"
+statusClass Nothing = "queued"
+statusClass (Just 0) = "success"
+statusClass (Just 1) = "failed"
+statusClass (Just 2) = "depfail"
+statusClass (Just 3) = "aborted"
+statusClass (Just 4) = "cancelled"
+statusClass (Just 5) = "failed"
+statusClass (Just 6) = "failed"
+statusClass (Just 7) = "timedout"
 statusClass (Just 10) = "aborted"
 statusClass (Just 11) = "aborted"
 statusClass (Just 12) = "failed"
-statusClass _         = "unknown"
+statusClass _ = "unknown"
 
 -- | Human-readable status label.
 statusText :: Maybe Int -> Text
-statusText Nothing   = "Queued"
-statusText (Just 0)  = "Succeeded"
-statusText (Just 1)  = "Failed"
-statusText (Just 2)  = "Dependency failed"
-statusText (Just 3)  = "Aborted"
-statusText (Just 4)  = "Cancelled"
-statusText (Just 5)  = "Failed with output"
-statusText (Just 6)  = "Failed with output"
-statusText (Just 7)  = "Timed out"
+statusText Nothing = "Queued"
+statusText (Just 0) = "Succeeded"
+statusText (Just 1) = "Failed"
+statusText (Just 2) = "Dependency failed"
+statusText (Just 3) = "Aborted"
+statusText (Just 4) = "Cancelled"
+statusText (Just 5) = "Failed with output"
+statusText (Just 6) = "Failed with output"
+statusText (Just 7) = "Timed out"
 statusText (Just 10) = "Log limit exceeded"
 statusText (Just 11) = "Output size exceeded"
 statusText (Just 12) = "Non-deterministic"
-statusText _         = "Unknown"
+statusText _ = "Unknown"
 
 -- | Format a UNIX timestamp as "YYYY-MM-DD HH:MM:SS".
 fmtTime :: Int -> Text
 fmtTime ts =
-  Text.pack $ formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" $
-    posixSecondsToUTCTime (fromIntegral ts)
+  Text.pack $
+    formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" $
+      posixSecondsToUTCTime (fromIntegral ts)
 
 -- | Format a duration in seconds as a human-readable string.
 fmtDuration :: Int -> Text
 fmtDuration secs
-  | secs < 60    = showT secs <> "s"
-  | secs < 3600  = showT (secs `div` 60) <> "m " <> showT (secs `mod` 60) <> "s"
-  | otherwise     = showT (secs `div` 3600) <> "h " <>
-                    showT ((secs `mod` 3600) `div` 60) <> "m"
+  | secs < 60 = showT secs <> "s"
+  | secs < 3600 = showT (secs `div` 60) <> "m " <> showT (secs `mod` 60) <> "s"
+  | otherwise =
+      showT (secs `div` 3600)
+        <> "h "
+        <> showT ((secs `mod` 3600) `div` 60)
+        <> "m"
 
 -- | Format a timestamp as relative "X ago" text.
 -- Handles clock skew / future timestamps gracefully.
 timeAgo :: Int -> Int -> Text
 timeAgo now ts
-  | diff <= 0  = "just now"
-  | diff < 60    = showT diff <> "s ago"
-  | diff < 3600  = showT (diff `div` 60) <> "m ago"
+  | diff <= 0 = "just now"
+  | diff < 60 = showT diff <> "s ago"
+  | diff < 3600 = showT (diff `div` 60) <> "m ago"
   | diff < 86400 = showT (diff `div` 3600) <> "h ago"
-  | otherwise     = showT (diff `div` 86400) <> "d ago"
-  where diff = now - ts
+  | otherwise = showT (diff `div` 86400) <> "d ago"
+  where
+    diff = now - ts
 
 -- | Format bytes as human-readable size.
 humanBytes :: Int -> Text
 humanBytes n
-  | n < 1024       = showT n <> " B"
-  | n < 1048576    = showT (n `div` 1024) <> " KiB"
+  | n < 1024 = showT n <> " B"
+  | n < 1048576 = showT (n `div` 1024) <> " KiB"
   | n < 1073741824 = showT (n `div` 1048576) <> " MiB"
-  | otherwise       = showT (n `div` 1073741824) <> " GiB"
+  | otherwise = showT (n `div` 1073741824) <> " GiB"
 
 -- | Shorten a derivation path to just the hash prefix + name.
 shortDrv :: Text -> Text
@@ -195,9 +200,11 @@ renderJobsetName mOrgRepo name =
     Just prNum ->
       case mOrgRepo of
         Just (org, repo) ->
-          a_ [ href_ ("https://github.com/" <> org <> "/" <> repo <> "/pull/" <> showT prNum)
-             , target_ "_blank"
-             ] $ toHtml ("PR #" <> showT prNum)
+          a_
+            [ href_ ("https://github.com/" <> org <> "/" <> repo <> "/pull/" <> showT prNum),
+              target_ "_blank"
+            ]
+            $ toHtml ("PR #" <> showT prNum)
         Nothing -> toHtml name
     Nothing -> toHtml name
 
@@ -205,7 +212,7 @@ renderJobsetName mOrgRepo name =
 parsePRNumber :: Text -> Maybe Int
 parsePRNumber name = case Text.stripPrefix "pullrequest-" name of
   Just rest -> readMaybe (Text.unpack rest)
-  Nothing   -> Nothing
+  Nothing -> Nothing
 
 -- | Small colored dot indicator for build status.
 statusDot :: Maybe Int -> Html ()
@@ -216,21 +223,30 @@ statusDot st = span_ [class_ ("status-dot " <> statusClass st)] ""
 progressBar :: Int -> Int -> Int -> Html ()
 progressBar succ' fail' queued' =
   let total = succ' + fail' + queued'
-  in  if total == 0
+   in if total == 0
         then div_ [class_ "progress-bar"] $ pure ()
         else div_ [class_ "progress-bar"] $ do
           when (succ' > 0) $
-            div_ [class_ "progress-segment success"
-                 , style_ ("width:" <> pct succ' total)] ""
+            div_
+              [ class_ "progress-segment success",
+                style_ ("width:" <> pct succ' total)
+              ]
+              ""
           when (fail' > 0) $
-            div_ [class_ "progress-segment failed"
-                 , style_ ("width:" <> pct fail' total)] ""
+            div_
+              [ class_ "progress-segment failed",
+                style_ ("width:" <> pct fail' total)
+              ]
+              ""
           when (queued' > 0) $
-            div_ [class_ "progress-segment queued"
-                 , style_ ("width:" <> pct queued' total)] ""
+            div_
+              [ class_ "progress-segment queued",
+                style_ ("width:" <> pct queued' total)
+              ]
+              ""
   where
     pct n t = showT ((n * 100) `div` t) <> "%"
-    when True  f = f
+    when True f = f
     when False _ = pure ()
 
 -- | A metric card showing a count and label (for dashboard).
@@ -243,14 +259,16 @@ metricCard cls label count' =
 -- | Render a breadcrumb navigation trail from (label, url) pairs.
 -- The last item is rendered without a link (current page).
 breadcrumb :: [(Text, Text)] -> Html ()
-breadcrumb items = nav_ [class_ "breadcrumb"] $
-  ul_ $ mapM_ renderItem (zip [0 :: Int ..] items)
+breadcrumb items =
+  nav_ [class_ "breadcrumb"] $
+    ul_ $
+      mapM_ renderItem (zip [0 :: Int ..] items)
   where
     lastIdx = length items - 1
     renderItem :: (Int, (Text, Text)) -> Html ()
     renderItem (idx, (label, url'))
       | idx == lastIdx = li_ [class_ "current"] $ toHtml label
-      | otherwise      = li_ $ a_ [href_ url'] $ toHtml label
+      | otherwise = li_ $ a_ [href_ url'] $ toHtml label
 
 -- | A card with a styled header.
 cardWithHeader :: Text -> Html () -> Html ()

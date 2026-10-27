@@ -1,59 +1,88 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Database queries for builds, build steps, outputs, products, metrics, and inputs.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Database queries for builds, build steps, outputs, products, metrics, and inputs.
 module HydraWeb.DB.Builds
-  ( getBuild
-  , getBuildOutputs
-  , getBuildProducts
-  , getBuildProduct
-  , getBuildSteps
-  , getBuildStep
-  , getBuildMetrics
-  , getBuildInputs
-  , getBuildEvals
-  , getConstituents
-  , buildsByEval
-  , queuedBuilds
-  , latestBuildForJob
-  , latestBuilds
+  ( getBuild,
+    getBuildOutputs,
+    getBuildProducts,
+    getBuildProduct,
+    getBuildSteps,
+    getBuildStep,
+    getBuildMetrics,
+    getBuildInputs,
+    getBuildEvals,
+    getConstituents,
+    buildsByEval,
+    queuedBuilds,
+    latestBuildForJob,
+    latestBuilds,
+
     -- * Row scanners (shared with DB.Queue, DB.Search)
-  , scanBuildListRow
-  , scanStepRow
-  ) where
+    scanBuildListRow,
+    scanStepRow,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Database.PostgreSQL.Simple (Connection, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.Types ((:.)((:.)))
-
+import Database.PostgreSQL.Simple.Types ((:.) ((:.)))
 import HydraWeb.DB.Util (escapeLike)
 import HydraWeb.Models.Build
 
 -- | Scan a "list" build row (17 columns via nested tuples).
 -- postgresql-simple only has FromRow for tuples up to ~10 elements,
 -- so we split into nested tuples using :. .
-scanBuildListRow :: ( (Int, Int, Int, Int, Text, Maybe Text, Text, Int, Int)
-                    :. (Maybe Int, Maybe Int, Maybe Int, Maybe Int, Text, Maybe Int, Text, Text) )
-                 -> Build
-scanBuildListRow ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
-                 :. (start, stop, cached, status, drv, isCurrent, proj, js) ) =
-  Build bid finished ts jobsetId job nixName sys prio gprio
-        start stop cached status drv isCurrent
-        proj js
-        Nothing Nothing Nothing Nothing Nothing Nothing Nothing 0
+scanBuildListRow ::
+  ( (Int, Int, Int, Int, Text, Maybe Text, Text, Int, Int)
+      :. (Maybe Int, Maybe Int, Maybe Int, Maybe Int, Text, Maybe Int, Text, Text)
+  ) ->
+  Build
+scanBuildListRow
+  ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
+      :. (start, stop, cached, status, drv, isCurrent, proj, js)
+    ) =
+    Build
+      bid
+      finished
+      ts
+      jobsetId
+      job
+      nixName
+      sys
+      prio
+      gprio
+      start
+      stop
+      cached
+      status
+      drv
+      isCurrent
+      proj
+      js
+      Nothing
+      Nothing
+      Nothing
+      Nothing
+      Nothing
+      Nothing
+      Nothing
+      0
 
 -- | Fetch a single build by ID with all fields (including extended).
 -- Uses nested tuples to work around FromRow size limits.
 getBuild :: Connection -> Int -> IO (Maybe Build)
 getBuild conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
            b.nixname, b.system, b.priority, b.globalpriority,
            b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -64,114 +93,170 @@ getBuild conn buildId' = do
     FROM builds b
     JOIN jobsets j ON j.id = b.jobset_id
     WHERE b.id = ?
-  |] (Only buildId')
+  |]
+      (Only buildId')
   case rows of
     [] -> pure Nothing
-    (( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
-     :. (start, stop, cached, status, drv, isCurrent, proj, js)
-     :. (desc, lic, hp, maint, sz, closure, release, keep)
-     ):_) ->
-      pure $ Just Build
-        { buildId = bid, buildFinished = finished, buildTimestamp = ts
-        , buildJobsetId = jobsetId, buildJob = job, buildNixName = nixName
-        , buildSystem = sys, buildPriority = prio, buildGlobalPriority = gprio
-        , buildStartTime = start, buildStopTime = stop
-        , buildIsCachedBuild = cached, buildStatus = status
-        , buildDrvPath = drv, buildIsCurrent = isCurrent
-        , buildProject = proj, buildJobset = js
-        , buildDescription = desc, buildLicense = lic
-        , buildHomepage = hp, buildMaintainers = maint
-        , buildSize = sz, buildClosureSize = closure
-        , buildReleaseName = release, buildKeep = keep
-        }
+    ( ( (bid, finished, ts, jobsetId, job, nixName, sys, prio, gprio)
+          :. (start, stop, cached, status, drv, isCurrent, proj, js)
+          :. (desc, lic, hp, maint, sz, closure, release, keep)
+        )
+        : _
+      ) ->
+        pure $
+          Just
+            Build
+              { buildId = bid,
+                buildFinished = finished,
+                buildTimestamp = ts,
+                buildJobsetId = jobsetId,
+                buildJob = job,
+                buildNixName = nixName,
+                buildSystem = sys,
+                buildPriority = prio,
+                buildGlobalPriority = gprio,
+                buildStartTime = start,
+                buildStopTime = stop,
+                buildIsCachedBuild = cached,
+                buildStatus = status,
+                buildDrvPath = drv,
+                buildIsCurrent = isCurrent,
+                buildProject = proj,
+                buildJobset = js,
+                buildDescription = desc,
+                buildLicense = lic,
+                buildHomepage = hp,
+                buildMaintainers = maint,
+                buildSize = sz,
+                buildClosureSize = closure,
+                buildReleaseName = release,
+                buildKeep = keep
+              }
 
 -- | Fetch outputs for a build, returned as a list ordered by name.
 getBuildOutputs :: Connection -> Int -> IO [BuildOutput]
 getBuildOutputs conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT name, path FROM buildoutputs WHERE build = ? ORDER BY name
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure [BuildOutput n p | (n, p) <- rows]
 
 -- | Fetch products for a build, ordered by productnr.
 getBuildProducts :: Connection -> Int -> IO [BuildProduct]
 getBuildProducts conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT productnr, type, subtype, filesize, sha256hash, path, name, defaultpath
     FROM buildproducts WHERE build = ? ORDER BY productnr
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure [BuildProduct nr t st fs sha p n dp | (nr, t, st, fs, sha, p, n, dp) <- rows]
 
 -- | Fetch a single build product by build ID and product number.
 getBuildProduct :: Connection -> Int -> Int -> IO (Maybe BuildProduct)
 getBuildProduct conn buildId' productNr = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT productnr, type, subtype, filesize, sha256hash, path, name, defaultpath
     FROM buildproducts WHERE build = ? AND productnr = ?
-  |] (buildId', productNr)
+  |]
+      (buildId', productNr)
   case rows of
-    []    -> pure Nothing
-    ((nr, t, st, fs, sha, p, n, dp):_) ->
+    [] -> pure Nothing
+    ((nr, t, st, fs, sha, p, n, dp) : _) ->
       pure $ Just (BuildProduct nr t st fs sha p n dp)
 
 -- | Fetch steps for a build, ordered by stepnr DESC.
 getBuildSteps :: Connection -> Int -> IO [BuildStep]
 getBuildSteps conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT build, stepnr, type, drvpath, busy, status, errormsg,
            starttime, stoptime, machine, system,
            propagatedfrom, overhead, timesbuilt, isnondeterministic
     FROM buildsteps
     WHERE build = ?
     ORDER BY stepnr DESC
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure $ map scanStepRow rows
 
 -- | Fetch a single build step by build ID and step number.
 getBuildStep :: Connection -> Int -> Int -> IO (Maybe BuildStep)
 getBuildStep conn buildId' stepNr' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT build, stepnr, type, drvpath, busy, status, errormsg,
            starttime, stoptime, machine, system,
            propagatedfrom, overhead, timesbuilt, isnondeterministic
     FROM buildsteps
     WHERE build = ? AND stepnr = ?
-  |] (buildId', stepNr')
+  |]
+      (buildId', stepNr')
   case rows of
-    []    -> pure Nothing
-    (r:_) -> pure $ Just (scanStepRow r)
+    [] -> pure Nothing
+    (r : _) -> pure $ Just (scanStepRow r)
 
 -- | Fetch metrics for a build, ordered by name.
 getBuildMetrics :: Connection -> Int -> IO [BuildMetric]
 getBuildMetrics conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT name, unit, value FROM buildmetrics WHERE build = ? ORDER BY name
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure [BuildMetric n u v | (n, u, v) <- rows]
 
 -- | Fetch inputs for a build, ordered by name.
 getBuildInputs :: Connection -> Int -> IO [BuildInput]
 getBuildInputs conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT id, name, type, uri, revision, value, emailresponsible,
            dependency, path, sha256hash
     FROM buildinputs WHERE build = ? ORDER BY name
-  |] (Only buildId')
-  pure [BuildInput i n t u r v e d p s |
-        ((i, n, t, u, r) :. (v, e, d, p, s)) <- rows]
+  |]
+      (Only buildId')
+  pure
+    [ BuildInput i n t u r v e d p s
+    | ((i, n, t, u, r) :. (v, e, d, p, s)) <- rows
+    ]
 
 -- | Fetch evaluation IDs that contain a build, ordered DESC.
 getBuildEvals :: Connection -> Int -> IO [Int]
 getBuildEvals conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT eval FROM jobsetevalmembers WHERE build = ? ORDER BY eval DESC
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure [eid | Only eid <- rows]
 
 -- | Fetch constituent builds of an aggregate build.
 getConstituents :: Connection -> Int -> IO [Build]
 getConstituents conn buildId' = do
-  rows <- query conn [sql|
+  rows <-
+    query
+      conn
+      [sql|
     SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
            b.nixname, b.system, b.priority, b.globalpriority,
            b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -182,7 +267,8 @@ getConstituents conn buildId' = do
     JOIN aggregateconstituents ac ON ac.constituent = b.id
     WHERE ac.aggregate = ?
     ORDER BY b.job, b.system
-  |] (Only buildId')
+  |]
+      (Only buildId')
   pure $ map scanBuildListRow rows
 
 -- | Fetch all builds belonging to an evaluation, optionally filtered by job name.
@@ -191,7 +277,10 @@ buildsByEval :: Connection -> Int -> Maybe Text -> IO [Build]
 buildsByEval conn evalId' mfilter = do
   case mfilter of
     Nothing -> do
-      rows <- query conn [sql|
+      rows <-
+        query
+          conn
+          [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -202,11 +291,15 @@ buildsByEval conn evalId' mfilter = do
         JOIN jobsetevalmembers m ON m.build = b.id
         WHERE m.eval = ?
         ORDER BY b.job, b.system
-      |] (Only evalId')
+      |]
+          (Only evalId')
       pure $ map scanBuildListRow rows
     Just f -> do
       let safeFilter = escapeLike (Text.take 200 f)
-      rows <- query conn [sql|
+      rows <-
+        query
+          conn
+          [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -217,14 +310,18 @@ buildsByEval conn evalId' mfilter = do
         JOIN jobsetevalmembers m ON m.build = b.id
         WHERE m.eval = ? AND b.job ILIKE '%' || ? || '%'
         ORDER BY b.job, b.system
-      |] (evalId', safeFilter)
+      |]
+          (evalId', safeFilter)
       pure $ map scanBuildListRow rows
 
 -- | Fetch unfinished builds ordered by priority (capped at 5000).
 -- Excludes builds from hidden projects/jobsets.
 queuedBuilds :: Connection -> IO [Build]
 queuedBuilds conn = do
-  rows <- query_ conn [sql|
+  rows <-
+    query_
+      conn
+      [sql|
     SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
            b.nixname, b.system, b.priority, b.globalpriority,
            b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -242,11 +339,19 @@ queuedBuilds conn = do
 
 -- | Find the latest succeeded build for a job, optionally filtered by system.
 -- Excludes builds from hidden projects/jobsets.
-latestBuildForJob :: Connection -> Text -> Text -> Text
-                  -> Maybe Text -> IO (Maybe Build)
+latestBuildForJob ::
+  Connection ->
+  Text ->
+  Text ->
+  Text ->
+  Maybe Text ->
+  IO (Maybe Build)
 latestBuildForJob conn project jobset job mSystem = do
   rows <- case mSystem of
-    Nothing -> query conn [sql|
+    Nothing ->
+      query
+        conn
+        [sql|
       SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
              b.nixname, b.system, b.priority, b.globalpriority,
              b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -259,8 +364,12 @@ latestBuildForJob conn project jobset job mSystem = do
         AND b.finished = 1 AND b.buildstatus = 0
         AND j.hidden = 0 AND p.hidden = 0
       ORDER BY b.id DESC LIMIT 1
-    |] (project, jobset, job)
-    Just sys -> query conn [sql|
+    |]
+        (project, jobset, job)
+    Just sys ->
+      query
+        conn
+        [sql|
       SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
              b.nixname, b.system, b.priority, b.globalpriority,
              b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -273,22 +382,32 @@ latestBuildForJob conn project jobset job mSystem = do
         AND b.finished = 1 AND b.buildstatus = 0
         AND j.hidden = 0 AND p.hidden = 0
       ORDER BY b.id DESC LIMIT 1
-    |] (project, jobset, job, sys)
+    |]
+        (project, jobset, job, sys)
   case rows of
-    []    -> pure Nothing
-    (r:_) -> pure $ Just (scanBuildListRow r)
+    [] -> pure Nothing
+    (r : _) -> pure $ Just (scanBuildListRow r)
 
 -- | Fetch recently finished builds with optional filters.
 -- Used by the JSON API /api/latestbuilds endpoint.
 -- Excludes builds from hidden projects/jobsets.
-latestBuilds :: Connection -> Int -> Maybe Text -> Maybe Text
-             -> Maybe Text -> Maybe Text -> IO [Build]
+latestBuilds ::
+  Connection ->
+  Int ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe Text ->
+  IO [Build]
 latestBuilds conn nr mProject mJobset mJob mSystem = do
   let limit = max 1 (min 1000 nr)
   -- Build WHERE clause dynamically based on provided filters.
   -- We always require finished=1 and non-hidden project/jobset.
   rows <- case (mProject, mJobset, mJob, mSystem) of
-    (Nothing, _, _, _) -> query conn [sql|
+    (Nothing, _, _, _) ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -300,8 +419,12 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (Only limit)
-    (Just p, Nothing, _, _) -> query conn [sql|
+      |]
+        (Only limit)
+    (Just p, Nothing, _, _) ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -313,8 +436,12 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1 AND j.project = ?
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (p, limit)
-    (Just p, Just js, Nothing, Nothing) -> query conn [sql|
+      |]
+        (p, limit)
+    (Just p, Just js, Nothing, Nothing) ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -326,8 +453,12 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1 AND j.project = ? AND j.name = ?
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (p, js, limit)
-    (Just p, Just js, Just job, Nothing) -> query conn [sql|
+      |]
+        (p, js, limit)
+    (Just p, Just js, Just job, Nothing) ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -339,8 +470,12 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ?
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (p, js, job, limit)
-    (Just p, Just js, Just job, Just sys) -> query conn [sql|
+      |]
+        (p, js, job, limit)
+    (Just p, Just js, Just job, Just sys) ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -352,8 +487,12 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1 AND j.project = ? AND j.name = ? AND b.job = ? AND b.system = ?
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (p, js, job, sys, limit)
-    _ -> query conn [sql|
+      |]
+        (p, js, job, sys, limit)
+    _ ->
+      query
+        conn
+        [sql|
         SELECT b.id, b.finished, b.timestamp, b.jobset_id, b.job,
                b.nixname, b.system, b.priority, b.globalpriority,
                b.starttime, b.stoptime, b.iscachedbuild, b.buildstatus,
@@ -365,14 +504,33 @@ latestBuilds conn nr mProject mJobset mJob mSystem = do
         WHERE b.finished = 1
           AND j.hidden = 0 AND p.hidden = 0
         ORDER BY b.id DESC LIMIT ?
-      |] (Only limit)
+      |]
+        (Only limit)
   pure $ map scanBuildListRow rows
 
 -- | Scan a BuildStep row using nested tuples.
-scanStepRow :: ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
-               :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool) )
-            -> BuildStep
-scanStepRow ( (b, nr, t, drv, busy, st, err)
-            :. (start, stop, machine, sys, prop, overhead, times, nondet) ) =
-  BuildStep b nr t drv busy st err start stop machine sys
-            prop overhead times nondet
+scanStepRow ::
+  ( (Int, Int, Int, Maybe Text, Int, Maybe Int, Maybe Text)
+      :. (Maybe Int, Maybe Int, Text, Maybe Text, Maybe Int, Maybe Int, Maybe Int, Maybe Bool)
+  ) ->
+  BuildStep
+scanStepRow
+  ( (b, nr, t, drv, busy, st, err)
+      :. (start, stop, machine, sys, prop, overhead, times, nondet)
+    ) =
+    BuildStep
+      b
+      nr
+      t
+      drv
+      busy
+      st
+      err
+      start
+      stop
+      machine
+      sys
+      prop
+      overhead
+      times
+      nondet

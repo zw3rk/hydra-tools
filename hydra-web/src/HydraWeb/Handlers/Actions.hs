@@ -1,15 +1,16 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Handlers for user-triggered actions (trigger eval, restart build).
 -- All actions require authentication. Returns 303 redirect to the
 -- originating page on success.
-{-# LANGUAGE OverloadedStrings #-}
-
 module HydraWeb.Handlers.Actions
-  ( triggerEvalHandler
-  , restartBuildHandler
-  ) where
+  ( triggerEvalHandler,
+    restartBuildHandler,
+  )
+where
 
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
@@ -17,16 +18,15 @@ import Control.Monad.Reader (asks)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
-import Servant (err303, err401, ServerError (..), NoContent (..))
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (requireAuth)
+import HydraWeb.Config (Config (..))
+import HydraWeb.DB.Actions (restartBuild, triggerJobsetEval)
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Actions (triggerJobsetEval, restartBuild)
 import HydraWeb.DB.Projects (getProjectNameByBuild)
-import HydraWeb.Visibility (isProjectAccessible)
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.View.Components (showT)
+import HydraWeb.Visibility (isProjectAccessible)
+import Servant (NoContent (..), ServerError (..), err303, err401)
 
 -- | POST /projects/:name/jobsets/:js/trigger
 -- Sets triggertime on the jobset so the evaluator picks it up.
@@ -34,11 +34,11 @@ import HydraWeb.View.Components (showT)
 triggerEvalHandler :: Maybe Text -> Text -> Text -> AppM NoContent
 triggerEvalHandler mCookie project jobset = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   -- Require login.
   authResult <- liftIO $ requireAuth pool mCookie
   case authResult of
-    Left _ -> throwError err401 { errBody = "Login required" }
+    Left _ -> throwError err401 {errBody = "Login required"}
     Right user -> do
       -- Check project visibility (don't allow triggering hidden/private projects).
       ok <- liftIO $ withConn pool $ \conn -> do
@@ -48,7 +48,7 @@ triggerEvalHandler mCookie project jobset = do
           else pure False
       if ok
         then redirect303 (TE.encodeUtf8 $ bp <> "/projects/" <> project <> "/jobsets/" <> jobset)
-        else throwError err401 { errBody = "Not authorized" }
+        else throwError err401 {errBody = "Not authorized"}
 
 -- | POST /build/:id/restart
 -- Resets a finished build to queued state so the queue runner re-schedules it.
@@ -56,11 +56,11 @@ triggerEvalHandler mCookie project jobset = do
 restartBuildHandler :: Maybe Text -> Int -> AppM NoContent
 restartBuildHandler mCookie buildId' = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   -- Require login.
   authResult <- liftIO $ requireAuth pool mCookie
   case authResult of
-    Left _ -> throwError err401 { errBody = "Login required" }
+    Left _ -> throwError err401 {errBody = "Login required"}
     Right user -> do
       -- Check project visibility before allowing restart.
       ok <- liftIO $ withConn pool $ \conn -> do
@@ -74,12 +74,13 @@ restartBuildHandler mCookie buildId' = do
               else pure False
       if ok
         then redirect303 (TE.encodeUtf8 $ bp <> "/build/" <> showT buildId')
-        else throwError err401 { errBody = "Build not found or not restartable" }
+        else throwError err401 {errBody = "Build not found or not restartable"}
 
 -- | Throw a 303 See Other redirect.
 redirect303 :: ByteString -> AppM a
-redirect303 loc = throwError err303
-  { errHeaders = [("Location", loc)]
-  , errBody = ""
-  }
-
+redirect303 loc =
+  throwError
+    err303
+      { errHeaders = [("Location", loc)],
+        errBody = ""
+      }

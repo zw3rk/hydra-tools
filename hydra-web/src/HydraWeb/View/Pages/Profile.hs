@@ -1,19 +1,19 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Profile page: user info, API token management.
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Profile page: user info, API token management.
 module HydraWeb.View.Pages.Profile
-  ( profilePage
-  ) where
+  ( profilePage,
+  )
+where
 
 import Data.Text (Text)
-import Lucid
-
-import HydraWeb.Models.User (GFUser (..), GFAPIToken (..))
+import HydraWeb.Models.User (GFAPIToken (..), GFUser (..))
 import HydraWeb.View.Components (fmtTime, showT)
+import Lucid
 
 -- | Profile page with user info and API token list.
 profilePage :: Text -> GFUser -> [GFAPIToken] -> Maybe Text -> Html ()
@@ -27,10 +27,10 @@ profilePage bp user tokens mNewToken = do
       "GitHub ID: "
       strong_ (toHtml $ showT (gfuGitHubId user))
     case gfuDisplayName user of
-      Just n  -> p_ $ "Display name: " <> toHtml n
+      Just n -> p_ $ "Display name: " <> toHtml n
       Nothing -> pure ()
     case gfuEmail user of
-      Just e  -> p_ $ "Email: " <> toHtml e
+      Just e -> p_ $ "Email: " <> toHtml e
       Nothing -> pure ()
     if gfuIsSuperAdmin user
       then p_ [class_ "badge badge-admin"] "Super Admin"
@@ -75,5 +75,6 @@ renderTokenRow bp t = tr_ $ do
   td_ $ case gftLastUsedAt t of
     Just ts -> toHtml $ fmtTime ts
     Nothing -> "Never"
-  td_ $ form_ [method_ "POST", action_ (bp <> "/profile/token/" <> showT (gftId t) <> "/delete")] $
-    button_ [type_ "submit", class_ "btn btn-danger btn-sm"] "Revoke"
+  td_ $
+    form_ [method_ "POST", action_ (bp <> "/profile/token/" <> showT (gftId t) <> "/delete")] $
+      button_ [type_ "submit", class_ "btn btn-danger btn-sm"] "Revoke"

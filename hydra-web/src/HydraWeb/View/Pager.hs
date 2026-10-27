@@ -1,16 +1,16 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Pagination component for use in Lucid views.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Pagination component for use in Lucid views.
 module HydraWeb.View.Pager
-  ( pager
-  ) where
-
-import Lucid
+  ( pager,
+  )
+where
 
 import HydraWeb.View.Components (showT)
+import Lucid
 
 -- | Render pagination controls if there are more items than perPage.
 pager :: Int -> Int -> Int -> Html ()
