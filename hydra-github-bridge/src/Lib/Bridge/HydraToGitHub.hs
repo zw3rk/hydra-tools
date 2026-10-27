@@ -70,6 +70,7 @@ import Lib (binarySearch)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markGroupDirty)
 import Lib.Bridge.DB qualified as BridgeDB
 import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
+import Lib.Connection (guardedGetNotification)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
@@ -122,12 +123,14 @@ queueCheckRun conn (GitHub.CheckRun owner repo payload) = do
   void $ execute_ conn "NOTIFY github_status"
 
 statusHandlers ::
+  -- | Seconds without a notification before the connection is checked
+  Int ->
   Text ->
   ByteString ->
   IO [(String, GitHub.TokenLease)] ->
   Connection ->
   IO ()
-statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
+statusHandlers notifTimeoutSec ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
   let processStatuses = withTransaction conn $ do
         rows <-
           query_
@@ -205,7 +208,7 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
   _ <- execute_ conn "LISTEN github_status"
   let loop = do
         executed <- processStatuses
-        unless executed $ void $ getNotification conn
+        unless executed $ void $ guardedGetNotification conn (notifTimeoutSec * 1000000)
         when executed loop
   loop
 

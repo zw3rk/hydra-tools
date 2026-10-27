@@ -22,7 +22,6 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
@@ -31,6 +30,7 @@ import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.PublicUrl (normalizePublicBase)
 import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
+import Lib.Connection (guardedGetNotification, mkConnectionString, withReconnect)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 import Lib.Hydra (HydraClientEnv (..))
@@ -49,6 +49,8 @@ import System.IO
 -- | Variant of the notification watcher that also broadcasts check-run
 -- statuses to the SSE cache for real-time client consumption.
 notificationWatcherWithSSE ::
+  -- | Seconds without a notification before the connection is checked
+  Int ->
   StatusCache ->
   Text ->
   String ->
@@ -58,7 +60,7 @@ notificationWatcherWithSSE ::
   GroupTracker ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs groups tracker conn = do
+notificationWatcherWithSSE notifTimeoutSec cache publicBase stateDir checkRunPrefix filterJobs groups tracker conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -70,17 +72,21 @@ notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs g
   _ <- execute_ conn "LISTEN cached_build_finished"
   forever $ do
     putStrLn "Waiting for notification..."
-    n <- traceShowId <$> getNotification conn
-    case toHydraNotification n of
-      Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
-      Just note -> do
-        statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs groups tracker note
+    -- Nothing when the timeout passed and the connection is still alive; a
+    -- dead connection throws ConnectionLost for withReconnect.
+    mRaw <- guardedGetNotification conn (notifTimeoutSec * 1000000)
+    forM_ mRaw $ \raw -> do
+      let n = traceShowId raw
+      case toHydraNotification n of
+        Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
+        Just note -> do
+          statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs groups tracker note
 
-        -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
-        broadcastCheckRuns cache statuses
+          -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
+          broadcastCheckRuns cache statuses
 
-        -- Queue for GitHub API delivery (existing behaviour).
-        forM_ statuses (queueCheckRun conn)
+          -- Queue for GitHub API delivery (existing behaviour).
+          forM_ statuses (queueCheckRun conn)
 
 -- | Fetch tokens only for app installations listed in GITHUB_APP_INSTALL_IDS.
 -- Anyone can install a public GitHub App, so the discovered list may include
@@ -210,6 +216,11 @@ main = do
   -- GitHub, so more workers only help while sends are slow; GitHub's rate
   -- limit is shared by all of them.
   numWorkers <- maybe 2 read <$> lookupEnv "STATUS_WORKERS"
+  notifTimeoutSec <- maybe 120 read <$> lookupEnv "NOTIFICATION_TIMEOUT_SEC"
+  -- The LISTEN loops (status workers and the notification watcher) detect a
+  -- dead connection and reconnect; the other components still crash the
+  -- process, and systemd restarts it.
+  let connStr = mkConnectionString (ConnectInfo db 5432 db_user db_pass "hydra")
   let getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
 
   -- Create partial index for the optimized unsent-payload query.
@@ -279,16 +290,14 @@ main = do
     id
     $ [ Async.replicateConcurrently_
           numWorkers
-          ( withConnect
-              (ConnectInfo db 5432 db_user db_pass "hydra")
-              (statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken')
+          ( withReconnect connStr 5 $
+              statusHandlers notifTimeoutSec ghEndpointUrl ghUserAgent getValidGitHubToken'
           ),
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
           hydraClient env conn,
         -- Use the SSE-broadcasting variant of the notification watcher.
-        withConnect
-          (ConnectInfo db 5432 db_user db_pass "hydra")
-          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs checkRunGroups groupTracker),
+        withReconnect connStr 5 $
+          notificationWatcherWithSSE notifTimeoutSec cache publicBase stateDir checkRunPrefix filterJobs checkRunGroups groupTracker,
         -- Report the check-run groups the watcher marked as out of date.
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
           groupFlusher

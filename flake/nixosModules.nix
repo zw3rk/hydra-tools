@@ -158,6 +158,16 @@
                 '';
               };
 
+              notificationTimeoutSec = mkOption {
+                type = types.ints.positive;
+                default = 120;
+                description = ''
+                  Seconds without a PostgreSQL notification after which the
+                  connection is health-checked.  A live connection keeps
+                  listening; a dead one is re-established automatically.
+                '';
+              };
+
               statusWorkers = mkOption {
                 type = types.ints.positive;
                 default = 2;
@@ -306,6 +316,7 @@
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
                   STATUS_WORKERS = toString iCfg.statusWorkers;
+                  NOTIFICATION_TIMEOUT_SEC = toString iCfg.notificationTimeoutSec;
                 }
                 // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
                   REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;

@@ -55,6 +55,7 @@ library
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.DB
+                      , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist
@@ -84,6 +85,7 @@ executable hydra-github-bridge
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.DB
+                      , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist
