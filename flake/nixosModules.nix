@@ -134,6 +134,20 @@
                 '';
               };
 
+              checkRunGroups = mkOption {
+                type = types.attrsOf types.ints.positive;
+                default = {};
+                example = {"ican-group/haskell.nix" = 4;};
+                description = ''
+                  Repositories (`owner/repo`) whose jobs are reported to GitHub as
+                  one check-run per group, instead of one per job.  A job whose
+                  name has more dot-separated components than the given depth is
+                  reported under the check-run named after its first `depth`
+                  components (e.g. `aarch64-darwin.unstable.ghc914-sh.ghcjs`).
+                  Failed jobs are also reported individually.
+                '';
+              };
+
               statusWorkers = mkOption {
                 type = types.ints.positive;
                 default = 2;
@@ -268,6 +282,9 @@
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
                   STATUS_WORKERS = toString iCfg.statusWorkers;
+                }
+                // lib.optionalAttrs (iCfg.checkRunGroups != {}) {
+                  CHECK_RUN_GROUPS = "[" + lib.concatStringsSep ", " (lib.mapAttrsToList (repo: depth: "(\"${repo}\", ${toString depth})") iCfg.checkRunGroups) + "]";
                 };
 
               script = ''
