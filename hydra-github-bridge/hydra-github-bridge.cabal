@@ -52,8 +52,10 @@ library
     hs-source-dirs:   src
     exposed-modules:    Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
                       , Lib.Hydra
                       , Lib.Hydra.Client
@@ -68,6 +70,7 @@ library
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
 
 executable hydra-github-bridge
     import:           common
@@ -75,8 +78,10 @@ executable hydra-github-bridge
     hs-source-dirs:   app, src
     other-modules:      Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
                       , Lib.GitHub
                       , Lib.GitHub.Client
@@ -91,6 +96,7 @@ executable hydra-github-bridge
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
     main-is:          Main.hs
 
 test-suite sync-source

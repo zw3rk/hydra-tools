@@ -17,6 +17,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute, execute_, query, query_)
 import GitHub.REST (Token (..))
+import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist)
 import Lib.Bridge.Sync
 import Lib.GitHub.Client (TokenLease (..))
 import Lib.Hydra qualified as Hydra
@@ -102,7 +103,7 @@ main = do
       let lease = TokenLease (BearerToken "fixture-token") Nothing 17
       tokens <- newIORef [("example", lease), ("IntersectMBO", lease)]
       testWithApplication (pure $ api reply pushes) $ \port -> do
-        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens)
+        let cfg = SyncConfig 900 False ("http://127.0.0.1:" <> Text.pack (show port)) "sync-source-test" tokens (readIORef tokens) noJobsetAllowlist
             run config = reconcileProject config conn ("project", "example", "repo")
             prepare flake = do
               reset conn
