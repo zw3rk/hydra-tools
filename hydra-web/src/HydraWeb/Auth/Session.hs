@@ -1,23 +1,26 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Session lifecycle: creation, validation, cleanup.
--- Sessions are server-side with 7-day TTL and 5-minute touch interval.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Session lifecycle: creation, validation, cleanup.
+-- Sessions are server-side with 7-day TTL and 5-minute touch interval.
 module HydraWeb.Auth.Session
   ( -- * Session management
-    generateSessionId
-  , createSessionForUser
-  , getSessionUser
-  , clearSession
-  , cleanupExpiredSessions
+    generateSessionId,
+    createSessionForUser,
+    getSessionUser,
+    clearSession,
+    cleanupExpiredSessions,
+
     -- * Hex encoding
-  , bytesToHex
+    bytesToHex,
+
     -- * Constants
-  , sessionCookieName
-  , sessionTTL
-  ) where
+    sessionCookieName,
+    sessionTTL,
+  )
+where
 
 import Crypto.Random (getRandomBytes)
 import Data.ByteString (ByteString)
@@ -27,13 +30,17 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection)
-import Numeric (showHex)
-
 import HydraWeb.DB.Auth
-  (createSession, getSession, touchSession, deleteSession,
-   deleteExpiredSessions, getGFUserById)
+  ( createSession,
+    deleteExpiredSessions,
+    deleteSession,
+    getGFUserById,
+    getSession,
+    touchSession,
+  )
 import HydraWeb.DB.Pool (withConn)
-import HydraWeb.Models.User (GFUser (..), GFSession (..))
+import HydraWeb.Models.User (GFSession (..), GFUser (..))
+import Numeric (showHex)
 
 -- | Session cookie name.
 sessionCookieName :: ByteString
@@ -59,7 +66,7 @@ generateSessionId = do
 bytesToHex :: ByteString -> Text
 bytesToHex = Text.pack . concatMap showHex' . BS.unpack
   where
-    showHex' b = let s = showHex b "" in if length s == 1 then '0':s else s
+    showHex' b = let s = showHex b "" in if length s == 1 then '0' : s else s
 
 -- | Create a new session for a user and return the session ID.
 createSessionForUser :: Pool Connection -> Int -> IO Text

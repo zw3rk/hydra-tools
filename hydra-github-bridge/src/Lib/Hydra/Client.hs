@@ -280,6 +280,7 @@ getJobset :: Text -> Text -> ClientM Value
 rmJobset :: Text -> Text -> ClientM Value
 login :: Maybe Text -> HydraLogin -> ClientM Value
 push :: Maybe Text -> Maybe Text -> Maybe Bool -> ClientM Value
+rawPush :: Maybe Text -> Maybe Text -> Maybe Bool -> ClientM Value
 restartBuild :: Int -> ClientM NoContent
 -- This will provide us with the definitions for mkProject, mkJobset, ... push,
 -- by generating a @client@ for the specified @HydraAPI@.
@@ -288,8 +289,14 @@ mkProject
   :<|> getJobset
   :<|> rmJobset
   :<|> login
-  :<|> push
+  :<|> rawPush
   :<|> restartBuild = client (Proxy @HydraAPI)
+
+-- Hydra treats the PRESENCE of ?force as true, including ?force=false.
+-- Keep the public optional-Bool API, but omit the parameter for normal pushes.
+push origin jobsets force = rawPush origin jobsets $ case force of
+  Just True -> Just True
+  _ -> Nothing
 
 -- Check if error is due to authentication failure (403 Forbidden)
 isAuthError :: ClientError -> Bool

@@ -8,6 +8,8 @@ maintainer:         moritz.angermann@gmail.com
 category:           Network
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
+extra-source-files: test/run-sync-source.sh
+    test/test-run-sync-source-ownership.sh
 
 common common
     ghc-options:      -Wall -Werror
@@ -33,6 +35,7 @@ common common
                     , text
                     , time
                     , filepath
+                    , directory
                     , http-client
                     , http-client-tls
                     , http-types
@@ -50,15 +53,21 @@ library
     hs-source-dirs:   src
     exposed-modules:    Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.DB
+                      , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
-                      , Lib.Connection
+                      , Lib.Bridge.Source
+                      , Lib.Bridge.PublicUrl
                       , Lib.Hydra
                       , Lib.Hydra.Client
                       , Lib.Hydra.DB
                       , Lib.GitHub
                       , Lib.GitHub.Client
+                      , Lib.GitHub.TokenCache
                       , Lib.GitHub.WebHookServer
                       , Lib.SSE
                       , Lib.SSE.StatusCache
@@ -66,6 +75,7 @@ library
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
 
 executable hydra-github-bridge
     import:           common
@@ -73,12 +83,18 @@ executable hydra-github-bridge
     hs-source-dirs:   app, src
     other-modules:      Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.DB
+                      , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
-                      , Lib.Connection
+                      , Lib.Bridge.Source
+                      , Lib.Bridge.PublicUrl
                       , Lib.GitHub
                       , Lib.GitHub.Client
+                      , Lib.GitHub.TokenCache
                       , Lib.GitHub.WebHookServer
                       , Lib.Hydra
                       , Lib.Hydra.Client
@@ -89,4 +105,36 @@ executable hydra-github-bridge
                       , Lib.Data.Duration
                       , Lib.Data.List
                       , Lib.Data.Text
+                      , Lib.Exception
     main-is:          Main.hs
+
+test-suite sync-source
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:    test
+    main-is:          SyncSourceSpec.hs
+    build-depends:    hydra-github-bridge
+
+test-suite token-refresh
+    type:             exitcode-stdio-1.0
+    main-is:          TokenRefreshSpec.hs
+    hs-source-dirs:   test, src
+    other-modules:    Lib.GitHub.TokenCache
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror
+    build-depends:    base >=4.16 && <5
+                    , time
+
+test-suite public-url
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          PublicUrlSpec.hs
+    build-depends:    hydra-github-bridge
+
+test-suite bridge-status
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          BridgeStatusSpec.hs
+    build-depends:    hydra-github-bridge

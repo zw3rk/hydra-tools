@@ -1,14 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Tests for pure parsing functions in DB.OrgMap.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Tests for pure parsing functions in DB.OrgMap.
 module HydraWeb.DB.OrgMapSpec (spec) where
 
+import HydraWeb.DB.OrgMap (parseGitHubFlake, parseProjectName)
 import Test.Hspec
-
-import HydraWeb.DB.OrgMap (parseProjectName, parseGitHubFlake)
 
 spec :: Spec
 spec = do

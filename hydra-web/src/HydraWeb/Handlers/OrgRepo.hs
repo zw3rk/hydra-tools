@@ -1,39 +1,39 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for /:org/:repo catch-all URL pattern.
--- Looks up the org/repo mapping and delegates to the project handler.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Handler for /:org/:repo catch-all URL pattern.
+-- Looks up the org/repo mapping and delegates to the project handler.
 module HydraWeb.Handlers.OrgRepo
-  ( orgRepoHandler
-  ) where
+  ( orgRepoHandler,
+  )
+where
 
 import Control.Concurrent.STM (readTVarIO)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
-import Lucid (Html)
-import Servant (err404)
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
-import HydraWeb.DB.Pool (withConn)
+import HydraWeb.Config (Config (..))
 import HydraWeb.DB.OrgMap (lookupByOrgRepo)
+import HydraWeb.DB.Pool (withConn)
 import HydraWeb.DB.Projects (getProject, jobsetOverview)
-import HydraWeb.Models.Project (Project (..), Jobset (..))
-import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
+import HydraWeb.Models.Project (Jobset (..), Project (..))
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.View.Layout (PageData (..), pageLayout)
 import HydraWeb.View.Pages.Project (projectPage)
+import HydraWeb.Visibility (isProjectAccessible, isSuperAdmin)
+import Lucid (Html)
+import Servant (err404)
 
 -- | GET /:org/:repo — lookup org/repo mapping and render project page.
 -- Returns 404 if the project is hidden and user is not super-admin.
 orgRepoHandler :: Maybe Text -> Text -> Text -> AppM (Html ())
 orgRepoHandler mCookie org repo = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
@@ -54,13 +54,15 @@ orgRepoHandler mCookie org repo = do
       | not accessible -> throwError err404
       | otherwise -> do
           -- Filter hidden jobsets for non-admin users.
-          let visibleJs = if isSuperAdmin mUser
-                            then jobsets
-                            else filter (\j -> jsHidden j == 0) jobsets
-              pd = PageData
-                { pdTitle    = projDisplayName project
-                , pdBasePath = bp
-                , pdCounts   = counts
-                , pdUser     = mUser
-                }
+          let visibleJs =
+                if isSuperAdmin mUser
+                  then jobsets
+                  else filter (\j -> jsHidden j == 0) jobsets
+              pd =
+                PageData
+                  { pdTitle = projDisplayName project,
+                    pdBasePath = bp,
+                    pdCounts = counts,
+                    pdUser = mUser
+                  }
           pure $ pageLayout pd $ projectPage bp (Just (org, repo)) project visibleJs

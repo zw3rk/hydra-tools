@@ -38,6 +38,8 @@ import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
 import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
+import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, whenJobsetAllowed)
+import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri)
 import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
 import Lib.Hydra qualified as Hydra
@@ -52,32 +54,34 @@ import Servant.Server (serveWithContext)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-app :: Set Text -> ClientEnv -> Connection -> GitHubKey -> Application
-app orgs env conn key =
+app :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> GitHubKey -> Application
+app orgs allowlist flakeDirs env conn key =
   serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint orgs env conn)
+    (singleEndpoint orgs allowlist flakeDirs env conn)
 
-singleEndpoint :: Set Text -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint orgs env conn =
-  (pushHook orgs conn)
+singleEndpoint :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
+singleEndpoint orgs allowlist flakeDirs env conn =
+  (pushHook orgs allowlist flakeDirs conn)
     :<|> issueCommentHook
-    :<|> (pullRequestHook orgs conn)
-    :<|> (checkSuiteHook orgs env conn)
-    :<|> (checkRunHook orgs conn)
+    :<|> (pullRequestHook orgs allowlist flakeDirs conn)
+    :<|> (checkSuiteHook orgs allowlist flakeDirs env conn)
+    :<|> (checkRunHook orgs allowlist conn)
 
 -- | Check if a repo's org is in the allowed set. Extracts the org from
 -- "org/repo" format and checks membership. Returns True if allowed.
 isOrgAllowed :: Set Text -> Text -> Bool
 isOrgAllowed orgs repoName =
   let (org, _) = splitRepo repoName
-  in Set.member org orgs
+   in Set.member org orgs
 
-pushHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
-pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
-  | not (isOrgAllowed orgs repoName) = liftIO $
-      putStrLn $ "Ignoring push from non-allowed org: " ++ Text.unpack repoName
+pushHook :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> Connection -> RepoWebhookEvent -> ((), PushEvent) -> Handler ()
+pushHook orgs allowlist flakeDirs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSha, evPushRepository = HookRepository {whRepoFullName = repoName}})
+  | not (isOrgAllowed orgs repoName) =
+      liftIO $
+        putStrLn $
+          "Ignoring push from non-allowed org: " ++ Text.unpack repoName
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
     Just (targetBranch, pullReqNumber) <- parseMergeQueueRef ref,
     "0000000000000000000000000000000000000000" == headSha =
@@ -89,7 +93,7 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
                   Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha,
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha,
                   -- setting visiblity seems to have no effect...
                   Hydra.hjVisible = False,
                   -- ... so we just disable it.
@@ -98,7 +102,7 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
         -- We Update the Jobset instead of Delete, so that past build results will
         -- still be available.  This should update the sha to 000000, and as such
         -- allow us to find them and delete them later.
-        do
+        whenJobsetAllowed allowlist repoName jobsetName $ do
           putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
           Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
   | "refs/heads/gh-readonly-queue/" `Text.isPrefixOf` ref,
@@ -108,13 +112,13 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = "merge-queue-" <> Text.pack (show pullReqNumber),
                   Hydra.hjDescription = "Merge Queue: PR" <> Text.pack (show pullReqNumber) <> " -> " <> targetBranch,
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha
                 }
 
             projName = escapeHydraName repoName
             jobsetName = "merge-queue-" <> Text.pack (show pullReqNumber)
 
-        do
+        whenJobsetAllowed allowlist repoName jobsetName $ do
           putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
           Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
   | ref `elem` ["refs/heads/" <> x | x <- ["main", "master", "develop"]]
@@ -127,13 +131,13 @@ pushHook orgs conn _ (_, PushEvent {evPushRef = ref, evPushHeadSha = Just headSh
               Hydra.defHydraFlakeJobset
                 { Hydra.hjName = jobsetName,
                   Hydra.hjDescription = refName <> " " <> if "refs/heads/" `Text.isPrefixOf` ref then "branch" else "tag",
-                  Hydra.hjFlake = "github:" <> repoName <> "/" <> headSha
+                  Hydra.hjFlake = flakeSourceUri flakeDirs repoName headSha
                 }
 
-        do
+        whenJobsetAllowed allowlist repoName jobsetName $ do
           putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
           Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pushHook _orgs _conn _ (_, ev) = liftIO $ do
+pushHook _orgs _allowlist _flakeDirs _conn _ (_, ev) = liftIO $ do
   putStrLn $ (show . whUserLogin . fromJust . evPushSender) ev ++ " pushed a commit causing HEAD SHA to become:"
   print $ (fromJust . evPushHeadSha) ev
 
@@ -155,9 +159,11 @@ issueCommentHook _ (_, ev) = liftIO $ do
   putStrLn "An issue comment was posted:"
   print $ (whIssueCommentBody . evIssueCommentPayload) ev
 
-pullRequestHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
+pullRequestHook :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> Connection -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
 pullRequestHook
   orgs
+  allowlist
+  flakeDirs
   conn
   _
   ( _,
@@ -167,8 +173,10 @@ pullRequestHook
         evPullReqRepo = HookRepository {whRepoFullName = repoName}
       }
     )
-    | not (isOrgAllowed orgs repoName) = liftIO $
-        putStrLn $ "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
+    | not (isOrgAllowed orgs repoName) =
+        liftIO $
+          putStrLn $
+            "Ignoring PR from non-allowed org: " ++ Text.unpack repoName
     | action
         `elem` [ PullRequestOpenedAction,
                  PullRequestReopenedAction,
@@ -228,19 +236,19 @@ pullRequestHook
                   { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
                     Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
                     Hydra.hjFlake =
-                      "github:"
-                        <> repoName
-                        <> "/"
-                        <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))
+                      flakeSourceUri
+                        flakeDirs
+                        repoName
+                        (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)))
                   }
 
               projName = escapeHydraName repoName
               jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
 
-          liftIO $ do
+          whenJobsetAllowed allowlist repoName jobsetName $ do
             putStrLn $ "Adding Create/Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
             Hydra.writeCommand conn (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
+pullRequestHook _orgs allowlist flakeDirs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequestClosedAction}) = liftIO $ do
   let repoName = whRepoFullName (evPullReqRepo ev)
       projName = escapeHydraName repoName
       jobsetName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev))
@@ -250,10 +258,10 @@ pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequ
           { Hydra.hjName = "pullrequest-" <> Text.pack (show (evPullReqNumber ev)),
             Hydra.hjDescription = "PR " <> Text.pack (show (evPullReqNumber ev)) <> ": " <> whPullReqTitle (evPullReqPayload ev),
             Hydra.hjFlake =
-              "github:"
-                <> repoName
-                <> "/"
-                <> whPullReqTargetSha (whPullReqHead (evPullReqPayload ev)),
+              flakeSourceUri
+                flakeDirs
+                repoName
+                (whPullReqTargetSha (whPullReqHead (evPullReqPayload ev))),
             -- setting visiblity seems to have no effect...
             Hydra.hjVisible = False,
             -- ... so we just disable it.
@@ -263,14 +271,14 @@ pullRequestHook _orgs conn _ (_, ev@PullRequestEvent {evPullReqAction = PullRequ
   -- We Update the Jobset instead of Delete, so that past build results will
   -- still be available.  This should update the sha to 000000, and as such
   -- allow us to find them and delete them later.
-  liftIO $ do
+  liftIO . whenJobsetAllowed allowlist repoName jobsetName $ do
     putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
     Hydra.writeCommand conn (Hydra.UpdateJobset repoName projName jobsetName jobset)
-pullRequestHook _orgs _ _ (_, ev) =
+pullRequestHook _orgs _ _ _ _ (_, ev) =
   liftIO (putStrLn $ "Unhandled pullRequestEvent with action: " ++ show (evPullReqAction ev))
 
-checkSuiteHook :: Set Text -> ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
-checkSuiteHook orgs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
+checkSuiteHook :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> RepoWebhookEvent -> ((), CheckSuiteEvent) -> Handler ()
+checkSuiteHook orgs allowlist flakeDirs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = CheckSuiteEventActionRerequested}) = liftIO $ do
   let prs = whCheckSuitePullRequests $ evCheckSuiteCheckSuite ev
       repoName = whRepoFullName $ evCheckSuiteRepository ev
       projName = escapeHydraName repoName
@@ -280,23 +288,24 @@ checkSuiteHook orgs env conn _ (_, ev@CheckSuiteEvent {evCheckSuiteAction = Chec
     else forM_ prs $ \pr -> do
       let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-      jobset <-
-        (flip runClientM env $ Hydra.getJobset projName jobsetName)
-          >>= either (die . show) return
-          >>= \response -> case Aeson.fromJSON response of
-            Aeson.Error e -> die $ show e
-            Aeson.Success v -> return v
+      whenJobsetAllowed allowlist repoName jobsetName $ do
+        jobset <-
+          (flip runClientM env $ Hydra.getJobset projName jobsetName)
+            >>= either (die . show) return
+            >>= \response -> case Aeson.fromJSON response of
+              Aeson.Error e -> die $ show e
+              Aeson.Success v -> return v
 
-      putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-      Hydra.writeCommand conn $
-        Hydra.UpdateJobset repoName projName jobsetName $
-          jobset
-            { Hydra.hjFlake = "github:" <> repoName <> "/" <> whChecksPullRequestTargetSha (whChecksPullRequestHead pr)
-            }
-checkSuiteHook _ _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
+        putStrLn $ "Adding Update " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+        Hydra.writeCommand conn $
+          Hydra.UpdateJobset repoName projName jobsetName $
+            jobset
+              { Hydra.hjFlake = flakeSourceUri flakeDirs repoName (whChecksPullRequestTargetSha (whChecksPullRequestHead pr))
+              }
+checkSuiteHook _ _ _ _ _ _ (_, ev) = liftIO . putStrLn $ "Unhandled checkSuiteEvent with action: " ++ show (evCheckSuiteAction ev) ++ "; payload: " ++ show ev
 
-checkRunHook :: Set Text -> Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
-checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
+checkRunHook :: Set Text -> JobsetAllowlist -> Connection -> RepoWebhookEvent -> ((), CheckRunEvent) -> Handler ()
+checkRunHook orgs allowlist conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventActionRerequested}) = liftIO $ do
   let checkRun = evCheckRunCheckRun ev
       checkRunName = whCheckRunName checkRun
       repoName = whRepoFullName $ evCheckRunRepository ev
@@ -305,17 +314,19 @@ checkRunHook orgs conn _ (_, ev@CheckRunEvent {evCheckRunAction = CheckRunEventA
 
   if not (isOrgAllowed orgs repoName)
     then putStrLn $ "Ignoring check-run from non-allowed org: " ++ Text.unpack repoName
-    else if "ci/eval" `Text.isPrefixOf` checkRunName
-      then forM_ prs $ \pr -> do
-        let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
+    else
+      if "ci/eval" `Text.isPrefixOf` checkRunName
+        then forM_ prs $ \pr -> do
+          let jobsetName = "pullrequest-" <> Text.pack (show $ whChecksPullRequestNumber pr)
 
-        putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
-      else do
-        let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
-        putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
-        Hydra.writeCommand conn $ Hydra.RestartBuild externalId
-checkRunHook _orgs _ _ (_, ev) =
+          whenJobsetAllowed allowlist repoName jobsetName $ do
+            putStrLn $ "Adding Eval " ++ show projName ++ "/" ++ show jobsetName ++ " to the queue."
+            Hydra.writeCommand conn $ Hydra.EvaluateJobset projName jobsetName True
+        else do
+          let externalId = read . Text.unpack $ whCheckRunExternalId checkRun
+          putStrLn $ "Adding Restart " ++ Text.unpack checkRunName ++ " #" ++ show externalId ++ " to the queue."
+          Hydra.writeCommand conn $ Hydra.RestartBuild externalId
+checkRunHook _orgs _ _ _ (_, ev) =
   liftIO . putStrLn $
     "Unhandled checkRunEvent with action: "
       ++ show (evCheckRunAction ev)

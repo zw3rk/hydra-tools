@@ -10,6 +10,11 @@ The automated tests are limited. They can only test the Hydra -> GitHub directio
 building `github:xyz` flake URLs require network access, which is restricted in the NixOS
 test runner. To run them, no further setup is required, just run `nix flake check`.
 
+The local IOG-scenario batch (`flake/iog-scenarios/`, `make test-iog-integration`
+and `make test-iog-scenarios`) adapts the upstream integration/scenario suites to
+the current multi-instance module and bridge defaults. It is x86_64-linux only,
+needs Nix VM builds, and stays separate from the Haskell suites.
+
 For more extensive testing, manual testing is required. To run all the required
 components, follow the steps in the rest of this document.
 

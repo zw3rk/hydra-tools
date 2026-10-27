@@ -1,6 +1,11 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
+{-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Periodic sync between GitHub PR state and Hydra jobsets.
 --
 -- When webhook delivery fails, open PRs may lack jobsets (missed creation)
@@ -10,39 +15,38 @@
 --   1. Discovers org/repo mappings from the @gf_org_project_map@ table
 --   2. Fetches open PRs from GitHub
 --   3. Compares against enabled @pullrequest-*@ jobsets in Hydra
---   4. Queues create/disable commands via the existing command pipeline
-{-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
+--   4. Refreshes stale immutable PR sources without changing jobset settings
+--   5. Queues create/disable/evaluation commands via the existing pipeline
 module Lib.Bridge.Sync
   ( SyncConfig (..),
     SyncStats (..),
     PRInfo (..),
+    EnabledPRJobset (..),
     syncLoop,
     reconcileAll,
     reconcileProject,
     fetchOpenPRs,
     fetchEnabledPRJobsets,
+    fetchOrgProjectMappings,
+    sourceRefreshTarget,
   )
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, try)
-import Data.Aeson (Value, (.:), (.:?))
+import Control.Exception (SomeException, throwIO)
+import Data.Aeson (Object, Value, (.:), (.:?))
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString (ByteString)
+import Data.Char (isHexDigit)
 import Data.IORef (IORef)
 import Data.List (find)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_, withTransaction)
 import GitHub.REST
   ( GHEndpoint (..),
     GitHubSettings (..),
@@ -50,6 +54,9 @@ import GitHub.REST
     StdMethod (..),
   )
 import GitHub.REST.PageLinks (PageLinks)
+import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
+import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
+import Lib.Exception (tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
     TokenLease,
@@ -75,6 +82,7 @@ data SyncStats = SyncStats
   { ssProjectsSynced :: !Int,
     ssJobsetsCreated :: !Int,
     ssJobsetsDisabled :: !Int,
+    ssJobsetsRefreshed :: !Int,
     ssErrors :: !Int
   }
   deriving (Show, Eq)
@@ -85,26 +93,41 @@ instance Semigroup SyncStats where
       { ssProjectsSynced = ssProjectsSynced a + ssProjectsSynced b,
         ssJobsetsCreated = ssJobsetsCreated a + ssJobsetsCreated b,
         ssJobsetsDisabled = ssJobsetsDisabled a + ssJobsetsDisabled b,
+        ssJobsetsRefreshed = ssJobsetsRefreshed a + ssJobsetsRefreshed b,
         ssErrors = ssErrors a + ssErrors b
       }
 
 instance Monoid SyncStats where
-  mempty = SyncStats 0 0 0 0
+  mempty = SyncStats 0 0 0 0 0
+
+-- | The fields needed to recognize an existing bridge-managed PR source.
+-- All other jobset settings remain in Hydra, rather than being reconstructed
+-- from defaults when a missed synchronize event is repaired.
+data EnabledPRJobset = EnabledPRJobset
+  { ejName :: !Text,
+    ejType :: !Int,
+    ejFlake :: !(Maybe Text)
+  }
+  deriving (Show, Eq)
 
 -- | Configuration for the sync loop.
 data SyncConfig = SyncConfig
-  { scInterval :: !Int,
-    -- ^ Seconds between sync cycles
+  { -- | Seconds between sync cycles
+    scInterval :: !Int,
+    -- | Log actions without queueing commands
     scDryRun :: !Bool,
-    -- ^ Log actions without queueing commands
+    -- | GitHub API endpoint URL
     scEndpoint :: !Text,
-    -- ^ GitHub API endpoint URL
+    -- | GitHub user-agent header
     scUserAgent :: !ByteString,
-    -- ^ GitHub user-agent header
+    -- | Shared mutable token cache (unused directly but kept for reference)
     scTokensRef :: !(IORef [(String, TokenLease)]),
-    -- ^ Shared mutable token cache (unused directly but kept for reference)
-    scGetTokens :: !(IO [(String, TokenLease)])
-    -- ^ Action to refresh tokens when expired
+    -- | Action to refresh tokens when expired
+    scGetTokens :: !(IO [(String, TokenLease)]),
+    -- | Jobsets the sync may create or disable, per repo
+    scJobsetAllowlist :: !JobsetAllowlist,
+    -- | Optional repository-specific Flake directories
+    scRepoFlakeDirs :: !RepoFlakeDirs
   }
 
 -- | Repos where draft PRs should NOT create jobsets (replicates existing
@@ -140,6 +163,8 @@ syncLoop cfg conn = do
           <> " created, "
           <> show (ssJobsetsDisabled stats)
           <> " disabled, "
+          <> show (ssJobsetsRefreshed stats)
+          <> " source(s) refreshed, "
           <> show (ssErrors stats)
           <> " error(s)"
       loop
@@ -165,7 +190,7 @@ reconcileAll cfg conn = do
 -- | Wrapper that isolates per-project errors.
 reconcileOne :: SyncConfig -> Connection -> (Text, Text, Text) -> IO SyncStats
 reconcileOne cfg conn mapping@(_project, org, repo) = do
-  result <- try (reconcileProject cfg conn mapping)
+  result <- tryNonAsync (reconcileProject cfg conn mapping)
   case result of
     Right stats -> pure stats
     Left (e :: SomeException) -> do
@@ -186,9 +211,10 @@ reconcileProject :: SyncConfig -> Connection -> (Text, Text, Text) -> IO SyncSta
 reconcileProject cfg conn (project, org, repo) = do
   let repoFullName = org <> "/" <> repo
 
-  -- Fetch current state from both sides.
-  openPRs <- fetchOpenPRs cfg org repo
+  -- Snapshot Hydra BEFORE asking GitHub. A webhook arriving while GitHub is
+  -- being read must win over this snapshot's conditional source update.
   enabledJobsets <- fetchEnabledPRJobsets conn project
+  openPRs <- fetchOpenPRs cfg org repo
 
   let -- Build a map of open PR numbers to their info.
       openPRMap :: Map Int PRInfo
@@ -203,21 +229,37 @@ reconcileProject cfg conn (project, org, repo) = do
       githubSet =
         Set.fromList
           [ prNumber pr
-            | pr <- openPRs,
-              not (shouldSkipDraft repoFullName pr)
+          | pr <- openPRs,
+            not (shouldSkipDraft repoFullName pr)
           ]
+
+      -- Whether the jobset allowlist lets the sync touch this PR's jobset.
+      allowed :: Int -> Bool
+      allowed n = isJobsetAllowed (scJobsetAllowlist cfg) repoFullName ("pullrequest-" <> Text.pack (show n))
 
       -- PRs open on GitHub but missing a jobset in Hydra.
       missing :: [PRInfo]
       missing =
         [ pr
-          | n <- Set.toList (githubSet `Set.difference` hydraSet),
-            Just pr <- [Map.lookup n openPRMap]
+        | n <- Set.toList (githubSet `Set.difference` hydraSet),
+          allowed n,
+          Just pr <- [Map.lookup n openPRMap]
         ]
 
       -- Jobset PR numbers enabled in Hydra but not open on GitHub.
       stale :: [Int]
-      stale = Set.toList (hydraSet `Set.difference` githubSet)
+      stale = filter allowed $ Set.toList (hydraSet `Set.difference` githubSet)
+
+      -- Enabled jobsets of open PRs whose source no longer matches the
+      -- PR head.
+      refreshes =
+        [ (jobset, newFlake)
+        | n <- Set.toList (githubSet `Set.intersection` hydraSet),
+          allowed n,
+          Just pr <- [Map.lookup n openPRMap],
+          Just jobset <- [Map.lookup n enabledJobsets],
+          Just newFlake <- [sourceRefreshTarget (scRepoFlakeDirs cfg) repoFullName pr jobset]
+        ]
 
   putStrLn $
     "[sync] "
@@ -230,7 +272,9 @@ reconcileProject cfg conn (project, org, repo) = do
       <> show (length missing)
       <> " missing, "
       <> show (length stale)
-      <> " stale"
+      <> " stale, "
+      <> show (length refreshes)
+      <> " source(s) outdated"
 
   -- Queue creation commands for missing jobsets.
   created <-
@@ -248,11 +292,16 @@ reconcileProject cfg conn (project, org, repo) = do
         mapM_ (disableStaleJobset cfg conn project repoFullName) stale
         pure (length stale)
 
+  -- Refresh sources last: a failure here still fails this project's sync,
+  -- but only after its missing jobsets were created and stale ones disabled.
+  refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
+
   pure
     SyncStats
       { ssProjectsSynced = 1,
         ssJobsetsCreated = created,
         ssJobsetsDisabled = disabled,
+        ssJobsetsRefreshed = refreshed,
         ssErrors = 0
       }
 
@@ -271,9 +320,10 @@ fetchOpenPRs cfg org repo = do
   tokens <- scGetTokens cfg
   let owner = Text.unpack org
   case find ((owner ==) . fst) tokens of
-    Nothing -> do
-      putStrLn $ "[sync] No GitHub token for org " <> owner <> "; skipping PR fetch"
-      pure []
+    Nothing ->
+      -- An unavailable PR listing is not an empty PR listing: returning []
+      -- would disable every existing PR jobset and report a successful cycle.
+      throwIO $ userError $ "No GitHub token for org " <> owner <> "; reconciliation skipped"
     Just (_, lease) -> do
       let settings =
             GitHubSettings
@@ -302,7 +352,10 @@ fetchAllPages ghCfg org repo page = do
               ]
           }
   (prs, _links) <- queryGitHubRestPage ghCfg ep :: IO ([Value], PageLinks)
-  let parsed = mapMaybe parsePR prs
+  -- Treat a malformed entry as an incomplete listing: silently omitting it
+  -- would disable a still-open PR. All pages are read before reconciliation
+  -- writes anything.
+  parsed <- maybe (throwIO $ userError "Incomplete GitHub pull request listing") pure (traverse parsePR prs)
   -- Continue if we got a full page of results (there may be more).
   if length prs < 100
     then pure parsed
@@ -311,7 +364,6 @@ fetchAllPages ghCfg org repo page = do
       pure (parsed ++ rest)
 
 -- | Extract PR info from a GitHub API JSON object.
--- Returns Nothing for PRs whose head repo is null (deleted fork).
 parsePR :: Value -> Maybe PRInfo
 parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   num <- obj .: "number"
@@ -319,10 +371,16 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   draft <- obj .: "draft"
   headObj <- obj .: "head"
   sha <- headObj .: "sha"
-  -- head.repo can be null when the source fork has been deleted.
+  -- head.repo is null when the source fork has been deleted.  GitHub still
+  -- serves the PR's head commit from the base repository (as the webhook
+  -- path already relies on), so use that rather than failing the listing.
   mRepo <- headObj .:? "repo"
-  repoObj <- maybe (fail "head.repo is null") pure mRepo
-  fullName <- repoObj .: "full_name"
+  fullName <- case mRepo of
+    Just repoObj -> repoObj .: "full_name"
+    Nothing -> do
+      baseObj :: Object <- obj .: "base"
+      baseRepo :: Object <- baseObj .: "repo"
+      baseRepo .: "full_name"
   pure
     PRInfo
       { prNumber = num,
@@ -339,12 +397,22 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
 -- | Fetch org/project mappings from the @gf_org_project_map@ table.
 -- Returns @(project_name, org_name, repo_name)@ triples.
 -- Gracefully returns empty list if the table doesn't exist.
+--
+-- Mappings whose Hydra project is disabled are skipped: reconciling one
+-- would re-enable (and re-trigger) its PR jobsets.  That is how a repo
+-- transferred to a new owner ends up building every PR twice, once in the
+-- old project and once in the new one, since hydra-web re-detects the old
+-- mapping from the old jobsets' flake URLs.  A mapping whose project does
+-- not exist yet is kept, so new repos still get their project created.
 fetchOrgProjectMappings :: Connection -> IO [(Text, Text, Text)]
 fetchOrgProjectMappings conn = do
   result <-
-    try
-      ( query_ conn
-          "SELECT project_name, org_name, repo_name FROM gf_org_project_map"
+    tryNonAsync
+      ( query_
+          conn
+          "SELECT m.project_name, m.org_name, m.repo_name FROM gf_org_project_map m \
+          \LEFT JOIN projects p ON p.name = m.project_name \
+          \WHERE p.name IS NULL OR p.enabled <> 0"
       )
   case result of
     Right rows -> pure rows
@@ -353,19 +421,19 @@ fetchOrgProjectMappings conn = do
       pure []
 
 -- | Fetch enabled @pullrequest-*@ jobsets for a given Hydra project.
--- Returns a map from PR number to jobset name.
-fetchEnabledPRJobsets :: Connection -> Text -> IO (Map Int Text)
+-- Returns a map from PR number to its current source snapshot.
+fetchEnabledPRJobsets :: Connection -> Text -> IO (Map Int EnabledPRJobset)
 fetchEnabledPRJobsets conn project = do
   rows <-
     query
       conn
-      "SELECT name FROM jobsets WHERE project = ? AND name LIKE 'pullrequest-%' AND enabled > 0"
+      "SELECT name, type, flake FROM jobsets WHERE project = ? AND name LIKE 'pullrequest-%' AND enabled > 0"
       (Only project)
   pure $
     Map.fromList
-      [ (n, name)
-        | (Only name) <- rows,
-          Just n <- [parsePRNumber name]
+      [ (n, EnabledPRJobset name typ flake)
+      | (name, typ, flake) <- rows,
+        Just n <- [parsePRNumber name]
       ]
 
 -- | Parse a PR number from a jobset name like @pullrequest-42@.
@@ -381,6 +449,61 @@ parsePRNumber name =
 -- Command generation
 ------------------------------------------------------------------------
 
+-- | Refresh only immutable canonical GitHub sources emitted by the bridge.
+-- When a repository gains a configured directory, also migrate its exact
+-- former root URI. Preserve whether creation used the base or head repository.
+sourceRefreshTarget :: RepoFlakeDirs -> Text -> PRInfo -> EnabledPRJobset -> Maybe Text
+sourceRefreshTarget flakeDirs repoFullName pr jobset
+  | ejType jobset /= 1 = Nothing
+  | ejName jobset /= "pullrequest-" <> Text.pack (show $ prNumber pr) = Nothing
+  | otherwise = do
+      oldFlake <- ejFlake jobset
+      repo <- find (matchesSource oldFlake) [repoFullName, prRepoFullName pr]
+      let newFlake = flakeSourceUriFor flakeDirs repoFullName repo (prHeadSha pr)
+      if immutableSha (prHeadSha pr) && newFlake /= oldFlake then Just newFlake else Nothing
+  where
+    matchesSource oldFlake repo =
+      case Text.stripPrefix ("github:" <> repo <> "/") oldFlake of
+        Nothing -> False
+        Just remainder ->
+          let oldSha = Text.takeWhile (/= '?') remainder
+              configuredUri = flakeSourceUriFor flakeDirs repoFullName repo oldSha
+              formerRootUri = "github:" <> repo <> "/" <> oldSha
+              hasConfiguredDir = Map.member repo flakeDirs || Map.member repoFullName flakeDirs
+           in immutableSha oldSha
+                && (oldFlake == configuredUri || (hasConfiguredDir && oldFlake == formerRootUri))
+    immutableSha sha = Text.length sha == 40 && Text.all isHexDigit sha
+
+-- | Compare-and-swap only the source, then queue its ordinary evaluation in
+-- the SAME transaction. A newer webhook/config edit or a disable/delete wins
+-- over the old snapshot, and a failed enqueue rolls the source update back.
+-- This does not impose global ordering on already-queued webhook commands.
+refreshJobsetSource :: SyncConfig -> Connection -> Text -> (EnabledPRJobset, Text) -> IO Int
+refreshJobsetSource cfg conn project (jobset, newFlake)
+  | scDryRun cfg = do
+      putStrLn $ "[sync] DRY-RUN: would refresh source " <> Text.unpack project <> "/" <> Text.unpack (ejName jobset)
+      pure 1
+  | otherwise = do
+      refreshed <- withTransaction conn $ do
+        changed <-
+          query
+            conn
+            "UPDATE jobsets SET flake = ? WHERE project = ? AND name = ? AND enabled > 0 AND type = 1 AND flake = ? RETURNING name"
+            (newFlake, project, ejName jobset, ejFlake jobset) ::
+            IO [Only Text]
+        case changed of
+          [] -> pure 0
+          [_] -> do
+            Hydra.writeCommand conn (Hydra.EvaluateJobset project (ejName jobset) False)
+            pure 1
+          _ -> throwIO $ userError "Multiple jobsets matched a source refresh"
+      putStrLn $
+        (if refreshed == 1 then "[sync] Refreshed source " else "[sync] Source changed concurrently; skipped ")
+          <> Text.unpack project
+          <> "/"
+          <> Text.unpack (ejName jobset)
+      pure refreshed
+
 -- | Queue a CreateOrUpdateJobset command for a missing PR jobset.
 createMissingJobset :: SyncConfig -> Connection -> Text -> Text -> PRInfo -> IO ()
 createMissingJobset cfg conn project repoFullName pr = do
@@ -389,7 +512,7 @@ createMissingJobset cfg conn project repoFullName pr = do
         Hydra.defHydraFlakeJobset
           { Hydra.hjName = jobsetName,
             Hydra.hjDescription = "PR " <> Text.pack (show (prNumber pr)) <> ": " <> prTitle pr,
-            Hydra.hjFlake = "github:" <> prRepoFullName pr <> "/" <> prHeadSha pr
+            Hydra.hjFlake = flakeSourceUriFor (scRepoFlakeDirs cfg) repoFullName (prRepoFullName pr) (prHeadSha pr)
           }
   if scDryRun cfg
     then putStrLn $ "[sync] DRY-RUN: would create " <> Text.unpack project <> "/" <> Text.unpack jobsetName
@@ -405,7 +528,7 @@ disableStaleJobset cfg conn project repoFullName prNum = do
         Hydra.defHydraFlakeJobset
           { Hydra.hjName = jobsetName,
             Hydra.hjDescription = "PR " <> Text.pack (show prNum) <> " (closed)",
-            Hydra.hjFlake = "github:" <> repoFullName <> "/0000000000000000000000000000000000000000",
+            Hydra.hjFlake = flakeSourceUri (scRepoFlakeDirs cfg) repoFullName "0000000000000000000000000000000000000000",
             Hydra.hjVisible = False,
             Hydra.hjEnabled = 0
           }

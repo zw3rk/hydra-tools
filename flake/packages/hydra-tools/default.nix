@@ -21,6 +21,55 @@
           hydra-tools = final.haskell-nix.project' {
             src = ../../../.;
             compiler-nix-name = "ghc9122";
+            modules = [
+              {
+                packages.hydra-github-bridge.components.tests.sync-source.testWrapper = [
+                  "${final.writeShellScript "sync-source-postgresql" ''
+                    set -euo pipefail
+                    ${lib.optionalString final.stdenv.isLinux ''
+                      export HYDRA_SYNC_TEST_NSS_WRAPPER=${final.nss_wrapper}/lib/libnss_wrapper.so
+                    ''}
+                    export PATH=${lib.makeBinPath ([final.postgresql final.coreutils]
+                      # Root launchers run only PostgreSQL as an ordinary user.
+                      ++ lib.optionals final.stdenv.isLinux [final.util-linux]
+                      ++ lib.optionals final.stdenv.isDarwin [
+                        # crypton-x509-system reads public system certificates when
+                        # creating the TLS manager, including for loopback HTTP.
+                        # Nixpkgs has no working packaged Darwin security tool.
+                        (final.writeShellScriptBin "security" ''
+                          exec /usr/bin/security "$@"
+                        '')
+                      ])}:$PATH
+                    ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/test-run-sync-source-ownership.sh} ${../../../hydra-github-bridge/test/run-sync-source.sh}
+                    exec ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/run-sync-source.sh} "$@"
+                  ''}"
+                ];
+                # The bridge-status suite reuses the same private throwaway
+                # PostgreSQL cluster seam (run-sync-source.sh exports
+                # HYDRA_SYNC_TEST_DATABASE); only the exercised queries differ.
+                packages.hydra-github-bridge.components.tests.bridge-status.testWrapper = [
+                  "${final.writeShellScript "bridge-status-postgresql" ''
+                    set -euo pipefail
+                    ${lib.optionalString final.stdenv.isLinux ''
+                      export HYDRA_SYNC_TEST_NSS_WRAPPER=${final.nss_wrapper}/lib/libnss_wrapper.so
+                    ''}
+                    export PATH=${lib.makeBinPath ([final.postgresql final.coreutils]
+                      # Root launchers run only PostgreSQL as an ordinary user.
+                      ++ lib.optionals final.stdenv.isLinux [final.util-linux]
+                      ++ lib.optionals final.stdenv.isDarwin [
+                        # crypton-x509-system reads public system certificates when
+                        # creating the TLS manager, including for loopback HTTP.
+                        # Nixpkgs has no working packaged Darwin security tool.
+                        (final.writeShellScriptBin "security" ''
+                          exec /usr/bin/security "$@"
+                        '')
+                      ])}:$PATH
+                    ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/test-run-sync-source-ownership.sh} ${../../../hydra-github-bridge/test/run-sync-source.sh}
+                    exec ${final.bash}/bin/bash ${../../../hydra-github-bridge/test/run-sync-source.sh} "$@"
+                  ''}"
+                ];
+              }
+            ];
             inputMap = {
               "https://github.com/input-output-hk/servant-github-webhook" = inputs.servant-github-webhook;
               "https://github.com/cuedo/github-webhooks" = inputs.github-webhooks;
@@ -37,6 +86,7 @@
               inputsFrom = [config.treefmt.build.devShell];
 
               buildInputs = [
+                final.postgresql
                 (withSystem system ({config, ...}: config.packages.mockoon-cli))
               ];
             };
@@ -51,6 +101,11 @@ in {
   in {
     inherit (haskellPkgSet'.flake') devShells;
 
+    checks.sync-source = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.sync-source;
+    checks.bridge-status = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.bridge-status;
+    checks.token-refresh = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.token-refresh;
+    checks.public-url = haskellPkgSet'.hsPkgs.hydra-github-bridge.checks.public-url;
+
     packages = {
       hydra-github-bridge = haskellPkgSet'.getComponent "hydra-github-bridge:exe:hydra-github-bridge";
       hydra-attic-bridge = haskellPkgSet'.getComponent "hydra-attic-bridge:exe:hydra-attic-bridge";
@@ -59,12 +114,13 @@ in {
       # executable so the NixOS module can reference them via $out/share/...
       hydra-web = let
         exe = haskellPkgSet'.getComponent "hydra-web:exe:hydra-web";
-        pkgs = import inputs.nixpkgs { system = ctx.system; };
-      in pkgs.runCommand "hydra-web-with-static" { meta = exe.meta or {}; } ''
-        mkdir -p $out/bin $out/share/hydra-web
-        ln -s ${exe}/bin/hydra-web $out/bin/hydra-web
-        cp -r ${../../../hydra-web/static} $out/share/hydra-web/static
-      '';
+        pkgs = import inputs.nixpkgs {system = ctx.system;};
+      in
+        pkgs.runCommand "hydra-web-with-static" {meta = exe.meta or {};} ''
+          mkdir -p $out/bin $out/share/hydra-web
+          ln -s ${exe}/bin/hydra-web $out/bin/hydra-web
+          cp -r ${../../../hydra-web/static} $out/share/hydra-web/static
+        '';
     };
   };
 

@@ -16,6 +16,8 @@ module Lib.GitHub.Client
     RESTKeyValue (..),
     CheckRunStatus (..),
     CheckRunConclusion (..),
+    conclusionText,
+    failureConclusions,
     CheckRunOutput (..),
     CheckRunPayload (..),
     CheckRun (..),
@@ -30,7 +32,7 @@ module Lib.GitHub.Client
   )
 where
 
-import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Exception (Exception, SomeException, throwIO)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader (..), ReaderT (..))
 import Control.Monad.Trans (MonadTrans)
@@ -63,6 +65,7 @@ import GitHub.REST.Auth (fromToken, getJWTToken)
 import GitHub.REST.Endpoint (endpointPath, renderMethod)
 import GitHub.REST.KeyValue (kvToValue)
 import GitHub.REST.PageLinks (PageLinks, parsePageLinks)
+import Lib.Exception (tryNonAsync)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -140,16 +143,28 @@ data CheckRunConclusion
   | TimedOut
   deriving (Eq, Generic, Read, Show)
 
+-- | Canonical Text encoding of a 'CheckRunConclusion'. Used by both the
+-- 'ToJSON' instance below and by SQL queries that filter on the
+-- @payload->>'conclusion'@ JSON field, so the two stay in sync automatically.
+conclusionText :: CheckRunConclusion -> Text
+conclusionText = \case
+  ActionRequired -> "action_required"
+  Cancelled -> "cancelled"
+  Failure -> "failure"
+  Neutral -> "neutral"
+  Success -> "success"
+  Skipped -> "skipped"
+  Stale -> "stale"
+  TimedOut -> "timed_out"
+
+-- | Conclusions that the bridge treats as "the user needs to know" — once any
+-- of these has been reported for a given commit+job, subsequent status
+-- transitions are always forwarded to GitHub (see @whenStatusOrJob@).
+failureConclusions :: [CheckRunConclusion]
+failureConclusions = [Failure, Cancelled, Stale, TimedOut]
+
 instance ToJSON CheckRunConclusion where
-  toJSON = \case
-    (ActionRequired) -> "action_required"
-    (Cancelled) -> "cancelled"
-    (Failure) -> "failure"
-    (Neutral) -> "neutral"
-    (Success) -> "success"
-    (Skipped) -> "skipped"
-    (Stale) -> "stale"
-    (TimedOut) -> "timed_out"
+  toJSON = toJSON . conclusionText
 
 instance FromJSON CheckRunConclusion where
   parseJSON = \case
@@ -239,6 +254,7 @@ CREATE TABLE github_status_payload (
     created TIMESTAMP DEFAULT NOW(),
     sent TIMESTAMP DEFAULT NULL,
     tries INTEGER DEFAULT 0,
+    priority SMALLINT NOT NULL DEFAULT 2, -- 0 = ci/eval*, 1 = *required, 2 = other
     FOREIGN KEY (status_id) REFERENCES github_status (id) ON DELETE CASCADE
 );
 -}
@@ -258,7 +274,8 @@ instance FromJSON CheckRun where
 
 data TokenLease = TokenLease
   { token :: Token,
-    expiry :: Maybe UTCTime
+    expiry :: Maybe UTCTime,
+    installationId :: Int
   }
   deriving (Show)
 
@@ -371,22 +388,25 @@ fetchAppInstallationToken :: Text -> Int -> FilePath -> ByteString -> Int -> IO 
 fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
   -- Try extended permissions first (needed for PR sync on private repos).
   -- If the installation doesn't grant them, fall back to basic permissions.
-  result <- try $ requestToken extendedPermissions
+  result <- tryNonAsync $ requestToken extendedPermissions
   case result of
     Right lease -> return lease
     Left (_e :: SomeException) -> do
-      putStrLn $ "Extended permissions not available for installation "
-        <> show appInstallationId <> ", falling back to basic permissions"
+      putStrLn $
+        "Extended permissions not available for installation "
+          <> show appInstallationId
+          <> ", falling back to basic permissions"
       requestToken basicPermissions
   where
     basicPermissions =
       [ "checks" := ("write" :: String),
         "statuses" := ("write" :: String)
       ]
-    extendedPermissions = basicPermissions ++
-      [ "pull_requests" := ("read" :: String),
-        "contents" := ("read" :: String)
-      ]
+    extendedPermissions =
+      basicPermissions
+        ++ [ "pull_requests" := ("read" :: String),
+             "contents" := ("read" :: String)
+           ]
     requestToken perms = do
       signer <- loadSigner appKeyFile
       jwt <- getJWTToken signer appId
@@ -404,11 +424,12 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
                 { method = POST,
                   endpoint = "/app/installations/:appInstallId/access_tokens",
                   endpointVals = ["appInstallId" := appInstallationId],
-                  ghData = [ "permissions" := perms ]
+                  ghData = ["permissions" := perms]
                 }
       expiry <- iso8601ParseM (response .: "expires_at" :: String)
       return $
         TokenLease
           { token = BearerToken $ cs (response .: "token" :: String),
-            expiry = Just expiry
+            expiry = Just expiry,
+            installationId = appInstallationId
           }

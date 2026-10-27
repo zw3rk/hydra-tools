@@ -1,13 +1,14 @@
 -- Copyright 2026 Moritz Angermann <moritz@zw3rk.com>, zw3rk pte. ltd.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Text utility functions.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Text utility functions.
 module HydraLib.Data.Text
-  ( indent
-  , indentLine
-  ) where
+  ( indent,
+    indentLine,
+  )
+where
 
 import Data.Text (Text)
 import qualified Data.Text as Text

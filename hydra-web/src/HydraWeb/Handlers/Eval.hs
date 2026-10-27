@@ -1,47 +1,53 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Handler for eval pages (GET /eval/:id) and HTMX tab partials.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Handler for eval pages (GET /eval/:id) and HTMX tab partials.
 module HydraWeb.Handlers.Eval
-  ( evalHandler
-  , evalTabHandler
-  , latestEvalsHandler
-  ) where
+  ( evalHandler,
+    evalTabHandler,
+    latestEvalsHandler,
+  )
+where
 
 import Control.Concurrent.STM (readTVarIO)
+import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import Control.Monad.Error.Class (throwError)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Database.PostgreSQL.Simple (Connection)
-import Lucid
-import Servant (err404)
-
-import HydraWeb.Types (AppM, App (..))
-import HydraWeb.Config (Config (..))
 import HydraWeb.Auth.Middleware (getOptionalUser)
-import HydraWeb.DB.Pool (withConn)
-import HydraWeb.DB.Evals (getEval, getEvalError, getEvalInputs, previousEval,
-                           latestEvals, latestEvalsCount)
+import HydraWeb.Config (Config (..))
 import HydraWeb.DB.Builds (buildsByEval)
-import HydraWeb.Models.Eval (JobsetEval (..), EvalInfo (..))
-import HydraWeb.Visibility (isProjectAccessible, filterByProjectAccess)
-import HydraWeb.View.Layout (PageData (..), pageLayout)
-import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
+import HydraWeb.DB.Evals
+  ( getEval,
+    getEvalError,
+    getEvalInputs,
+    latestEvals,
+    latestEvalsCount,
+    previousEval,
+  )
+import HydraWeb.DB.Pool (withConn)
+import HydraWeb.Models.Eval (EvalInfo (..), JobsetEval (..))
+import HydraWeb.Types (App (..), AppM)
 import HydraWeb.View.BuildDiff (BuildDiff, computeBuildDiff)
 import HydraWeb.View.Components (showT)
+import HydraWeb.View.Layout (PageData (..), pageLayout)
+import HydraWeb.View.Pages.Eval (evalPage, evalTabContent, latestEvalsPage)
+import HydraWeb.Visibility (filterByProjectAccess, isProjectAccessible)
+import Lucid
+import Servant (err404)
 
 -- | Load the build diff for an eval (current builds vs previous eval's builds).
 loadBuildDiff :: Connection -> JobsetEval -> IO BuildDiff
 loadBuildDiff conn eval = do
   curBuilds <- buildsByEval conn (evalId eval) Nothing
-  mPrev     <- previousEval conn eval
+  mPrev <- previousEval conn eval
   prevBuilds <- case mPrev of
     Nothing -> pure []
-    Just p  -> buildsByEval conn (evalId p) Nothing
+    Just p -> buildsByEval conn (evalId p) Nothing
   pure $ computeBuildDiff curBuilds prevBuilds
 
 -- | Render the eval detail page with build diff.
@@ -49,7 +55,7 @@ loadBuildDiff conn eval = do
 evalHandler :: Maybe Text -> Int -> AppM (Html ())
 evalHandler mCookie eid = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   result <- liftIO $ withConn pool $ \conn -> do
@@ -61,19 +67,20 @@ evalHandler mCookie eid = do
         if not accessible
           then pure Nothing
           else do
-            inputs  <- getEvalInputs conn eid
+            inputs <- getEvalInputs conn eid
             evalErr <- getEvalError conn eid
-            diff    <- loadBuildDiff conn eval
+            diff <- loadBuildDiff conn eval
             pure $ Just (eval, inputs, evalErr, diff)
   case result of
     Nothing -> throwError err404
     Just (eval, inputs, evalErr, diff) -> do
-      let pd = PageData
-            { pdTitle    = "Evaluation #" <> showT eid
-            , pdBasePath = bp
-            , pdCounts   = counts
-            , pdUser     = mUser
-            }
+      let pd =
+            PageData
+              { pdTitle = "Evaluation #" <> showT eid,
+                pdBasePath = bp,
+                pdCounts = counts,
+                pdUser = mUser
+              }
       pure $ pageLayout pd $ evalPage bp eval inputs evalErr diff
 
 -- | Render an eval tab partial (HTMX response).
@@ -81,7 +88,7 @@ evalHandler mCookie eid = do
 evalTabHandler :: Maybe Text -> Int -> Text -> AppM (Html ())
 evalTabHandler mCookie eid tabName = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
+  bp <- asks (cfgBasePath . appConfig)
   mUser <- liftIO $ getOptionalUser pool mCookie
   result <- liftIO $ withConn pool $ \conn -> do
     mEval <- getEval conn eid
@@ -102,10 +109,10 @@ evalTabHandler mCookie eid tabName = do
 latestEvalsHandler :: Maybe Text -> Maybe Int -> AppM (Html ())
 latestEvalsHandler mCookie mPage = do
   pool <- asks appPool
-  bp   <- asks (cfgBasePath . appConfig)
-  let page    = min 10000 (max 1 (fromMaybe 1 mPage))
+  bp <- asks (cfgBasePath . appConfig)
+  let page = min 10000 (max 1 (fromMaybe 1 mPage))
       perPage = 20
-      offset  = (page - 1) * perPage
+      offset = (page - 1) * perPage
   mUser <- liftIO $ getOptionalUser pool mCookie
   counts <- liftIO . readTVarIO =<< asks appNavCounts
   (evals, total) <- liftIO $ withConn pool $ \conn -> do
@@ -113,10 +120,11 @@ latestEvalsHandler mCookie mPage = do
     visible <- filterByProjectAccess conn mUser (evalProject . eiEval) es
     tc <- latestEvalsCount conn
     pure (visible, tc)
-  let pd = PageData
-        { pdTitle    = "Latest Evaluations"
-        , pdBasePath = bp
-        , pdCounts   = counts
-        , pdUser     = mUser
-        }
+  let pd =
+        PageData
+          { pdTitle = "Latest Evaluations",
+            pdBasePath = bp,
+            pdCounts = counts,
+            pdUser = mUser
+          }
   pure $ pageLayout pd $ latestEvalsPage bp evals total page perPage

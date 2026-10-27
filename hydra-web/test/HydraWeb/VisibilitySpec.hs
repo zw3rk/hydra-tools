@@ -1,26 +1,44 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 {-# LANGUAGE OverloadedStrings #-}
+
 module HydraWeb.VisibilitySpec (spec) where
 
-import Test.Hspec
-
-import HydraWeb.Visibility (accessDecision, isSuperAdmin, isAuthenticated)
 import HydraWeb.Models.User (GFUser (..))
+import HydraWeb.Visibility (accessDecision, isAuthenticated, isSuperAdmin)
+import Test.Hspec
 
 -- | Convenience: a minimal authenticated non-admin user.
 regularUser :: Maybe GFUser
-regularUser = Just GFUser
-  { gfuId = 1, gfuGitHubId = 100, gfuGitHubLogin = "alice"
-  , gfuDisplayName = Nothing, gfuEmail = Nothing, gfuAvatarURL = Nothing
-  , gfuIsSuperAdmin = False, gfuCreatedAt = 0, gfuUpdatedAt = 0 }
+regularUser =
+  Just
+    GFUser
+      { gfuId = 1,
+        gfuGitHubId = 100,
+        gfuGitHubLogin = "alice",
+        gfuDisplayName = Nothing,
+        gfuEmail = Nothing,
+        gfuAvatarURL = Nothing,
+        gfuIsSuperAdmin = False,
+        gfuCreatedAt = 0,
+        gfuUpdatedAt = 0
+      }
 
 -- | Convenience: a super-admin user.
 adminUser :: Maybe GFUser
-adminUser = Just GFUser
-  { gfuId = 2, gfuGitHubId = 200, gfuGitHubLogin = "admin"
-  , gfuDisplayName = Nothing, gfuEmail = Nothing, gfuAvatarURL = Nothing
-  , gfuIsSuperAdmin = True, gfuCreatedAt = 0, gfuUpdatedAt = 0 }
+adminUser =
+  Just
+    GFUser
+      { gfuId = 2,
+        gfuGitHubId = 200,
+        gfuGitHubLogin = "admin",
+        gfuDisplayName = Nothing,
+        gfuEmail = Nothing,
+        gfuAvatarURL = Nothing,
+        gfuIsSuperAdmin = True,
+        gfuCreatedAt = 0,
+        gfuUpdatedAt = 0
+      }
 
 spec :: Spec
 spec = do

@@ -1,12 +1,13 @@
 -- Copyright 2026 Moritz Angermann <moritz.angermann@iohk.io>, Input Output Group.
 -- SPDX-License-Identifier: Apache-2.0
 --
--- | Login page view.
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Login page view.
 module HydraWeb.View.Pages.Login
-  ( loginPage
-  ) where
+  ( loginPage,
+  )
+where
 
 import Data.Text (Text)
 import Lucid
@@ -16,6 +17,8 @@ loginPage :: Text -> Html ()
 loginPage bp = do
   h1_ "Login"
   p_ "Sign in with your GitHub account to access private projects."
-  a_ [ href_ (bp <> "/auth/github")
-     , class_ "btn btn-primary"
-     ] "Sign in with GitHub"
+  a_
+    [ href_ (bp <> "/auth/github"),
+      class_ "btn btn-primary"
+    ]
+    "Sign in with GitHub"
