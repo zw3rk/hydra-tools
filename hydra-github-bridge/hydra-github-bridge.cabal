@@ -52,6 +52,7 @@ library
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
                       , Lib.Hydra
                       , Lib.Hydra.Client
@@ -75,6 +76,7 @@ executable hydra-github-bridge
                       , Lib.Bridge
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
+                      , Lib.Bridge.JobsetAllowlist
                       , Lib.Bridge.Sync
                       , Lib.GitHub
                       , Lib.GitHub.Client

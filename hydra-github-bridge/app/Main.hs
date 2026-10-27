@@ -29,6 +29,7 @@ import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub qualified as GitHub
@@ -36,6 +37,7 @@ import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
 import System.Environment (getEnv, lookupEnv)
+import System.Exit (die)
 import System.IO
   ( BufferMode (LineBuffering),
     hSetBuffering,
@@ -179,6 +181,17 @@ main = do
   syncInterval <- maybe 900 read <$> lookupEnv "SYNC_INTERVAL"
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
 
+  -- Optional per-repo jobset allowlist, e.g.
+  -- {"simplex-chat/simplex-chat": ["pullrequest-7729"]}.  Listed repos only
+  -- have the named jobsets touched by the webhooks and the sync.
+  jobsetAllowlist <- do
+    v <- lookupEnv "JOBSET_ALLOWLIST"
+    case parseJobsetAllowlist <$> v of
+      Nothing -> pure noJobsetAllowlist
+      Just (Right allowlist) -> pure allowlist
+      Just (Left e) -> die $ "Invalid JOBSET_ALLOWLIST: " <> e
+  putStrLn $ "Jobset allowlist: " ++ show jobsetAllowlist
+
   -- Authenticate to GitHub and derive the set of allowed orgs from
   -- configured installations. Only webhooks from these orgs will be processed.
   ghAppId <- getEnv "GITHUB_APP_ID" >>= return . read
@@ -232,7 +245,7 @@ main = do
         (ConnectInfo db 5432 db_user db_pass "hydra")
         (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-        run port (app allowedOrgs (hceClientEnv env) conn (gitHubKey ghKey)),
+        run port (app allowedOrgs jobsetAllowlist (hceClientEnv env) conn (gitHubKey ghKey)),
       -- Periodically prune stale notifications for old commits that
       -- have already been superseded by newer evaluations.  Only marks
       -- a payload as sent when a later payload for the same
@@ -267,7 +280,8 @@ main = do
                  scEndpoint = ghEndpointUrl,
                  scUserAgent = ghUserAgent,
                  scTokensRef = ghTokens,
-                 scGetTokens = getValidGitHubToken'
+                 scGetTokens = getValidGitHubToken',
+                 scJobsetAllowlist = jobsetAllowlist
                }
              conn
        | syncEnabled
