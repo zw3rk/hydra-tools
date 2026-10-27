@@ -12,7 +12,6 @@ module Main where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Monad
-import Data.Aeson (toJSON)
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef)
@@ -26,12 +25,13 @@ import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
-import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
+import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.PublicUrl (normalizePublicBase)
 import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
-import Lib.GitHub qualified as GitHub
 import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
@@ -54,9 +54,11 @@ notificationWatcherWithSSE ::
   String ->
   Text ->
   Bool ->
+  CheckRunGroups ->
+  GroupTracker ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs conn = do
+notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs groups tracker conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -68,24 +70,17 @@ notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs c
   _ <- execute_ conn "LISTEN cached_build_finished"
   forever $ do
     putStrLn "Waiting for notification..."
-    note <- toHydraNotification . traceShowId <$> getNotification conn
-    statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs note
+    n <- traceShowId <$> getNotification conn
+    case toHydraNotification n of
+      Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
+      Just note -> do
+        statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs groups tracker note
 
-    -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
-    broadcastCheckRuns cache statuses
+        -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
+        broadcastCheckRuns cache statuses
 
-    -- Queue for GitHub API delivery (existing behaviour).
-    forM_ statuses $
-      ( \(GitHub.CheckRun owner repo payload) -> do
-          Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-          [Only _id'] <-
-            query
-              conn
-              "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-              (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-              IO [Only Int]
-          execute_ conn "NOTIFY github_status"
-      )
+        -- Queue for GitHub API delivery (existing behaviour).
+        forM_ statuses (queueCheckRun conn)
 
 -- | Fetch tokens only for app installations listed in GITHUB_APP_INSTALL_IDS.
 -- Anyone can install a public GitHub App, so the discovered list may include
@@ -159,6 +154,7 @@ main = do
       Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
   filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
+  checkRunGroups <- maybe (pure noCheckRunGroups) (either fail pure . parseCheckRunGroups) =<< lookupEnv "CHECK_RUN_GROUPS"
 
   -- SSE configuration
   sseEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SSE_ENABLED"
@@ -171,6 +167,17 @@ main = do
   syncDryRun <- maybe False (\v -> v == "true" || v == "1") <$> lookupEnv "SYNC_DRY_RUN"
   repoFlakeDirsRaw <- maybe "[]" id <$> lookupEnv "REPO_FLAKE_DIRS"
   repoFlakeDirs <- either die pure (parseRepoFlakeDirs repoFlakeDirsRaw)
+
+  -- Optional per-repo jobset allowlist, e.g.
+  -- {"simplex-chat/simplex-chat": ["pullrequest-7729"]}.  Listed repos only
+  -- have the named jobsets touched by the webhooks and the sync.
+  jobsetAllowlist <- do
+    v <- lookupEnv "JOBSET_ALLOWLIST"
+    case parseJobsetAllowlist <$> v of
+      Nothing -> pure noJobsetAllowlist
+      Just (Right allowlist) -> pure allowlist
+      Just (Left e) -> die $ "Invalid JOBSET_ALLOWLIST: " <> e
+  putStrLn $ "Jobset allowlist: " ++ show jobsetAllowlist
 
   -- Authenticate to GitHub and derive the set of allowed orgs from
   -- configured installations. Only webhooks from these orgs will be processed.
@@ -197,10 +204,13 @@ main = do
 
   -- Initialize SSE status cache
   cache <- newStatusCache
+  groupTracker <- newGroupTracker
 
-  -- Start the app loop
-  let numWorkers = 10
-      getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
+  -- Start the app loop.  Each worker holds a row lock while it talks to
+  -- GitHub, so more workers only help while sends are slow; GitHub's rate
+  -- limit is shared by all of them.
+  numWorkers <- maybe 2 read <$> lookupEnv "STATUS_WORKERS"
+  let getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
 
   -- Create partial index for the optimized unsent-payload query.
   -- CONCURRENTLY cannot run inside a transaction, so we use a
@@ -216,6 +226,55 @@ main = do
         \WHERE sent IS NULL AND tries < 5"
     putStrLn "Index ready."
 
+    -- The queue is drained in (priority, id) order (see 'queueCheckRun').
+    -- Backfill the priority of the existing backlog when the column is
+    -- first added; sent payloads keep the default.
+    [Only hasPriority] <-
+      query_
+        migConn
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+        \WHERE table_name = 'github_status_payload' AND column_name = 'priority')"
+    unless hasPriority $ withTransaction migConn $ do
+      putStrLn "Adding github_status_payload.priority..."
+      _ <-
+        execute_
+          migConn
+          "ALTER TABLE github_status_payload \
+          \ADD COLUMN priority SMALLINT NOT NULL DEFAULT 2"
+      backfilled <-
+        execute_
+          migConn
+          "UPDATE github_status_payload p \
+          \SET priority = CASE WHEN s.name LIKE 'ci/eval%' THEN 0 ELSE 1 END \
+          \FROM github_status s \
+          \WHERE s.id = p.status_id AND p.sent IS NULL \
+          \  AND (s.name LIKE 'ci/eval%' OR s.name LIKE '%required')"
+      putStrLn $ "Backfilled priority of " ++ show backfilled ++ " payload(s)."
+    putStrLn "Ensuring partial index idx_github_status_payload_queue exists..."
+    _ <-
+      execute_
+        migConn
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
+        \idx_github_status_payload_queue \
+        \ON github_status_payload (priority, id) \
+        \WHERE sent IS NULL AND tries < 5"
+    putStrLn "Index ready."
+
+    -- Earlier versions only marked the payload they sent, leaving older
+    -- unsent payloads for the same status in the queue forever (the queue
+    -- query skips them).  Mark them as sent so the index walk does not
+    -- have to step over them.
+    superseded <-
+      execute_
+        migConn
+        "UPDATE github_status_payload p SET sent = NOW() \
+        \WHERE p.sent IS NULL \
+        \  AND EXISTS ( \
+        \    SELECT 1 FROM github_status_payload p2 \
+        \    WHERE p2.status_id = p.status_id AND p2.id > p.id AND p2.sent IS NULL \
+        \  )"
+    putStrLn $ "Marked " ++ show superseded ++ " superseded payload(s) as sent."
+
   Async.mapConcurrently_
     id
     $ [ Async.replicateConcurrently_
@@ -229,9 +288,19 @@ main = do
         -- Use the SSE-broadcasting variant of the notification watcher.
         withConnect
           (ConnectInfo db 5432 db_user db_pass "hydra")
-          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs),
+          (notificationWatcherWithSSE cache publicBase stateDir checkRunPrefix filterJobs checkRunGroups groupTracker),
+        -- Report the check-run groups the watcher marked as out of date.
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          groupFlusher
+            20
+            publicBase
+            checkRunPrefix
+            checkRunGroups
+            groupTracker
+            (\runs -> broadcastCheckRuns cache runs >> mapM_ (queueCheckRun conn) runs)
+            conn,
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          run port (app allowedOrgs repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
+          run port (app allowedOrgs jobsetAllowlist repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
         -- Periodically prune stale notifications for old commits that
         -- have already been superseded by newer evaluations.  Only marks
         -- a payload as sent when a later payload for the same
@@ -270,6 +339,7 @@ main = do
                    scUserAgent = ghUserAgent,
                    scTokensRef = ghTokens,
                    scGetTokens = getValidGitHubToken',
+                   scJobsetAllowlist = jobsetAllowlist,
                    scRepoFlakeDirs = repoFlakeDirs
                  }
                conn

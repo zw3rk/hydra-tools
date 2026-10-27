@@ -33,8 +33,8 @@ module Lib.Bridge.Sync
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, throwIO, try)
-import Data.Aeson (Value, (.:), (.:?))
+import Control.Exception (SomeException, throwIO)
+import Data.Aeson (Object, Value, (.:), (.:?))
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString (ByteString)
 import Data.Char (isHexDigit)
@@ -54,7 +54,9 @@ import GitHub.REST
     StdMethod (..),
   )
 import GitHub.REST.PageLinks (PageLinks)
+import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
+import Lib.Exception (tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
     TokenLease,
@@ -122,6 +124,8 @@ data SyncConfig = SyncConfig
     scTokensRef :: !(IORef [(String, TokenLease)]),
     -- | Action to refresh tokens when expired
     scGetTokens :: !(IO [(String, TokenLease)]),
+    -- | Jobsets the sync may create or disable, per repo
+    scJobsetAllowlist :: !JobsetAllowlist,
     -- | Optional repository-specific Flake directories
     scRepoFlakeDirs :: !RepoFlakeDirs
   }
@@ -186,7 +190,7 @@ reconcileAll cfg conn = do
 -- | Wrapper that isolates per-project errors.
 reconcileOne :: SyncConfig -> Connection -> (Text, Text, Text) -> IO SyncStats
 reconcileOne cfg conn mapping@(_project, org, repo) = do
-  result <- try (reconcileProject cfg conn mapping)
+  result <- tryNonAsync (reconcileProject cfg conn mapping)
   case result of
     Right stats -> pure stats
     Left (e :: SomeException) -> do
@@ -229,21 +233,29 @@ reconcileProject cfg conn (project, org, repo) = do
             not (shouldSkipDraft repoFullName pr)
           ]
 
+      -- Whether the jobset allowlist lets the sync touch this PR's jobset.
+      allowed :: Int -> Bool
+      allowed n = isJobsetAllowed (scJobsetAllowlist cfg) repoFullName ("pullrequest-" <> Text.pack (show n))
+
       -- PRs open on GitHub but missing a jobset in Hydra.
       missing :: [PRInfo]
       missing =
         [ pr
         | n <- Set.toList (githubSet `Set.difference` hydraSet),
+          allowed n,
           Just pr <- [Map.lookup n openPRMap]
         ]
 
       -- Jobset PR numbers enabled in Hydra but not open on GitHub.
       stale :: [Int]
-      stale = Set.toList (hydraSet `Set.difference` githubSet)
+      stale = filter allowed $ Set.toList (hydraSet `Set.difference` githubSet)
 
+      -- Enabled jobsets of open PRs whose source no longer matches the
+      -- PR head.
       refreshes =
         [ (jobset, newFlake)
         | n <- Set.toList (githubSet `Set.intersection` hydraSet),
+          allowed n,
           Just pr <- [Map.lookup n openPRMap],
           Just jobset <- [Map.lookup n enabledJobsets],
           Just newFlake <- [sourceRefreshTarget (scRepoFlakeDirs cfg) repoFullName pr jobset]
@@ -264,8 +276,6 @@ reconcileProject cfg conn (project, org, repo) = do
       <> show (length refreshes)
       <> " source(s) outdated"
 
-  refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
-
   -- Queue creation commands for missing jobsets.
   created <-
     if null missing
@@ -281,6 +291,10 @@ reconcileProject cfg conn (project, org, repo) = do
       else do
         mapM_ (disableStaleJobset cfg conn project repoFullName) stale
         pure (length stale)
+
+  -- Refresh sources last: a failure here still fails this project's sync,
+  -- but only after its missing jobsets were created and stale ones disabled.
+  refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
 
   pure
     SyncStats
@@ -338,9 +352,9 @@ fetchAllPages ghCfg org repo page = do
               ]
           }
   (prs, _links) <- queryGitHubRestPage ghCfg ep :: IO ([Value], PageLinks)
-  -- A deleted fork can have a null head.repo. Treat that, or any malformed
-  -- entry, as an incomplete listing: silently omitting it would disable a
-  -- still-open PR. All pages are read before reconciliation writes anything.
+  -- Treat a malformed entry as an incomplete listing: silently omitting it
+  -- would disable a still-open PR. All pages are read before reconciliation
+  -- writes anything.
   parsed <- maybe (throwIO $ userError "Incomplete GitHub pull request listing") pure (traverse parsePR prs)
   -- Continue if we got a full page of results (there may be more).
   if length prs < 100
@@ -350,7 +364,6 @@ fetchAllPages ghCfg org repo page = do
       pure (parsed ++ rest)
 
 -- | Extract PR info from a GitHub API JSON object.
--- Returns Nothing for PRs whose head repo is null (deleted fork).
 parsePR :: Value -> Maybe PRInfo
 parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   num <- obj .: "number"
@@ -358,10 +371,16 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   draft <- obj .: "draft"
   headObj <- obj .: "head"
   sha <- headObj .: "sha"
-  -- head.repo can be null when the source fork has been deleted.
+  -- head.repo is null when the source fork has been deleted.  GitHub still
+  -- serves the PR's head commit from the base repository (as the webhook
+  -- path already relies on), so use that rather than failing the listing.
   mRepo <- headObj .:? "repo"
-  repoObj <- maybe (fail "head.repo is null") pure mRepo
-  fullName <- repoObj .: "full_name"
+  fullName <- case mRepo of
+    Just repoObj -> repoObj .: "full_name"
+    Nothing -> do
+      baseObj :: Object <- obj .: "base"
+      baseRepo :: Object <- baseObj .: "repo"
+      baseRepo .: "full_name"
   pure
     PRInfo
       { prNumber = num,
@@ -388,7 +407,7 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
 fetchOrgProjectMappings :: Connection -> IO [(Text, Text, Text)]
 fetchOrgProjectMappings conn = do
   result <-
-    try
+    tryNonAsync
       ( query_
           conn
           "SELECT m.project_name, m.org_name, m.repo_name FROM gf_org_project_map m \
