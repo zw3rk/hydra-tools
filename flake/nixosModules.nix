@@ -134,6 +134,14 @@
                 '';
               };
 
+              statusWorkers = mkOption {
+                type = types.ints.positive;
+                default = 2;
+                description = ''
+                  Number of workers sending queued check-run statuses to GitHub.
+                '';
+              };
+
               syncInterval = mkOption {
                 type = types.int;
                 default = 900;
@@ -259,6 +267,7 @@
                   SYNC_ENABLED = lib.boolToString iCfg.enableSync;
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
+                  STATUS_WORKERS = toString iCfg.statusWorkers;
                 };
 
               script = ''

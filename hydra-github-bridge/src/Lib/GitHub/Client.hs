@@ -240,6 +240,7 @@ CREATE TABLE github_status_payload (
     created TIMESTAMP DEFAULT NOW(),
     sent TIMESTAMP DEFAULT NULL,
     tries INTEGER DEFAULT 0,
+    priority SMALLINT NOT NULL DEFAULT 2, -- 0 = ci/eval*, 1 = *required, 2 = other
     FOREIGN KEY (status_id) REFERENCES github_status (id) ON DELETE CASCADE
 );
 -}

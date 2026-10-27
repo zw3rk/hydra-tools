@@ -12,6 +12,7 @@ module Lib.Bridge.HydraToGitHub
     toHydraNotification,
     handleHydraNotification,
     notificationWatcher,
+    queueCheckRun,
     statusHandlers,
     parseGitHubFlakeURI,
   )
@@ -105,17 +106,21 @@ notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
       Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
       Just note -> do
         statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
-        forM_ statuses $
-          ( \(GitHub.CheckRun owner repo payload) -> do
-              Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-              [Only _id'] <-
-                query
-                  conn
-                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-                  IO [Only Int]
-              execute_ conn "NOTIFY github_status"
-          )
+        forM_ statuses (queueCheckRun conn)
+
+-- | Queue a check-run for 'statusHandlers' to send.  The priority column
+-- (0 = ci/eval and per-job ci/eval:<job>, 1 = *required, 2 = everything
+-- else) is the order in which the queue is drained.
+queueCheckRun :: Connection -> GitHub.CheckRun -> IO ()
+queueCheckRun conn (GitHub.CheckRun owner repo payload) = do
+  Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
+  [Only _id'] <-
+    query
+      conn
+      "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload, priority) select (select id from status_upsert), ?, case when ? like 'ci/eval%' then 0 when ? like '%required' then 1 else 2 end returning id"
+      (owner, repo, payload.headSha, payload.name, toJSON payload, payload.name, payload.name) ::
+      IO [Only Int]
+  void $ execute_ conn "NOTIFY github_status"
 
 statusHandlers ::
   Text ->
@@ -130,12 +135,18 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
             conn
             ( fromString $
                 unwords
-                  [ -- Only scan unsent rows (typically ~40k) instead of
-                    -- the full table (1.2M+).  The NOT EXISTS subquery
-                    -- ensures we still pick only the most-recent unsent
-                    -- payload per status, using the partial index
-                    -- idx_github_status_payload_unsent.
-                    "SELECT p.id, s.owner, s.repo, p.payload",
+                  [ -- Walk the partial index idx_github_status_payload_queue
+                    -- (priority, id) and stop at the first row that is the
+                    -- most recent unsent payload for its status.  Ordering
+                    -- by an expression over github_status.name instead
+                    -- forced a hash of all of github_status (millions of
+                    -- rows) and a sort of the whole backlog on every send.
+                    -- Priority puts evaluation and aggregate check-runs
+                    -- first so that downstream consumers (e.g.
+                    -- wait-for-hydra) don't have to wait for hundreds of
+                    -- per-build check-runs to be posted; see
+                    -- 'queueCheckRun'.
+                    "SELECT p.id, p.status_id, s.owner, s.repo, p.payload",
                     "FROM github_status_payload p",
                     "JOIN github_status s ON s.id = p.status_id",
                     "WHERE p.sent IS NULL AND p.tries < 5",
@@ -143,28 +154,13 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
                     "    SELECT 1 FROM github_status_payload p2",
                     "    WHERE p2.status_id = p.status_id AND p2.id > p.id AND p2.sent IS NULL",
                     "  )",
-                    "ORDER BY",
-                    -- Prioritize evaluation and aggregate check-runs so
-                    -- that downstream consumers (e.g. wait-for-hydra)
-                    -- don't have to wait for hundreds of per-build
-                    -- check-runs to be posted first.
-                    "  CASE WHEN s.name = 'ci/eval' THEN 0",
-                    "       WHEN s.name LIKE '%required' THEN 1",
-                    "       ELSE 2 END,",
-                    "  p.id ASC",
+                    "ORDER BY p.priority, p.id",
                     "LIMIT 1",
                     "FOR UPDATE OF p SKIP LOCKED"
                   ]
             )
-        -- by sorting on p.created, we can assume that "newer" statuses for the same owner/repo/sha/name, are
-        -- returned last. This is only applicable if we find multiple rows. If we find only a single row this
-        -- is irrelevant. However for multiple rows, the last item will be the most recent status and we can just
-        -- send that to GitHub, and skip all prior ones. They usually go through queued -> in_progress -> completed.
-        -- If we already have the status for completed, we don't need to send queued, and in_progress. This would
-        -- just eat two requests, which for many concurrent status-updates can lead to a lot of requests, and thus
-        -- us running into rate-limits.
-        case (reverse rows) of
-          (id', owner, repo, payload) : _ -> do
+        case rows of
+          (id', statusId, owner, repo, payload) : _ -> do
             let payload' = case fromJSON payload of
                   Aeson.Success p -> p
                   Aeson.Error e -> error e
@@ -195,13 +191,13 @@ statusHandlers ghEndpointUrl ghUserAgent getValidGitHubToken conn = forever $ do
                 return ()
               Right _res -> do
                 Text.putStrLn $ "SENT [" <> owner <> "/" <> repo <> "/" <> payload'.headSha <> "] " <> payload'.name <> ":" <> Text.pack (show payload'.status)
-                -- mark all statuses as sent; previous statueses are overridded anyway.
-                forM_ rows $ \(_id, o, r, p) -> do
-                  case fromJSON p of
-                    Aeson.Success (p' :: GitHub.CheckRunPayload) ->
-                      Text.putStrLn $ "MARK [" <> o <> "/" <> r <> "/" <> p'.headSha <> "] " <> p'.name <> ":" <> Text.pack (show p'.status) <> " SENT"
-                    Aeson.Error e -> error e
-                _ <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE id IN ?" (Only (In [id'' | (id'', _, _, _) <- rows] :: In [Int]))
+                -- Mark this payload and every older unsent payload for the
+                -- same status as sent; GitHub only shows the latest one
+                -- anyway.  The queue query skips superseded payloads, so
+                -- anything not marked here would stay unsent forever.
+                superseded <- execute conn "UPDATE github_status_payload SET sent = NOW() WHERE status_id = ? AND id <= ? AND sent IS NULL" (statusId :: Int, id' :: Int)
+                when (superseded > 1) $
+                  putStrLn $ "MARK " <> show (superseded - 1) <> " superseded payload(s) SENT"
                 -- BSL.putStrLn $ "<- " <> encode res
                 return ()
             return True

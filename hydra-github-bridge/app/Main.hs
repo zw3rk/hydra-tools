@@ -12,7 +12,6 @@ module Main where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Monad
-import Data.Aeson (toJSON)
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -28,11 +27,10 @@ import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
-import Lib.Bridge.HydraToGitHub (handleHydraNotification, toHydraNotification)
+import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
-import Lib.GitHub qualified as GitHub
 import Lib.Hydra (HydraClientEnv (..))
 import Lib.SSE (StatusCache, broadcastCheckRuns, newStatusCache, runSSEServer)
 import Network.Wai.Handler.Warp (run)
@@ -78,17 +76,7 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
         broadcastCheckRuns cache statuses
 
         -- Queue for GitHub API delivery (existing behaviour).
-        forM_ statuses $
-          ( \(GitHub.CheckRun owner repo payload) -> do
-              Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
-              [Only _id'] <-
-                query
-                  conn
-                  "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload) select (select id from status_upsert), ? returning id"
-                  (owner, repo, payload.headSha, payload.name, (toJSON payload)) ::
-                  IO [Only Int]
-              execute_ conn "NOTIFY github_status"
-          )
+        forM_ statuses (queueCheckRun conn)
 
 -- | Fetch tokens for the app's installations that are also listed in
 -- GITHUB_APP_INSTALL_IDS.  Anyone can install a public GitHub App, so the
@@ -214,9 +202,11 @@ main = do
   -- Initialize SSE status cache
   cache <- newStatusCache
 
-  -- Start the app loop
-  let numWorkers = 10
-      getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
+  -- Start the app loop.  Each worker holds a row lock while it talks to
+  -- GitHub, so more workers only help while sends are slow; GitHub's rate
+  -- limit is shared by all of them.
+  numWorkers <- maybe 2 read <$> lookupEnv "STATUS_WORKERS"
+  let getValidGitHubToken' = getValidGitHubToken ghTokens ghEndpointUrl ghUserAgent
 
   -- Create partial index for the optimized unsent-payload query.
   -- CONCURRENTLY cannot run inside a transaction, so we use a
@@ -229,6 +219,45 @@ main = do
       \ON github_status_payload (status_id, id DESC) \
       \WHERE sent IS NULL AND tries < 5"
     putStrLn "Index ready."
+
+    -- The queue is drained in (priority, id) order (see 'queueCheckRun').
+    -- Backfill the priority of the existing backlog when the column is
+    -- first added; sent payloads keep the default.
+    [Only hasPriority] <- query_ migConn
+      "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+      \WHERE table_name = 'github_status_payload' AND column_name = 'priority')"
+    unless hasPriority $ withTransaction migConn $ do
+      putStrLn "Adding github_status_payload.priority..."
+      _ <- execute_ migConn
+        "ALTER TABLE github_status_payload \
+        \ADD COLUMN priority SMALLINT NOT NULL DEFAULT 2"
+      backfilled <- execute_ migConn
+        "UPDATE github_status_payload p \
+        \SET priority = CASE WHEN s.name LIKE 'ci/eval%' THEN 0 ELSE 1 END \
+        \FROM github_status s \
+        \WHERE s.id = p.status_id AND p.sent IS NULL \
+        \  AND (s.name LIKE 'ci/eval%' OR s.name LIKE '%required')"
+      putStrLn $ "Backfilled priority of " ++ show backfilled ++ " payload(s)."
+    putStrLn "Ensuring partial index idx_github_status_payload_queue exists..."
+    _ <- execute_ migConn
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS \
+      \idx_github_status_payload_queue \
+      \ON github_status_payload (priority, id) \
+      \WHERE sent IS NULL AND tries < 5"
+    putStrLn "Index ready."
+
+    -- Earlier versions only marked the payload they sent, leaving older
+    -- unsent payloads for the same status in the queue forever (the queue
+    -- query skips them).  Mark them as sent so the index walk does not
+    -- have to step over them.
+    superseded <- execute_ migConn
+      "UPDATE github_status_payload p SET sent = NOW() \
+      \WHERE p.sent IS NULL \
+      \  AND EXISTS ( \
+      \    SELECT 1 FROM github_status_payload p2 \
+      \    WHERE p2.status_id = p.status_id AND p2.id > p.id AND p2.sent IS NULL \
+      \  )"
+    putStrLn $ "Marked " ++ show superseded ++ " superseded payload(s) as sent."
 
   Async.mapConcurrently_
     id $
