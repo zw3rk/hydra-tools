@@ -27,6 +27,7 @@ import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification (getNotification)
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
@@ -52,9 +53,11 @@ notificationWatcherWithSSE ::
   String ->
   Text ->
   Bool ->
+  CheckRunGroups ->
+  GroupTracker ->
   Connection ->
   IO ()
-notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = do
+notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs groups tracker conn = do
   _ <- execute_ conn "LISTEN eval_started"
   _ <- execute_ conn "LISTEN eval_added"
   _ <- execute_ conn "LISTEN eval_cached"
@@ -70,7 +73,7 @@ notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs conn = 
     case toHydraNotification n of
       Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
       Just note -> do
-        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs groups tracker note
 
         -- Broadcast to SSE subscribers before queuing for GitHub API delivery.
         broadcastCheckRuns cache statuses
@@ -158,6 +161,7 @@ main = do
       Nothing -> maybe mempty C8.pack <$> lookupEnv "KEY"
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
   filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
+  checkRunGroups <- maybe (pure noCheckRunGroups) (either fail pure . parseCheckRunGroups) =<< lookupEnv "CHECK_RUN_GROUPS"
 
   -- SSE configuration
   sseEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SSE_ENABLED"
@@ -201,6 +205,7 @@ main = do
 
   -- Initialize SSE status cache
   cache <- newStatusCache
+  groupTracker <- newGroupTracker
 
   -- Start the app loop.  Each worker holds a row lock while it talks to
   -- GitHub, so more workers only help while sends are slow; GitHub's rate
@@ -272,7 +277,12 @@ main = do
       -- Use the SSE-broadcasting variant of the notification watcher.
       withConnect
         (ConnectInfo db 5432 db_user db_pass "hydra")
-        (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs),
+        (notificationWatcherWithSSE cache host stateDir checkRunPrefix filterJobs checkRunGroups groupTracker),
+      -- Report the check-run groups the watcher marked as out of date.
+      withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+        groupFlusher 20 (Text.pack host) checkRunPrefix checkRunGroups groupTracker
+          (\runs -> broadcastCheckRuns cache runs >> mapM_ (queueCheckRun conn) runs)
+          conn,
       withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
         run port (app allowedOrgs jobsetAllowlist (hceClientEnv env) conn (gitHubKey ghKey)),
       -- Periodically prune stale notifications for old commits that

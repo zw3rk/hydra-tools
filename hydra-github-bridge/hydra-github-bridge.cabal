@@ -50,6 +50,7 @@ library
     hs-source-dirs:   src
     exposed-modules:    Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist
@@ -74,6 +75,7 @@ executable hydra-github-bridge
     hs-source-dirs:   app, src
     other-modules:      Lib
                       , Lib.Bridge
+                      , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist

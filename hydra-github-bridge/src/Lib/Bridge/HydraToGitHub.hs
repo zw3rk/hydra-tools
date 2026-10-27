@@ -63,6 +63,7 @@ import GitHub.REST
     queryGitHub,
   )
 import Lib (binarySearch)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markGroupDirty)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
 import Lib.Data.Text (indentLine)
@@ -88,8 +89,8 @@ import Text.Regex.TDFA ((=~))
 tshow :: (Show a) => a -> Text
 tshow = cs . show
 
-notificationWatcher :: String -> String -> Text -> Bool -> Connection -> IO ()
-notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
+notificationWatcher :: String -> String -> Text -> Bool -> CheckRunGroups -> GroupTracker -> Connection -> IO ()
+notificationWatcher host stateDir checkRunPrefix filterJobs groups tracker conn = do
   _ <- execute_ conn "LISTEN eval_started" -- (opaque id, jobset id)
   _ <- execute_ conn "LISTEN eval_added" -- (opaque id, jobset id, eval record id, error_changed)
   _ <- execute_ conn "LISTEN eval_cached" -- (opaque id, jobset id, prev identical eval id)
@@ -105,7 +106,7 @@ notificationWatcher host stateDir checkRunPrefix filterJobs conn = do
     case toHydraNotification n of
       Nothing -> putStrLn $ "Ignoring unrecognised notification: " ++ show n
       Just note -> do
-        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs note
+        statuses <- handleHydraNotification conn (cs host) stateDir checkRunPrefix filterJobs groups tracker note
         forM_ statuses (queueCheckRun conn)
 
 -- | Queue a check-run for 'statusHandlers' to send.  The priority column
@@ -264,8 +265,8 @@ parseGitHubFlakeURI uri
         (owner : repo : ts) -> Just (owner, repo, Text.concat ts)
         _ -> Nothing
 
-handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Bool -> Hydra.Notification -> IO [GitHub.CheckRun]
-handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
+handleHydraNotification :: Connection -> Text -> FilePath -> Text -> Bool -> CheckRunGroups -> GroupTracker -> Hydra.Notification -> IO [GitHub.CheckRun]
+handleHydraNotification conn host stateDir checkRunPrefix filterJobs groups tracker e = (\computation -> catchJust catchJustPredicate computation (handler e)) $ case e of
   -- Evaluations
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
@@ -319,62 +320,66 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
 
   -- Builds
   (Hydra.BuildQueued bid) -> do
-    [(proj, name, flake, job, desc)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
+    [(proj, name, eid, flake, job, desc)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
     steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
     let prevStepStatus
           | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
           | otherwise = Nothing
-    whenStatusOrJob filterJobs Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
-      pure $
-        singleton $
-          GitHub.CheckRun owner repo $
-            GitHub.CheckRunPayload
-              { name = checkRunPrefix <> job,
-                headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
-                externalId = Just $ tshow bid,
-                status = GitHub.Queued,
-                conclusion = Nothing,
-                startedAt = Nothing,
-                completedAt = Nothing,
-                output = Nothing
-              }
+    withGithubFlake flake $ \owner repo hash ->
+      reportJob eid job False owner repo hash $
+        whenStatusOrJob filterJobs Nothing prevStepStatus job $
+          pure $
+            singleton $
+              GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = checkRunPrefix <> job,
+                    headSha = hash,
+                    detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                    externalId = Just $ tshow bid,
+                    status = GitHub.Queued,
+                    conclusion = Nothing,
+                    startedAt = Nothing,
+                    completedAt = Nothing,
+                    output = Nothing
+                  }
   (Hydra.BuildStarted bid) -> do
-    [(proj, name, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
+    [(proj, name, eid, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
     steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
     let prevStepStatus
           | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
           | otherwise = Nothing
-    whenStatusOrJob filterJobs Nothing prevStepStatus job $ withGithubFlake flake $ \owner repo hash ->
-      pure $
-        singleton $
-          GitHub.CheckRun owner repo $
-            GitHub.CheckRunPayload
-              { name = checkRunPrefix <> job,
-                headSha = hash,
-                detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
-                externalId = Just $ tshow bid,
-                status = GitHub.InProgress,
-                conclusion = Nothing,
-                -- apparently hydra may send the notification before actually starting the build... got 9 seconds difference when testing!
-                startedAt = (starttime :: Maybe Int) >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral,
-                completedAt = Nothing,
-                output = Nothing
-              }
+    withGithubFlake flake $ \owner repo hash ->
+      reportJob eid job False owner repo hash $
+        whenStatusOrJob filterJobs Nothing prevStepStatus job $
+          pure $
+            singleton $
+              GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = checkRunPrefix <> job,
+                    headSha = hash,
+                    detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                    externalId = Just $ tshow bid,
+                    status = GitHub.InProgress,
+                    conclusion = Nothing,
+                    -- apparently hydra may send the notification before actually starting the build... got 9 seconds difference when testing!
+                    startedAt = (starttime :: Maybe Int) >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral,
+                    completedAt = Nothing,
+                    output = Nothing
+                  }
 
   -- note; buildstatus is only != NULL for Finished, Queued and Started leave it as NULL.
   (Hydra.BuildFinished bid depBids) -> do
-    [(proj, name, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
+    [(proj, name, eid, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
     withGithubFlake flake $ \owner repo hash -> do
-      checkRun <- handleBuildDone bid job status (finished == (1 :: Int)) owner repo hash
+      checkRun <- handleBuildDone eid bid job status (finished == (1 :: Int)) owner repo hash
       depCheckRuns <-
         sequence $
           (if toEnum status /= Hydra.Succeeded then depBids else []) <&> \depBid -> do
             [(depJob, depStatus, depFinished)] <- query conn "SELECT job, buildstatus, finished FROM builds WHERE id = ?" (Only depBid)
-            handleBuildDone depBid depJob depStatus (depFinished == (1 :: Int)) owner repo hash
+            handleBuildDone eid depBid depJob depStatus (depFinished == (1 :: Int)) owner repo hash
       return $ checkRun ++ concat depCheckRuns
   where
     catchJustPredicate ee
@@ -385,6 +390,26 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
     handler n ex = print ("ERROR: " ++ show n ++ " triggert exception " ++ displayException ex) >> pure ([] :: [GitHub.CheckRun])
 
     sqlFromBuild = " from builds b JOIN jobsets j on b.jobset_id = j.id JOIN jobsetevalmembers m on m.build = b.id JOIN jobsetevals e on e.id = m.eval where b.id = ? order by e.id desc fetch first row only"
+
+    -- For a job in a check-run group (see "Lib.Bridge.CheckRunGroups"),
+    -- mark its group for the next flush and report the job itself only if
+    -- it failed, or if it has been reported on its own before: once a
+    -- failure is on GitHub, a restarted job's later statuses replace it.
+    reportJob :: Int -> Text -> Bool -> Text -> Text -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
+    reportJob eid job failed owner repo hash individually =
+      case jobGroup groups owner repo job of
+        Nothing -> individually
+        Just grp -> do
+          markGroupDirty tracker (GroupKey eid owner repo hash) grp
+          [Only reported] <-
+            if failed
+              then pure [Only True]
+              else
+                query
+                  conn
+                  "SELECT EXISTS (SELECT 1 FROM github_status WHERE owner = ? AND repo = ? AND headSha = ? AND name = ?)"
+                  (owner, repo, hash, checkRunPrefix <> job)
+          if reported then individually else pure []
 
     handleEvalDone :: Hydra.JobSetId -> Hydra.EvalId -> Text -> IO [GitHub.CheckRun]
     handleEvalDone jid eid eventName = do
@@ -503,7 +528,7 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             \    ORDER BY id DESC                   \
             \    FETCH FIRST ROW ONLY               \
             \)                                      \
-            \SELECT b.id, b.job, b.buildstatus      \
+            \SELECT e.id, b.id, b.job, b.buildstatus \
             \FROM builds b                          \
             \JOIN prev_jobseteval e ON NOT EXISTS ( \
             \    SELECT NULL                        \
@@ -518,12 +543,12 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
             \WHERE b.finished = 1                   \
             \ "
             [eid, jid, eid] ::
-            IO [(Int, Text, Int)]
-        buildStatuses <- sequence $ rows <&> \(bid, job, status) -> handleBuildDone bid job status True owner repo hash
+            IO [(Int, Int, Text, Int)]
+        buildStatuses <- sequence $ rows <&> \(prevEid, bid, job, status) -> handleBuildDone prevEid bid job status True owner repo hash
         pure $ evalStatuses ++ concat buildStatuses
 
-    handleBuildDone :: Hydra.BuildId -> Text -> Int -> Bool -> Text -> Text -> Text -> IO [GitHub.CheckRun]
-    handleBuildDone bid job status finished owner repo hash = do
+    handleBuildDone :: Int -> Hydra.BuildId -> Text -> Int -> Bool -> Text -> Text -> Text -> IO [GitHub.CheckRun]
+    handleBuildDone eid bid job status finished owner repo hash = do
       let buildStatus = toEnum status
       let ghCheckRunConclusion
             | finished = toCheckRunConclusion buildStatus
@@ -532,84 +557,85 @@ handleHydraNotification conn host stateDir checkRunPrefix filterJobs e = (\compu
       let prevStepStatus
             | length steps >= 2 = (\(_, _, statusInt) -> statusInt <&> toEnum) $ steps !! 1
             | otherwise = Nothing
-      whenStatusOrJob filterJobs (Just ghCheckRunConclusion) prevStepStatus job $ do
-        buildTimes <- getBuildTimes bid
-        let failedSteps = filter (\(_, _, statusInt) -> maybe False (/= Hydra.Succeeded) $ statusInt <&> toEnum) steps
-        failedStepLogs <-
-          sequence $
-            failedSteps <&> \(stepnr, drvpath, _) -> do
-              let drvName = takeFileName drvpath
-                  bucketed = take 2 drvName </> drop 2 drvName
-                  path = stateDir </> "build-logs" </> bucketed
-              logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
-                if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
-                  then ioError ioe
-                  else catchIOError (BSLw.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
-                    if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
-                      then ioError ioe2
-                      else return Nothing
-              return (stepnr, drvpath, logs)
-        output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [(Only Text)]
-        pure $
-          singleton $
-            GitHub.CheckRun owner repo $
-              GitHub.CheckRunPayload
-                { name = checkRunPrefix <> job,
-                  headSha = hash,
-                  detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
-                  externalId = Just $ tshow bid,
-                  status = GitHub.Completed,
-                  conclusion = Just ghCheckRunConclusion,
-                  startedAt = buildTimes >>= Just . fst,
-                  completedAt = buildTimes >>= Just . snd,
-                  output =
-                    Just $
-                      GitHub.CheckRunOutput
-                        { title = tshow buildStatus,
-                          summary =
-                            if buildStatus == Hydra.Succeeded
-                              then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
-                              -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
-                              -- github status. And use it for nix-store -r, or similar.
-                                Text.intercalate ", " (fmap fromOnly output)
-                              else tshow (length failedSteps) <> " failed steps",
-                          text =
-                            if buildStatus == Hydra.Succeeded
-                              then Nothing
-                              else -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
-                              -- build page.
-                                let limit = 65535
-                                    maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
-                                    indentPrefix = cs $ indentLine "" :: String
-                                    stepLogsLines = failedStepLogs <&> \(stepnr, drvpath, logs) -> (stepnr, drvpath, logs >>= Just . lines)
-                                 in binarySearch 0 limit $ \numLines ->
-                                      let parts =
-                                            singleton "# Failed Steps\n\n"
-                                              ++ intercalate
-                                                (singleton "\n")
-                                                ( stepLogsLines <&> \(stepnr, drvpath, logLines) ->
-                                                    [ "## Step ",
-                                                      show stepnr,
-                                                      "\n\n",
-                                                      -- making code blocks by indenting instead of triple backticks so they cannot be escaped
-                                                      "### Derivation\n\n",
-                                                      indentPrefix,
-                                                      drvpath,
-                                                      "\n\n",
-                                                      "### Log\n\n"
-                                                    ]
-                                                      ++ (if numLines < maxLines then ["Last ", show numLines, " lines:\n\n"] else [])
-                                                      ++ maybe
-                                                        (singleton "*Not available.*\n")
-                                                        ((concatMap (\l -> [indentPrefix, l, "\n"])) . (takeEnd numLines))
-                                                        logLines
-                                                )
-                                          totalLength = foldr' ((+) . length) 0 parts
-                                       in ( totalLength < limit && numLines < maxLines,
-                                            if totalLength > limit then Nothing else Just . cs $ mconcat parts
-                                          )
-                        }
-                }
+      reportJob eid job (ghCheckRunConclusion /= GitHub.Success) owner repo hash $
+        whenStatusOrJob filterJobs (Just ghCheckRunConclusion) prevStepStatus job $ do
+          buildTimes <- getBuildTimes bid
+          let failedSteps = filter (\(_, _, statusInt) -> maybe False (/= Hydra.Succeeded) $ statusInt <&> toEnum) steps
+          failedStepLogs <-
+            sequence $
+              failedSteps <&> \(stepnr, drvpath, _) -> do
+                let drvName = takeFileName drvpath
+                    bucketed = take 2 drvName </> drop 2 drvName
+                    path = stateDir </> "build-logs" </> bucketed
+                logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
+                  if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
+                    then ioError ioe
+                    else catchIOError (BSLw.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
+                      if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
+                        then ioError ioe2
+                        else return Nothing
+                return (stepnr, drvpath, logs)
+          output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [(Only Text)]
+          pure $
+            singleton $
+              GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = checkRunPrefix <> job,
+                    headSha = hash,
+                    detailsUrl = Just $ "https://" <> host <> "/build/" <> tshow bid,
+                    externalId = Just $ tshow bid,
+                    status = GitHub.Completed,
+                    conclusion = Just ghCheckRunConclusion,
+                    startedAt = buildTimes >>= Just . fst,
+                    completedAt = buildTimes >>= Just . snd,
+                    output =
+                      Just $
+                        GitHub.CheckRunOutput
+                          { title = tshow buildStatus,
+                            summary =
+                              if buildStatus == Hydra.Succeeded
+                                then -- TODO: This is only the "out" path, maybe we do want to put _all_ paths in here JSON encoded?
+                                -- The idea is that on successful builds, we can grab the nix paths (if needed) directly out of the
+                                -- github status. And use it for nix-store -r, or similar.
+                                  Text.intercalate ", " (fmap fromOnly output)
+                                else tshow (length failedSteps) <> " failed steps",
+                            text =
+                              if buildStatus == Hydra.Succeeded
+                                then Nothing
+                                else -- TODO: We should include some meta information about the build. Similar to what hydra provides on the
+                                -- build page.
+                                  let limit = 65535
+                                      maxLines = foldr' max 0 $ failedStepLogs <&> \(_, _, logs) -> maybe 0 length logs
+                                      indentPrefix = cs $ indentLine "" :: String
+                                      stepLogsLines = failedStepLogs <&> \(stepnr, drvpath, logs) -> (stepnr, drvpath, logs >>= Just . lines)
+                                   in binarySearch 0 limit $ \numLines ->
+                                        let parts =
+                                              singleton "# Failed Steps\n\n"
+                                                ++ intercalate
+                                                  (singleton "\n")
+                                                  ( stepLogsLines <&> \(stepnr, drvpath, logLines) ->
+                                                      [ "## Step ",
+                                                        show stepnr,
+                                                        "\n\n",
+                                                        -- making code blocks by indenting instead of triple backticks so they cannot be escaped
+                                                        "### Derivation\n\n",
+                                                        indentPrefix,
+                                                        drvpath,
+                                                        "\n\n",
+                                                        "### Log\n\n"
+                                                      ]
+                                                        ++ (if numLines < maxLines then ["Last ", show numLines, " lines:\n\n"] else [])
+                                                        ++ maybe
+                                                          (singleton "*Not available.*\n")
+                                                          ((concatMap (\l -> [indentPrefix, l, "\n"])) . (takeEnd numLines))
+                                                          logLines
+                                                  )
+                                            totalLength = foldr' ((+) . length) 0 parts
+                                         in ( totalLength < limit && numLines < maxLines,
+                                              if totalLength > limit then Nothing else Just . cs $ mconcat parts
+                                            )
+                          }
+                  }
 
     -- Given an evaluation's error message, returns the jobs that could not be evaluated and their excerpt from the error message.
     parseFailedJobEvals :: Text -> [(Text, Text)]
