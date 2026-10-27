@@ -15,14 +15,19 @@ module Lib.Bridge.HydraToGitHub
     queueCheckRun,
     statusHandlers,
     parseGitHubFlakeURI,
+    -- Exposed for testing.
+    EmitDecision (..),
+    decideEmit,
+    hasRequiredKeyword,
+    whenStatusOrJob,
   )
 where
 
-import Codec.Compression.BZip qualified as BZip
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
 import Control.Exception
-  ( SomeException,
+  ( SomeAsyncException,
+    SomeException,
     catchJust,
     displayException,
     fromException,
@@ -35,7 +40,6 @@ import Data.Aeson hiding (Error, Success)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as BS
-import Data.ByteString.Lazy qualified as BSLw
 import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
@@ -64,6 +68,7 @@ import GitHub.REST
   )
 import Lib (binarySearch)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markGroupDirty)
+import Lib.Bridge.DB qualified as BridgeDB
 import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Lib.Data.Duration (humanReadableDuration)
 import Lib.Data.List (takeEnd)
@@ -73,17 +78,8 @@ import Lib.GitHub (CheckRunConclusion)
 import Lib.GitHub qualified as GitHub
 import Lib.Hydra (BuildStatus)
 import Lib.Hydra qualified as Hydra
+import Lib.Hydra.DB (readBuildLog)
 import Network.HTTP.Client qualified as HTTP
-import System.FilePath
-  ( takeFileName,
-    (<.>),
-    (</>),
-  )
-import System.IO.Error
-  ( catchIOError,
-    ioeGetErrorType,
-    isDoesNotExistErrorType,
-  )
 import Text.Regex.TDFA ((=~))
 
 -- Text utils
@@ -231,22 +227,63 @@ toHydraNotification Notification {notificationChannel = chan, notificationData =
   | chan == "cached_build_finished", [_, bid] <- words (cs payload) = Just $ Hydra.BuildFinished (read bid) []
   | otherwise = Nothing
 
+-- | True when the job name contains the @required@ or @nonrequired@ marker
+-- as a prefix, suffix, or dot-delimited component (e.g. @required@,
+-- @build-required@, @x86_64-linux.required.foo@). Such jobs always have their
+-- status reported to GitHub.
+hasRequiredKeyword :: Text -> Bool
+hasRequiredKeyword job =
+  or
+    [ n `Text.isPrefixOf` job
+        || n `Text.isSuffixOf` job
+        || ("." <> n <> ".") `Text.isInfixOf` job
+    | n <- ["required", "nonrequired"]
+    ]
+
+-- | Outcome of 'decideEmit'. 'CheckPriorFailure' means the caller must
+-- additionally consult whether a failure has already been reported for this
+-- commit+job before deciding whether to emit.
+data EmitDecision = Emit | CheckPriorFailure
+  deriving (Eq, Show)
+
+-- | Pure decision: should this Hydra event produce a GitHub status update,
+-- based only on the current conclusion (if known) and the job name?
+-- Quiet jobs (no keyword) carrying a failure-class conclusion emit; quiet
+-- jobs with no conclusion yet, or with a non-failure conclusion, defer to
+-- the prior-failure lookup so a retry can clear a previously reported
+-- failure (queued/started/success keep flowing once a failure was sent).
+decideEmit :: Maybe GitHub.CheckRunConclusion -> Text -> EmitDecision
+decideEmit status job
+  | hasRequiredKeyword job = Emit
+  | Just s <- status, s `elem` GitHub.failureConclusions = Emit
+  | otherwise = CheckPriorFailure
+
 -- | Filter which build notifications become GitHub check-runs.
 -- When @filterEnabled@ is 'False', every job is reported unconditionally.
--- When 'True', only jobs whose name contains "required"/"nonrequired",
--- failures, or builds following a failed step are reported.
-whenStatusOrJob :: Bool -> Maybe GitHub.CheckRunConclusion -> Maybe Hydra.BuildStatus -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
-whenStatusOrJob filterEnabled status prevStepStatus job action
+-- When 'True', required-keyword jobs and failure-class conclusions emit
+-- immediately; everything else consults the bridge's own status records
+-- (via the supplied 'IO Bool', which is only executed when needed) so that
+-- quiet jobs keep emitting queued/started/success after a Hydra retry once
+-- a failure has been reported for the same commit+job.
+whenStatusOrJob :: Bool -> Maybe GitHub.CheckRunConclusion -> IO Bool -> Text -> IO [GitHub.CheckRun] -> IO [GitHub.CheckRun]
+whenStatusOrJob filterEnabled status priorFailureSentIO job action
   | not filterEnabled = action
-  | or [name `Text.isPrefixOf` job || name `Text.isSuffixOf` job || ("." <> name <> ".") `Text.isInfixOf` job | name <- ["required", "nonrequired"]] = action
-  | Just s <- status, s `elem` [GitHub.Failure, GitHub.Cancelled, GitHub.Stale, GitHub.TimedOut] = action
-  | Just pss <- prevStepStatus, pss /= Hydra.Succeeded && maybe True (== GitHub.Success) status = action
-  | otherwise = Text.putStrLn ("Ignoring job: " <> job) >> pure []
+  | otherwise = case decideEmit status job of
+      Emit -> action
+      CheckPriorFailure -> do
+        priorFailureSent <- priorFailureSentIO
+        if priorFailureSent
+          then action
+          else Text.putStrLn ("Ignoring job: " <> job) >> pure []
 
 withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
 withGithubFlake flake action
   | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
-  | otherwise = Text.putStrLn ("Failed to parse flake: " <> flake) >> pure []
+  | "github:" `Text.isPrefixOf` flake
+      || "git+https://github.com/" `Text.isPrefixOf` flake =
+      Text.putStrLn ("Failed to parse GitHub flake: " <> flake) >> pure []
+  | otherwise =
+      Text.putStrLn ("Ignoring non-GitHub flake: " <> flake) >> pure []
 
 parseGitHubFlakeURI :: Text -> Maybe (Text, Text, Text)
 parseGitHubFlakeURI uri
@@ -325,18 +362,15 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.BuildQueued bid) -> do
     [(proj, name, eid, flake, job, desc)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-    steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
-    let prevStepStatus
-          | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
-          | otherwise = Nothing
-    withGithubFlake flake $ \owner repo hash ->
+    withGithubFlake flake $ \owner repo hash -> do
+      let checkRunName = checkRunPrefix <> job
       reportJob eid job False owner repo hash $
-        whenStatusOrJob filterJobs Nothing prevStepStatus job $
+        whenStatusOrJob filterJobs Nothing (BridgeDB.hasPriorReportedFailure conn owner repo hash checkRunName) job $
           pure $
             singleton $
               GitHub.CheckRun owner repo $
                 GitHub.CheckRunPayload
-                  { name = checkRunPrefix <> job,
+                  { name = checkRunName,
                     headSha = hash,
                     detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                     externalId = Just $ tshow bid,
@@ -349,18 +383,15 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.BuildStarted bid) -> do
     [(proj, name, eid, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-    steps <- query conn ("SELECT status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC LIMIT 2") (Only bid) :: IO [(Only (Maybe Int))]
-    let prevStepStatus
-          | length steps >= 2 = (\(Only statusInt) -> statusInt <&> toEnum) $ steps !! 1
-          | otherwise = Nothing
-    withGithubFlake flake $ \owner repo hash ->
+    withGithubFlake flake $ \owner repo hash -> do
+      let checkRunName = checkRunPrefix <> job
       reportJob eid job False owner repo hash $
-        whenStatusOrJob filterJobs Nothing prevStepStatus job $
+        whenStatusOrJob filterJobs Nothing (BridgeDB.hasPriorReportedFailure conn owner repo hash checkRunName) job $
           pure $
             singleton $
               GitHub.CheckRun owner repo $
                 GitHub.CheckRunPayload
-                  { name = checkRunPrefix <> job,
+                  { name = checkRunName,
                     headSha = hash,
                     detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                     externalId = Just $ tshow bid,
@@ -386,6 +417,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
       return $ checkRun ++ concat depCheckRuns
   where
     catchJustPredicate ee
+      | Just (_ :: SomeAsyncException) <- fromException ee = Nothing
       | Just (_ :: Async.AsyncCancelled) <- fromException ee = Nothing
       | otherwise = Just ee
 
@@ -416,7 +448,18 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
 
     handleEvalDone :: Hydra.JobSetId -> Hydra.EvalId -> Text -> IO [GitHub.CheckRun]
     handleEvalDone jid eid eventName = do
-      [(proj, name, flake, errmsg, fetcherrmsg)] <- query conn "select project, name, flake, errormsg, fetcherrormsg from jobsets where id = ?" (Only jid)
+      [(proj, name, flake, fetcherrmsg)] <- query conn "select project, name, flake, fetcherrormsg from jobsets where id = ?" (Only jid)
+      -- The evaluation error belongs to this evaluation, not the jobset: by the
+      -- time a backlogged notification is handled the jobset may already hold
+      -- a later evaluation's errors (or none), and those must not be
+      -- reported, or cleared, for this commit.  Hydra links every evaluation
+      -- to an evaluationerrors row (an empty message when it succeeded); fall
+      -- back to the jobset only for evaluations without one.
+      [Only errmsg] <-
+        query
+          conn
+          "select coalesce(e.errormsg, j.errormsg) from jobsetevals je join jobsets j on j.id = je.jobset_id left join evaluationerrors e on e.id = je.evaluationerror_id where je.id = ?"
+          (Only eid)
       [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
       Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
       withGithubFlake flake' $ \owner repo hash -> do
@@ -424,6 +467,39 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
             fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt
             evalCompletedAt = addUTCTime (fromIntegral evaltime) fetchCompletedAt
             summary = mkEvalDurationSummary checkouttime (if isNothing fetcherrmsg then Just evaltime else Nothing)
+        -- On a successful evaluation, clear any per-job @ci/eval:<job>@
+        -- failures previously reported for this commit. The lookup uses the
+        -- latest payload per status and is skipped for evals that failed in
+        -- this run, since there is nothing to clear yet.
+        let evalSucceeded =
+              maybe True Text.null errmsg
+                && maybe True Text.null fetcherrmsg
+        priorFailedEvalJobs <-
+          if evalSucceeded
+            then BridgeDB.fetchPriorFailedEvalJobs conn owner repo hash
+            else pure []
+        -- \| A success payload reusing an existing @ci/eval:<job>@ name. Sent
+        -- when a previously-failed per-job eval succeeds on a later retry, so
+        -- GitHub no longer shows the stale failure.
+        let mkEvalClearedStatus jobCheckRunName =
+              GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = jobCheckRunName,
+                    headSha = hash,
+                    detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid),
+                    externalId = Just $ tshow eid,
+                    status = GitHub.Completed,
+                    conclusion = Just GitHub.Success,
+                    startedAt = Just startedAt,
+                    completedAt = Just evalCompletedAt,
+                    output =
+                      Just $
+                        GitHub.CheckRunOutput
+                          { title = "Evaluation succeeded on retry",
+                            summary = summary,
+                            text = Nothing
+                          }
+                  }
         evalStatuses <- pure $ case (errmsg, fetcherrmsg) :: (Maybe Text, Maybe Text) of
           (Just err, _)
             | not (Text.null err) ->
@@ -447,11 +523,12 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                                 }
                         }
                 )
-                  -- Creates a failed check run for each job that failed to evaluate.
-                  -- This is temporarily disabled (by simply passing an empty string)
-                  -- because there is no way to get rid of these later when the eval
-                  -- succeeds on a retry, confusing everyone.
-                  ++ ( (parseFailedJobEvals {- err -} "") <&> \(job, msg) ->
+                  -- Creates a failed check run for each job that failed to evaluate,
+                  -- up to a limit: a jobset with hundreds of broken jobs would
+                  -- otherwise put hundreds of red check-runs on every commit,
+                  -- ahead of all build check-runs.  The ci/eval check-run above
+                  -- carries the whole error message either way.
+                  ++ ( take maxFailedJobEvalChecks (parseFailedJobEvals err) <&> \(job, msg) ->
                          GitHub.CheckRun owner repo $
                            GitHub.CheckRunPayload
                              { name = "ci/eval:" <> job,
@@ -493,25 +570,29 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                               }
                       }
           _ ->
-            singleton $
-              GitHub.CheckRun owner repo $
-                GitHub.CheckRunPayload
-                  { name = "ci/eval",
-                    headSha = hash,
-                    detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid),
-                    externalId = Just $ tshow eid,
-                    status = GitHub.Completed,
-                    conclusion = Just GitHub.Success,
-                    startedAt = Just startedAt,
-                    completedAt = Just evalCompletedAt,
-                    output =
-                      Just $
-                        GitHub.CheckRunOutput
-                          { title = "Evaluation succeeded",
-                            summary = summary,
-                            text = Nothing
-                          }
-                  }
+            singleton
+              ( GitHub.CheckRun owner repo $
+                  GitHub.CheckRunPayload
+                    { name = "ci/eval",
+                      headSha = hash,
+                      detailsUrl = Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow eid),
+                      externalId = Just $ tshow eid,
+                      status = GitHub.Completed,
+                      conclusion = Just GitHub.Success,
+                      startedAt = Just startedAt,
+                      completedAt = Just evalCompletedAt,
+                      output =
+                        Just $
+                          GitHub.CheckRunOutput
+                            { title = "Evaluation succeeded",
+                              summary = summary,
+                              text = Nothing
+                            }
+                    }
+              )
+              -- Overwrite each stale per-job failure with a fresh success so
+              -- GitHub no longer shows the failure after the retry.
+              ++ (priorFailedEvalJobs <&> mkEvalClearedStatus)
         -- If this evaluation has builds (is not identical to a previous one), this selects no rows.
         -- Otherwise this selects all builds of the latest previous evaluation that differed from its predecessor.
         -- We then submit a status for each of these builds to the jobset's flake URL (the current one).
@@ -556,34 +637,35 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
       let ghCheckRunConclusion
             | finished = toCheckRunConclusion buildStatus
             | otherwise = GitHub.Failure
-      steps <- query conn ("SELECT stepnr, drvpath, status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC") (Only bid) :: IO [(Int, String, Maybe Int)]
-      let prevStepStatus
-            | length steps >= 2 = (\(_, _, statusInt) -> statusInt <&> toEnum) $ steps !! 1
-            | otherwise = Nothing
-      reportJob eid job (ghCheckRunConclusion /= GitHub.Success) owner repo hash $
-        whenStatusOrJob filterJobs (Just ghCheckRunConclusion) prevStepStatus job $ do
+      -- The fully-prefixed name is the lookup key, exactly as emitted below,
+      -- so the prior-failure check and the queued payload agree even with a
+      -- custom CHECK_RUN_PREFIX (or an empty one).
+      let checkRunName = checkRunPrefix <> job
+      reportJob eid job (ghCheckRunConclusion `elem` GitHub.failureConclusions) owner repo hash $
+        whenStatusOrJob filterJobs (Just ghCheckRunConclusion) (BridgeDB.hasPriorReportedFailure conn owner repo hash checkRunName) job $ do
+          steps <- query conn ("SELECT stepnr, drvpath, status FROM buildsteps WHERE build = ? ORDER BY stepnr DESC") (Only bid) :: IO [(Int, String, Maybe Int)]
           buildTimes <- getBuildTimes bid
           let failedSteps = filter (\(_, _, statusInt) -> maybe False (/= Hydra.Succeeded) $ statusInt <&> toEnum) steps
           failedStepLogs <-
             sequence $
               failedSteps <&> \(stepnr, drvpath, _) -> do
-                let drvName = takeFileName drvpath
-                    bucketed = take 2 drvName </> drop 2 drvName
-                    path = stateDir </> "build-logs" </> bucketed
-                logs <- catchIOError (readFile path >>= return . Just) $ \ioe ->
-                  if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe
-                    then ioError ioe
-                    else catchIOError (BSLw.readFile (path <.> "bz2") >>= return . Just . cs . BZip.decompress) $ \ioe2 ->
-                      if not . isDoesNotExistErrorType . ioeGetErrorType $ ioe2
-                        then ioError ioe2
-                        else return Nothing
+                -- Complete log decoding inside this boundary. Lazy decompression
+                -- used to escape later while the status payload was encoded.
+                logs <-
+                  catchJust
+                    catchJustPredicate
+                    (fmap (fmap Text.unpack) (readBuildLog stateDir drvpath))
+                    ( \err -> do
+                        Text.putStrLn $ "Warning: could not fetch build log: " <> Text.pack (displayException err)
+                        pure Nothing
+                    )
                 return (stepnr, drvpath, logs)
           output <- query conn ("SELECT path FROM buildoutputs WHERE name = 'out' and build = ? LIMIT 1") (Only bid) :: IO [(Only Text)]
           pure $
             singleton $
               GitHub.CheckRun owner repo $
                 GitHub.CheckRunPayload
-                  { name = checkRunPrefix <> job,
+                  { name = checkRunName,
                     headSha = hash,
                     detailsUrl = Just $ hydraDetailsUrl publicBase ("/build/" <> tshow bid),
                     externalId = Just $ tshow bid,
@@ -641,6 +723,9 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                   }
 
     -- Given an evaluation's error message, returns the jobs that could not be evaluated and their excerpt from the error message.
+    maxFailedJobEvalChecks :: Int
+    maxFailedJobEvalChecks = 20
+
     parseFailedJobEvals :: Text -> [(Text, Text)]
     parseFailedJobEvals errormsg =
       (internal errormsg) <&> \(_, job, msg) -> (job, msg)

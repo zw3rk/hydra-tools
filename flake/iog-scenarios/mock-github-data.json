@@ -1,0 +1,52 @@
+{
+  "routes": [
+    {
+      "method": "get",
+      "endpoint": "/app/installations",
+      "responses": [
+        {
+          "statusCode": 200,
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "[{\"id\": 1, \"account\":{\"login\":\"input-output-hk\"}}, {\"id\": 2, \"account\":{\"login\":\"unknown\"}}]"
+        }
+      ]
+    },
+    {
+      "method": "post",
+      "endpoint": "/app/installations/1/access_tokens",
+      "responses": [
+        {
+          "statusCode": 200,
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\"token\": \"ghs_16C7e42F292c6912E7710c838347Ae178B4a\", \"expires_at\": \"2099-01-01T00:00:00Z\"}"
+        }
+      ]
+    },
+    {
+      "method": "post",
+      "endpoint": "/repos/input-output-hk/sample/check-runs",
+      "responses": [
+        {
+          "statusCode": 201,
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{}"
+        }
+      ]
+    }
+  ]
+}

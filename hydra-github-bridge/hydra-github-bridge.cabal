@@ -35,6 +35,7 @@ common common
                     , text
                     , time
                     , filepath
+                    , directory
                     , http-client
                     , http-client-tls
                     , http-types
@@ -53,6 +54,7 @@ library
     exposed-modules:    Lib
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.DB
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist
@@ -81,6 +83,7 @@ executable hydra-github-bridge
     other-modules:      Lib
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.DB
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
                       , Lib.Bridge.JobsetAllowlist
@@ -125,4 +128,11 @@ test-suite public-url
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          PublicUrlSpec.hs
+    build-depends:    hydra-github-bridge
+
+test-suite bridge-status
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          BridgeStatusSpec.hs
     build-depends:    hydra-github-bridge

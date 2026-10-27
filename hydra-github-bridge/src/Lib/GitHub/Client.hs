@@ -16,6 +16,8 @@ module Lib.GitHub.Client
     RESTKeyValue (..),
     CheckRunStatus (..),
     CheckRunConclusion (..),
+    conclusionText,
+    failureConclusions,
     CheckRunOutput (..),
     CheckRunPayload (..),
     CheckRun (..),
@@ -141,16 +143,28 @@ data CheckRunConclusion
   | TimedOut
   deriving (Eq, Generic, Read, Show)
 
+-- | Canonical Text encoding of a 'CheckRunConclusion'. Used by both the
+-- 'ToJSON' instance below and by SQL queries that filter on the
+-- @payload->>'conclusion'@ JSON field, so the two stay in sync automatically.
+conclusionText :: CheckRunConclusion -> Text
+conclusionText = \case
+  ActionRequired -> "action_required"
+  Cancelled -> "cancelled"
+  Failure -> "failure"
+  Neutral -> "neutral"
+  Success -> "success"
+  Skipped -> "skipped"
+  Stale -> "stale"
+  TimedOut -> "timed_out"
+
+-- | Conclusions that the bridge treats as "the user needs to know" — once any
+-- of these has been reported for a given commit+job, subsequent status
+-- transitions are always forwarded to GitHub (see @whenStatusOrJob@).
+failureConclusions :: [CheckRunConclusion]
+failureConclusions = [Failure, Cancelled, Stale, TimedOut]
+
 instance ToJSON CheckRunConclusion where
-  toJSON = \case
-    (ActionRequired) -> "action_required"
-    (Cancelled) -> "cancelled"
-    (Failure) -> "failure"
-    (Neutral) -> "neutral"
-    (Success) -> "success"
-    (Skipped) -> "skipped"
-    (Stale) -> "stale"
-    (TimedOut) -> "timed_out"
+  toJSON = toJSON . conclusionText
 
 instance FromJSON CheckRunConclusion where
   parseJSON = \case
