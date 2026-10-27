@@ -144,6 +144,28 @@
                 '';
               };
 
+              checkRunGroups = mkOption {
+                type = types.attrsOf types.ints.positive;
+                default = {};
+                example = {"ican-group/haskell.nix" = 4;};
+                description = ''
+                  Repositories (`owner/repo`) whose jobs are reported to GitHub as
+                  one check-run per group, instead of one per job.  A job whose
+                  name has more dot-separated components than the given depth is
+                  reported under the check-run named after its first `depth`
+                  components (e.g. `aarch64-darwin.unstable.ghc914-sh.ghcjs`).
+                  Failed jobs are also reported individually.
+                '';
+              };
+
+              statusWorkers = mkOption {
+                type = types.ints.positive;
+                default = 2;
+                description = ''
+                  Number of workers sending queued check-run statuses to GitHub.
+                '';
+              };
+
               syncInterval = mkOption {
                 type = types.int;
                 default = 900;
@@ -169,6 +191,17 @@
                   Optional (owner/repo, directory) pairs for repositories whose
                   Nix flake lives below the repository root. Formatted as a
                   Haskell list, for example [("zw3rk/infra", "ops")].
+                '';
+              };
+
+              jobsetAllowlist = mkOption {
+                type = types.attrsOf (types.listOf types.str);
+                default = {};
+                example = {"simplex-chat/simplex-chat" = ["pullrequest-7729"];};
+                description = ''
+                  Per-repository allowlist of Hydra jobsets the bridge may
+                  create, update, disable or evaluate (webhooks and sync).
+                  Repositories not listed here are unaffected.
                 '';
               };
 
@@ -261,6 +294,9 @@
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
                   HYDRA_USER = iCfg.hydraUser;
                 }
+                // lib.optionalAttrs (iCfg.jobsetAllowlist != {}) {
+                  JOBSET_ALLOWLIST = builtins.toJSON iCfg.jobsetAllowlist;
+                }
                 // {
                   CHECK_RUN_PREFIX = iCfg.checkRunPrefix;
                   FILTER_JOBS = lib.boolToString iCfg.filterJobs;
@@ -269,9 +305,13 @@
                   SYNC_ENABLED = lib.boolToString iCfg.enableSync;
                   SYNC_INTERVAL = toString iCfg.syncInterval;
                   SYNC_DRY_RUN = lib.boolToString iCfg.syncDryRun;
+                  STATUS_WORKERS = toString iCfg.statusWorkers;
                 }
                 // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
                   REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;
+                }
+                // lib.optionalAttrs (iCfg.checkRunGroups != {}) {
+                  CHECK_RUN_GROUPS = "[" + lib.concatStringsSep ", " (lib.mapAttrsToList (repo: depth: "(\"${repo}\", ${toString depth})") iCfg.checkRunGroups) + "]";
                 };
 
               script = ''
