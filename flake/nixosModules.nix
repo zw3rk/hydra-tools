@@ -151,6 +151,17 @@
                 '';
               };
 
+              jobsetAllowlist = mkOption {
+                type = types.attrsOf (types.listOf types.str);
+                default = { };
+                example = { "simplex-chat/simplex-chat" = [ "pullrequest-7729" ]; };
+                description = ''
+                  Per-repository allowlist of Hydra jobsets the bridge may
+                  create, update, disable or evaluate (webhooks and sync).
+                  Repositories not listed here are unaffected.
+                '';
+              };
+
               enableSse = mkOption {
                 type = types.bool;
                 default = true;
@@ -236,6 +247,9 @@
                 }
                 // lib.optionalAttrs (iCfg.hydraUser != "") {
                   HYDRA_USER = iCfg.hydraUser;
+                }
+                // lib.optionalAttrs (iCfg.jobsetAllowlist != { }) {
+                  JOBSET_ALLOWLIST = builtins.toJSON iCfg.jobsetAllowlist;
                 }
                 // {
                   CHECK_RUN_PREFIX = iCfg.checkRunPrefix;

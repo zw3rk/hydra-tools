@@ -50,6 +50,7 @@ import GitHub.REST
     StdMethod (..),
   )
 import GitHub.REST.PageLinks (PageLinks)
+import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
 import Lib.Exception (tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
@@ -104,8 +105,10 @@ data SyncConfig = SyncConfig
     -- ^ GitHub user-agent header
     scTokensRef :: !(IORef [(String, TokenLease)]),
     -- ^ Shared mutable token cache (unused directly but kept for reference)
-    scGetTokens :: !(IO [(String, TokenLease)])
+    scGetTokens :: !(IO [(String, TokenLease)]),
     -- ^ Action to refresh tokens when expired
+    scJobsetAllowlist :: !JobsetAllowlist
+    -- ^ Jobsets the sync may create or disable, per repo
   }
 
 -- | Repos where draft PRs should NOT create jobsets (replicates existing
@@ -208,17 +211,22 @@ reconcileProject cfg conn (project, org, repo) = do
               not (shouldSkipDraft repoFullName pr)
           ]
 
+      -- Whether the jobset allowlist lets the sync touch this PR's jobset.
+      allowed :: Int -> Bool
+      allowed n = isJobsetAllowed (scJobsetAllowlist cfg) repoFullName ("pullrequest-" <> Text.pack (show n))
+
       -- PRs open on GitHub but missing a jobset in Hydra.
       missing :: [PRInfo]
       missing =
         [ pr
           | n <- Set.toList (githubSet `Set.difference` hydraSet),
+            allowed n,
             Just pr <- [Map.lookup n openPRMap]
         ]
 
       -- Jobset PR numbers enabled in Hydra but not open on GitHub.
       stale :: [Int]
-      stale = Set.toList (hydraSet `Set.difference` githubSet)
+      stale = filter allowed $ Set.toList (hydraSet `Set.difference` githubSet)
 
   putStrLn $
     "[sync] "
