@@ -212,8 +212,9 @@ main = do
         assert "not-yet-created project mapping was dropped" (retainedMappings == [("project", "example", "repo")])
         putStrLn "PASS disabled-project mapping policy with not-yet-created retention"
 
-        -- A valid HTTP200 can still omit the source repository of a deleted
-        -- fork. No valid entry on that page may be acted on in a partial sync.
+        -- An entry missing fields (here a deleted fork without base.repo, or
+        -- just a number) is malformed. No valid entry on that page may be
+        -- acted on in a partial sync.
         let deletedFork =
               object
                 [ "number" .= (7 :: Int),
@@ -231,6 +232,23 @@ main = do
           )
           [deletedFork, object ["number" .= (7 :: Int)]]
         putStrLn "PASS mixed valid/deleted-fork/malformed HTTP200 listings fail closed"
+
+        -- In a real listing a PR from a deleted fork still has base.repo, and
+        -- GitHub serves its head commit from the base repository.  That PR
+        -- must not fail the sync of every other PR in the repository.
+        let deletedForkWithBase =
+              object
+                [ "number" .= (7 :: Int),
+                  "title" .= ("Deleted fork" :: Text),
+                  "draft" .= False,
+                  "head" .= object ["sha" .= currentSha, "repo" .= Null],
+                  "base" .= object ["repo" .= object ["full_name" .= ("example/repo" :: Text)]]
+                ]
+        prepare oldFlake
+        writeIORef reply (status200, toJSON [pull 8 False, deletedForkWithBase], pure ())
+        synced <- reconcileAll cfg conn
+        assert "a deleted-fork PR failed the whole listing" (ssErrors synced == 0 && ssProjectsSynced synced == 1)
+        putStrLn "PASS deleted-fork PR is synced from the base repository"
 
         prepare oldFlake
         _ <- run cfg {scDryRun = True}

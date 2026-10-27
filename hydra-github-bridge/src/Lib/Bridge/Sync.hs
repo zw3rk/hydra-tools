@@ -33,7 +33,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, throwIO)
-import Data.Aeson (Value, (.:), (.:?))
+import Data.Aeson (Object, Value, (.:), (.:?))
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString (ByteString)
 import Data.Char (isHexDigit)
@@ -272,8 +272,6 @@ reconcileProject cfg conn (project, org, repo) = do
       <> show (length refreshes)
       <> " source(s) outdated"
 
-  refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
-
   -- Queue creation commands for missing jobsets.
   created <-
     if null missing
@@ -289,6 +287,10 @@ reconcileProject cfg conn (project, org, repo) = do
       else do
         mapM_ (disableStaleJobset cfg conn project repoFullName) stale
         pure (length stale)
+
+  -- Refresh sources last: a failure here still fails this project's sync,
+  -- but only after its missing jobsets were created and stale ones disabled.
+  refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
 
   pure
     SyncStats
@@ -346,9 +348,9 @@ fetchAllPages ghCfg org repo page = do
               ]
           }
   (prs, _links) <- queryGitHubRestPage ghCfg ep :: IO ([Value], PageLinks)
-  -- A deleted fork can have a null head.repo. Treat that, or any malformed
-  -- entry, as an incomplete listing: silently omitting it would disable a
-  -- still-open PR. All pages are read before reconciliation writes anything.
+  -- Treat a malformed entry as an incomplete listing: silently omitting it
+  -- would disable a still-open PR. All pages are read before reconciliation
+  -- writes anything.
   parsed <- maybe (throwIO $ userError "Incomplete GitHub pull request listing") pure (traverse parsePR prs)
   -- Continue if we got a full page of results (there may be more).
   if length prs < 100
@@ -358,7 +360,6 @@ fetchAllPages ghCfg org repo page = do
       pure (parsed ++ rest)
 
 -- | Extract PR info from a GitHub API JSON object.
--- Returns Nothing for PRs whose head repo is null (deleted fork).
 parsePR :: Value -> Maybe PRInfo
 parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   num <- obj .: "number"
@@ -366,10 +367,16 @@ parsePR = parseMaybe $ withObject "PR" $ \obj -> do
   draft <- obj .: "draft"
   headObj <- obj .: "head"
   sha <- headObj .: "sha"
-  -- head.repo can be null when the source fork has been deleted.
+  -- head.repo is null when the source fork has been deleted.  GitHub still
+  -- serves the PR's head commit from the base repository (as the webhook
+  -- path already relies on), so use that rather than failing the listing.
   mRepo <- headObj .:? "repo"
-  repoObj <- maybe (fail "head.repo is null") pure mRepo
-  fullName <- repoObj .: "full_name"
+  fullName <- case mRepo of
+    Just repoObj -> repoObj .: "full_name"
+    Nothing -> do
+      baseObj :: Object <- obj .: "base"
+      baseRepo :: Object <- baseObj .: "repo"
+      baseRepo .: "full_name"
   pure
     PRInfo
       { prNumber = num,
