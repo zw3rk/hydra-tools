@@ -385,6 +385,13 @@
             Number of concurrent worker threads handling attic uploads.
           '';
         };
+        batch = mkOption {
+          type = types.int;
+          default = 50;
+          description = ''
+            Store paths each worker uploads with one `attic push`.
+          '';
+        };
         environmentFile = mkOption {
           type = types.nullOr types.path;
           default = null;
@@ -399,7 +406,7 @@
           after = ["postgresql.service"];
           partOf = ["hydra-server.service"]; # implies after (systemd/systemd#13847)
 
-          # nix is needed for the local store probe (nix path-info --offline).
+          # nix is needed for the local store probe (nix-store --check-validity).
           path = [pkgs.nix];
 
           startLimitIntervalSec = 0;
@@ -421,6 +428,7 @@
             ATTIC_CACHE = cfg.cache;
             HYDRA_HOST = cfg.host;
             ATTIC_WORKERS = toString cfg.workers;
+            ATTIC_BATCH = toString cfg.batch;
           };
         };
       };
