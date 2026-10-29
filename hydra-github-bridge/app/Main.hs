@@ -27,6 +27,7 @@ import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
+import Lib.Bridge.JobsetKeepnr (noPrJobsetKeepnr, parsePrJobsetKeepnr)
 import Lib.Bridge.PublicUrl (normalizePublicBase)
 import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
@@ -161,6 +162,7 @@ main = do
   checkRunPrefix <- maybe "ci/hydra-build:" Text.pack <$> lookupEnv "CHECK_RUN_PREFIX"
   filterJobs <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "FILTER_JOBS"
   checkRunGroups <- maybe (pure noCheckRunGroups) (either fail pure . parseCheckRunGroups) =<< lookupEnv "CHECK_RUN_GROUPS"
+  prKeepnr <- maybe (pure noPrJobsetKeepnr) (either fail pure . parsePrJobsetKeepnr) =<< lookupEnv "PR_JOBSET_KEEPNR"
 
   -- SSE configuration
   sseEnabled <- maybe True (\v -> v == "true" || v == "1") <$> lookupEnv "SSE_ENABLED"
@@ -294,7 +296,7 @@ main = do
               statusHandlers notifTimeoutSec ghEndpointUrl ghUserAgent getValidGitHubToken'
           ),
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
-          hydraClient env conn,
+          hydraClient prKeepnr env conn,
         -- Use the SSE-broadcasting variant of the notification watcher.
         withReconnect connStr 5 $
           notificationWatcherWithSSE notifTimeoutSec cache publicBase stateDir checkRunPrefix filterJobs checkRunGroups groupTracker,

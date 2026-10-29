@@ -39,6 +39,7 @@ import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
 import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, whenJobsetAllowed)
+import Lib.Bridge.JobsetKeepnr (PrJobsetKeepnr, prJobsetKeepnr)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri)
 import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
@@ -365,12 +366,12 @@ hydraClientEnv host user pass = do
 
   return $ Hydra.HydraClientEnv host' user pass env
 
-hydraClient :: HydraClientEnv -> Connection -> IO ()
-hydraClient henv@Hydra.HydraClientEnv {hceClientEnv} conn =
+hydraClient :: PrJobsetKeepnr -> HydraClientEnv -> Connection -> IO ()
+hydraClient keepnr henv@Hydra.HydraClientEnv {hceClientEnv} conn =
   -- loop forever, working down the hydra commands
   forever $
     Hydra.readCommand conn >>= \cmd -> do
-      result <- runClientM (handleCmd henv cmd) hceClientEnv
+      result <- runClientM (handleCmd henv (withKeepnr keepnr cmd)) hceClientEnv
       case result of
         Left e | Hydra.isAuthError e -> do
           putStrLn "Authentication error detected, re-authenticating..."
@@ -378,11 +379,24 @@ hydraClient henv@Hydra.HydraClientEnv {hceClientEnv} conn =
             Left authErr -> putStrLn authErr
             Right () -> do
               -- Retry the command after successful re-authentication
-              runClientM (handleCmd henv cmd) hceClientEnv >>= \case
+              runClientM (handleCmd henv (withKeepnr keepnr cmd)) hceClientEnv >>= \case
                 Left e' -> print e'
                 Right _ -> pure ()
         Left e -> print e
         Right _ -> pure ()
+
+-- | Apply the configured @keepnr@ to pull request jobsets.  Done here, where
+-- every create or update is sent, so the webhooks and the sync agree.
+withKeepnr :: PrJobsetKeepnr -> Command -> Command
+withKeepnr keepnr = \case
+  Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset ->
+    Hydra.CreateOrUpdateJobset repoName projName jobsetName (set repoName jobsetName jobset)
+  Hydra.UpdateJobset repoName projName jobsetName jobset ->
+    Hydra.UpdateJobset repoName projName jobsetName (set repoName jobsetName jobset)
+  cmd -> cmd
+  where
+    set repoName jobsetName jobset =
+      maybe jobset (\n -> jobset {Hydra.hjKeepnr = n}) (prJobsetKeepnr keepnr repoName jobsetName)
 
 handleCmd :: HydraClientEnv -> Command -> ClientM ()
 handleCmd Hydra.HydraClientEnv {..} (Hydra.CreateOrUpdateJobset repoName projName jobsetName jobset) = do

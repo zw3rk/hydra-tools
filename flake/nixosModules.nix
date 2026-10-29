@@ -144,6 +144,18 @@
                 '';
               };
 
+              prJobsetKeepnr = mkOption {
+                type = types.attrsOf types.ints.unsigned;
+                default = {};
+                example = {"ican-group/haskell.nix" = 1;};
+                description = ''
+                  Repositories (`owner/repo`) whose pull request jobsets keep the
+                  outputs of this many evaluations (Hydra's `keepnr`) instead of
+                  the bridge's default of 2.  The bridge writes the whole jobset on
+                  every update, so this is the place to change it.
+                '';
+              };
+
               checkRunGroups = mkOption {
                 type = types.attrsOf types.ints.positive;
                 default = {};
@@ -320,6 +332,9 @@
                 }
                 // lib.optionalAttrs (iCfg.repoFlakeDirs != "[]") {
                   REPO_FLAKE_DIRS = iCfg.repoFlakeDirs;
+                }
+                // lib.optionalAttrs (iCfg.prJobsetKeepnr != {}) {
+                  PR_JOBSET_KEEPNR = "[" + lib.concatStringsSep ", " (lib.mapAttrsToList (repo: n: "(\"${repo}\", ${toString n})") iCfg.prJobsetKeepnr) + "]";
                 }
                 // lib.optionalAttrs (iCfg.checkRunGroups != {}) {
                   CHECK_RUN_GROUPS = "[" + lib.concatStringsSep ", " (lib.mapAttrsToList (repo: depth: "(\"${repo}\", ${toString depth})") iCfg.checkRunGroups) + "]";
