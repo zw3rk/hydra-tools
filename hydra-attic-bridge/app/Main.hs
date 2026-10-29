@@ -61,57 +61,63 @@ pushToAttic conn cache rowId drvPath = do
 -- paths a build produces share most of that closure.  A batch pays for
 -- that once.  Newest first, so that the outputs current builds need reach
 -- the cache rather than waiting behind a backlog.
+--
+-- No transaction is held while fetching or pushing.  The queue runner's
+-- writes to BuildSteps and BuildStepOutputs insert into this table (see
+-- setup.sql), and an insert of a path waits for any open transaction that
+-- has locked that path's row.  Holding a batch's row locks through minutes
+-- of pushing, newest first (exactly the paths the queue runner is writing),
+-- stalled every step completion on ci.zw3rk.com on 2026-10-29.  So rows
+-- are claimed with one statement that pushes their @last@ an hour ahead
+-- (another worker skips them; if this process dies they come back), and
+-- each outcome is written with its own short statement.
 processDrvPath :: Connection -> String -> Int -> IO ()
 processDrvPath conn cache batch = do
-  more <- withTransaction conn $ do
-    -- Select by primary key so that DELETE/UPDATE below only touches
-    -- these rows, eliminating deadlocks from duplicate drvpath entries.
-    rows <-
-      query
-        conn
-        "SELECT id, drvpath FROM DrvpathsToUpload WHERE last < NOW() AND tries < ? ORDER BY id DESC FOR UPDATE SKIP LOCKED LIMIT ?;"
-        (maxRetries, batch) ::
-        IO [(Int, String)]
-    if null rows
-      then pure False
-      else do
-        -- Fast local check: which of them are not in our store?  Prints
-        -- the invalid paths and never consults substituters.
-        (_, invalidOut, _) <- readCreateProcessWithExitCode (shell $ "nix-store --check-validity --print-invalid " ++ unwords (map snd rows) ++ " 2>/dev/null") ""
-        let invalid = lines invalidOut
-            (missing, local) = partition ((`elem` invalid) . snd) rows
-        fetched <- fmap concat $ forM missing $ \(rowId, drvPath) -> do
-          -- Path not in local store.  Try fetching from LAN peers
-          -- via peernix / configured substituters before giving up.
-          -- nix-store --realise checks all configured substituters
-          -- and downloads if found — it does NOT rebuild.
-          putStrLn $ "Path not local, fetching from peers: " ++ drvPath
-          (fetchExit, _, fetchErr) <- readCreateProcessWithExitCode (shell $ "nix-store --realise " ++ drvPath ++ " >/dev/null 2>&1") ""
-          case fetchExit of
-            ExitSuccess -> do
-              putStrLn $ "Fetched from peer: " ++ drvPath
-              pure [(rowId, drvPath)]
-            ExitFailure _ -> do
-              -- Path truly unavailable anywhere on the network.
-              -- Exponential backoff: 10 min * 1.5^tries, capped at
-              -- 30 days.  These paths were likely GC'd from all
-              -- builders and will never reappear.
-              putStrLn $ "Path not available on any peer, deferring: " ++ drvPath
-              unless (null fetchErr) $ putStrLn $ "Fetch error: " ++ fetchErr
-              _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '10 minutes' * least(4320, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
-              pure []
-        let toPush = local ++ fetched
-        unless (null toPush) $ do
-          (exitCode, _, _) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ unwords (map snd toPush)) ""
-          case exitCode of
-            ExitSuccess -> do
-              _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE id IN ?;" (Only (In (map fst toPush)))
-              putStrLn $ "Pushed " ++ show (length toPush) ++ " paths"
-            -- Push them one by one to find the failing ones (what the
-            -- batch did upload is skipped as already on the server).
-            ExitFailure _ -> forM_ toPush $ \(rowId, drvPath) -> pushToAttic conn cache rowId drvPath
-        pure True
-  when more (processDrvPath conn cache batch)
+  rows <-
+    query
+      conn
+      "UPDATE DrvpathsToUpload SET last = NOW() + interval '1 hour' WHERE id IN \
+      \(SELECT id FROM DrvpathsToUpload WHERE last < NOW() AND tries < ? ORDER BY id DESC FOR UPDATE SKIP LOCKED LIMIT ?) \
+      \RETURNING id, drvpath;"
+      (maxRetries, batch) ::
+      IO [(Int, String)]
+  unless (null rows) $ do
+    -- Fast local check: which of them are not in our store?  Prints
+    -- the invalid paths and never consults substituters.
+    (_, invalidOut, _) <- readCreateProcessWithExitCode (shell $ "nix-store --check-validity --print-invalid " ++ unwords (map snd rows) ++ " 2>/dev/null") ""
+    let invalid = lines invalidOut
+        (missing, local) = partition ((`elem` invalid) . snd) rows
+    fetched <- fmap concat $ forM missing $ \(rowId, drvPath) -> do
+      -- Path not in local store.  Try fetching from LAN peers
+      -- via peernix / configured substituters before giving up.
+      -- nix-store --realise checks all configured substituters
+      -- and downloads if found — it does NOT rebuild.
+      putStrLn $ "Path not local, fetching from peers: " ++ drvPath
+      (fetchExit, _, fetchErr) <- readCreateProcessWithExitCode (shell $ "nix-store --realise " ++ drvPath ++ " >/dev/null 2>&1") ""
+      case fetchExit of
+        ExitSuccess -> do
+          putStrLn $ "Fetched from peer: " ++ drvPath
+          pure [(rowId, drvPath)]
+        ExitFailure _ -> do
+          -- Path truly unavailable anywhere on the network.
+          -- Exponential backoff: 10 min * 1.5^tries, capped at
+          -- 30 days.  These paths were likely GC'd from all
+          -- builders and will never reappear.
+          putStrLn $ "Path not available on any peer, deferring: " ++ drvPath
+          unless (null fetchErr) $ putStrLn $ "Fetch error: " ++ fetchErr
+          _ <- execute conn "UPDATE DrvpathsToUpload SET last = NOW() + (interval '10 minutes' * least(4320, 1.5 ^ tries)), tries = tries + 1 WHERE id = ?;" (Only rowId)
+          pure []
+    let toPush = local ++ fetched
+    unless (null toPush) $ do
+      (exitCode, _, _) <- readCreateProcessWithExitCode (shell $ "attic push " ++ cache ++ " " ++ unwords (map snd toPush)) ""
+      case exitCode of
+        ExitSuccess -> do
+          _ <- execute conn "DELETE FROM DrvpathsToUpload WHERE id IN ?;" (Only (In (map fst toPush)))
+          putStrLn $ "Pushed " ++ show (length toPush) ++ " paths"
+        -- Push them one by one to find the failing ones (what the
+        -- batch did upload is skipped as already on the server).
+        ExitFailure _ -> forM_ toPush $ \(rowId, drvPath) -> pushToAttic conn cache rowId drvPath
+    processDrvPath conn cache batch
 
 -- | Delete entries that have exhausted all retries.  These paths are
 -- permanently unreachable and keeping them around just clutters the
