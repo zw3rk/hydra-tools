@@ -744,6 +744,11 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
                in singleton (before, job, msg) ++ next
             _ -> []
 
+    -- A cached build's times are those of the step that built its output.
+    -- That step can belong to a build that has not finished (or started)
+    -- itself, whose times are still NULL, so fall back to the step's own.
+    -- Failing here used to drop the whole notification: a failure already
+    -- on GitHub stayed red after a restart succeeded as a cached build.
     getBuildTimes :: Hydra.BuildId -> IO (Maybe (UTCTime, UTCTime))
     getBuildTimes bid = do
       rows <-
@@ -774,12 +779,14 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
           \        FETCH FIRST ROW ONLY                                  \
           \    ),                                                        \
           \    actual_build AS (                                         \
-          \        SELECT b.*                                            \
+          \        SELECT                                                \
+          \            COALESCE(b.starttime, a_b_s.starttime) starttime, \
+          \            COALESCE(b.stoptime, a_b_s.stoptime) stoptime     \
           \        FROM builds b                                         \
           \        JOIN actual_build_step a_b_s ON a_b_s.build = b.id    \
           \    ),                                                        \
           \    given_build_maybe AS (                                    \
-          \        SELECT *                                              \
+          \        SELECT starttime, stoptime                            \
           \        FROM given_build                                      \
           \        WHERE                                                 \
           \            finished = 0 OR                                   \
@@ -799,9 +806,9 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
           \FROM selected_build                                           \
           \ "
           (Only bid) ::
-          IO [(Int, Int)]
+          IO [(Maybe Int, Maybe Int)]
       pure $ case rows of
-        [(starttime, stoptime)] ->
+        [(Just starttime, Just stoptime)] ->
           Just
             ( posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral starttime,
               posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral stoptime
