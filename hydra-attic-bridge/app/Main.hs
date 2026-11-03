@@ -90,10 +90,16 @@ processDrvPath conn cache batch = do
     fetched <- fmap concat $ forM missing $ \(rowId, drvPath) -> do
       -- Path not in local store.  Try fetching from LAN peers
       -- via peernix / configured substituters before giving up.
-      -- nix-store --realise checks all configured substituters
-      -- and downloads if found — it does NOT rebuild.
+      --
+      -- Substitution ONLY.  On a .drv path (the BuildSteps/Builds
+      -- triggers queue drvpaths) a plain `nix-store --realise` BUILDS the
+      -- derivation: locally or on any configured remote builder.  That
+      -- ran haskell.nix test derivations on linux-0, four of which hung
+      -- for 8-21 hours on 2026-11-01/02 and stalled every worker.
+      -- max-jobs=0 with no builders makes any build an error, so this can
+      -- only download; `timeout` bounds a stalled download.
       putStrLn $ "Path not local, fetching from peers: " ++ drvPath
-      (fetchExit, _, fetchErr) <- readCreateProcessWithExitCode (shell $ "nix-store --realise " ++ drvPath ++ " >/dev/null 2>&1") ""
+      (fetchExit, _, fetchErr) <- readCreateProcessWithExitCode (shell $ "timeout 15m nix-store --realise --max-jobs 0 --option builders '' " ++ drvPath ++ " >/dev/null") ""
       case fetchExit of
         ExitSuccess -> do
           putStrLn $ "Fetched from peer: " ++ drvPath
