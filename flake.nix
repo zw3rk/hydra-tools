@@ -4,7 +4,7 @@
   inputs = {
     flake-parts.url = github:hercules-ci/flake-parts;
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-    haskellNix.url = github:input-output-hk/haskell.nix;
+    haskellNix.url = github:ican-group/haskell.nix;
     treefmt-nix = {
       url = github:numtide/treefmt-nix;
       inputs.nixpkgs.follows = "nixpkgs";
