@@ -53,7 +53,7 @@ import GitHub.REST
     KeyValue (..),
     StdMethod (..),
   )
-import GitHub.REST.PageLinks (PageLinks)
+import GitHub.REST.PageLinks (PageLinks (..))
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
 import Lib.Exception (tryNonAsync)
@@ -340,26 +340,30 @@ fetchAllPages ghCfg org repo page = do
   let ep =
         GHEndpoint
           { method = GET,
-            endpoint = "/repos/:owner/:repo/pulls",
+            -- The query goes in the path: 'queryGitHubRestPage' sends
+            -- 'ghData' as a JSON request body, which GitHub ignores on a GET.
+            -- With the parameters there, every request returned the default
+            -- first page of 30 PRs, so repos with more open PRs than that
+            -- never got jobsets for the older ones.
+            endpoint =
+              "/repos/:owner/:repo/pulls?state=open&per_page=100&page="
+                <> Text.pack (show page),
             endpointVals =
               [ "owner" := org,
                 "repo" := repo
               ],
-            ghData =
-              [ "state" := ("open" :: String),
-                "per_page" := (100 :: Int),
-                "page" := page
-              ]
+            ghData = []
           }
-  (prs, _links) <- queryGitHubRestPage ghCfg ep :: IO ([Value], PageLinks)
+  (prs, links) <- queryGitHubRestPage ghCfg ep :: IO ([Value], PageLinks)
   -- Treat a malformed entry as an incomplete listing: silently omitting it
   -- would disable a still-open PR. All pages are read before reconciliation
   -- writes anything.
   parsed <- maybe (throwIO $ userError "Incomplete GitHub pull request listing") pure (traverse parsePR prs)
-  -- Continue if we got a full page of results (there may be more).
-  if length prs < 100
-    then pure parsed
-    else do
+  -- Follow GitHub's Link header rather than guessing from the page size, so
+  -- a page smaller than requested can never end the listing early.
+  case pageNext links of
+    Nothing -> pure parsed
+    Just _ -> do
       rest <- fetchAllPages ghCfg org repo (page + 1)
       pure (parsed ++ rest)
 
