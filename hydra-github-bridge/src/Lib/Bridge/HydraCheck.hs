@@ -20,6 +20,10 @@
 -- the GitHub Actions jobs waiting for Hydra.  Reading the bridge's own small
 -- table keeps that independent of how far the check-run queue has got, and
 -- avoids searching @jobsetevals@ for a commit.
+--
+-- The same state is also posted as a commit status named like the
+-- check-run, but only when the outcome changes (see 'hydraCommitState'),
+-- for workflows triggered @on: status@ ("Lib.Bridge.CommitStatus").
 module Lib.Bridge.HydraCheck
   ( -- * Names
     hydraCheckName,
@@ -36,6 +40,9 @@ module Lib.Bridge.HydraCheck
 
     -- * State
     HydraState (..),
+    Transition (..),
+    hydraCommitState,
+    queueHydraStatus,
     hydraStateSchema,
     recordEvalStarted,
     recordEvalFailed,
@@ -47,12 +54,13 @@ module Lib.Bridge.HydraCheck
 where
 
 import Data.List (sort)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isNothing)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), Query, ToRow, execute_, query, query_, (:.) (..))
+import Lib.Bridge.CommitStatus (CommitState (..), enqueueCommitStatus)
 import Lib.Bridge.PublicUrl (hydraDetailsUrl)
 import Lib.GitHub qualified as GitHub
 
@@ -185,6 +193,55 @@ data HydraState = HydraState
   }
   deriving (Eq, Show)
 
+-- | A change of a commit's recorded state: the outcome before (if the
+-- commit had a state) and after.
+data Transition = Transition
+  { previous :: Maybe HydraOutcome,
+    current :: HydraOutcome
+  }
+  deriving (Eq, Show)
+
+-- | The commit status to post for a change, if any.  Only a change of
+-- outcome posts one (pending -> success/failure, or back to pending when a
+-- build is restarted); progress within pending does not, so @status@
+-- events stay rare.
+hydraCommitState :: Transition -> Maybe CommitState
+hydraCommitState t
+  | t.previous == Just t.current = Nothing
+  | otherwise = Just $ case t.current of
+      HydraPending -> StatusPending
+      HydraSucceeded -> StatusSuccess
+      HydraFailed -> StatusFailure
+
+-- | Queue the commit status for a recorded change, if it changed the
+-- outcome.  The context is the check-run's name.
+queueHydraStatus :: Connection -> Text -> Text -> Text -> Text -> Maybe Text -> Text -> Maybe Transition -> IO ()
+queueHydraStatus conn checkRunPrefix owner repo sha targetUrl description transition =
+  case transition >>= hydraCommitState of
+    Nothing -> pure ()
+    Just state -> enqueueCommitStatus conn owner repo sha (hydraCheckName checkRunPrefix) state targetUrl description
+
+-- | Run a state upsert (an @INSERT ... RETURNING outcome@ taking
+-- @params@) and report the transition it made, if it changed the row.  The
+-- previous outcome is read in the same statement, from the snapshot the
+-- upsert started from.
+recordTransition :: (ToRow q) => Connection -> Text -> Text -> Text -> Query -> q -> IO (Maybe Transition)
+recordTransition conn owner repo sha upsert params = do
+  rows <-
+    query
+      conn
+      ( "WITH prev AS (SELECT outcome FROM github_hydra_state WHERE owner = ? AND repo = ? AND head_sha = ?), \
+        \     up AS ("
+          <> upsert
+          <> " RETURNING outcome) \
+             \SELECT (SELECT outcome FROM prev), outcome FROM up"
+      )
+      ((owner, repo, sha) :. params) ::
+      IO [(Maybe Text, Text)]
+  pure $ case rows of
+    [(prev, cur)] | Just c <- parseOutcome cur -> Just (Transition (prev >>= parseOutcome) c)
+    _ -> Nothing
+
 -- | @eval_id@ is NULL until an evaluation exists (after @eval_started@, or
 -- after @eval_failed@ when fetching or evaluating failed outright).
 -- @updated@ only moves when the outcome or title changes.
@@ -207,51 +264,56 @@ hydraStateSchema =
 -- | An evaluation of the commit started.  Only creates the row, or resets
 -- one that has no evaluation yet: Hydra re-checks unchanged jobsets, and
 -- each check must not send a finished commit back to pending.
--- True when the state changed.
-recordEvalStarted :: Connection -> Text -> Text -> Text -> IO Bool
+recordEvalStarted :: Connection -> Text -> Text -> Text -> IO (Maybe Transition)
 recordEvalStarted conn owner repo sha =
-  (> 0)
-    <$> execute
-      conn
-      "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
-      \VALUES (?, ?, ?, NULL, 'pending', 'Evaluating') \
-      \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
-      \SET outcome = excluded.outcome, title = excluded.title, updated = NOW() \
-      \WHERE github_hydra_state.eval_id IS NULL \
-      \  AND (github_hydra_state.outcome, github_hydra_state.title) <> (excluded.outcome, excluded.title)"
-      (owner, repo, sha)
+  recordTransition
+    conn
+    owner
+    repo
+    sha
+    "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
+    \VALUES (?, ?, ?, NULL, 'pending', 'Evaluating') \
+    \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
+    \SET outcome = excluded.outcome, title = excluded.title, updated = NOW() \
+    \WHERE github_hydra_state.eval_id IS NULL \
+    \  AND (github_hydra_state.outcome, github_hydra_state.title) <> (excluded.outcome, excluded.title)"
+    (owner, repo, sha)
 
 -- | Fetching or evaluating the commit failed before an evaluation existed.
 -- Does not override the outcome of an evaluation that did happen.
-recordEvalFailed :: Connection -> Text -> Text -> Text -> IO Bool
+recordEvalFailed :: Connection -> Text -> Text -> Text -> IO (Maybe Transition)
 recordEvalFailed conn owner repo sha =
-  (> 0)
-    <$> execute
-      conn
-      "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
-      \VALUES (?, ?, ?, NULL, 'failure', 'Evaluation failed') \
-      \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
-      \SET outcome = excluded.outcome, title = excluded.title, updated = NOW() \
-      \WHERE github_hydra_state.eval_id IS NULL \
-      \  AND (github_hydra_state.outcome, github_hydra_state.title) <> (excluded.outcome, excluded.title)"
-      (owner, repo, sha)
+  recordTransition
+    conn
+    owner
+    repo
+    sha
+    "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
+    \VALUES (?, ?, ?, NULL, 'failure', 'Evaluation failed') \
+    \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
+    \SET outcome = excluded.outcome, title = excluded.title, updated = NOW() \
+    \WHERE github_hydra_state.eval_id IS NULL \
+    \  AND (github_hydra_state.outcome, github_hydra_state.title) <> (excluded.outcome, excluded.title)"
+    (owner, repo, sha)
 
 -- | Record the summary of evaluation @evalId@.  An older evaluation of the
 -- same commit (e.g. the reconciler recomputing it late) never overrides a
--- newer one.  True when the state changed.
-recordEvalSummary :: Connection -> Text -> Text -> Text -> Int -> EvalSummary -> IO Bool
+-- newer one.
+recordEvalSummary :: Connection -> Text -> Text -> Text -> Int -> EvalSummary -> IO (Maybe Transition)
 recordEvalSummary conn owner repo sha evalId s =
-  (> 0)
-    <$> execute
-      conn
-      "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
-      \VALUES (?, ?, ?, ?, ?, ?) \
-      \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
-      \SET eval_id = excluded.eval_id, outcome = excluded.outcome, title = excluded.title, updated = NOW() \
-      \WHERE (github_hydra_state.eval_id IS NULL OR github_hydra_state.eval_id <= excluded.eval_id) \
-      \  AND (github_hydra_state.eval_id, github_hydra_state.outcome, github_hydra_state.title) \
-      \      IS DISTINCT FROM (excluded.eval_id, excluded.outcome, excluded.title)"
-      (owner, repo, sha, evalId, outcomeText s.outcome, s.title)
+  recordTransition
+    conn
+    owner
+    repo
+    sha
+    "INSERT INTO github_hydra_state (owner, repo, head_sha, eval_id, outcome, title) \
+    \VALUES (?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (owner, repo, head_sha) DO UPDATE \
+    \SET eval_id = excluded.eval_id, outcome = excluded.outcome, title = excluded.title, updated = NOW() \
+    \WHERE (github_hydra_state.eval_id IS NULL OR github_hydra_state.eval_id <= excluded.eval_id) \
+    \  AND (github_hydra_state.eval_id, github_hydra_state.outcome, github_hydra_state.title) \
+    \      IS DISTINCT FROM (excluded.eval_id, excluded.outcome, excluded.title)"
+    (owner, repo, sha, evalId, outcomeText s.outcome, s.title)
 
 lookupHydraState :: Connection -> Text -> Text -> Text -> IO (Maybe HydraState)
 lookupHydraState conn owner repo sha = do
@@ -294,8 +356,9 @@ aggregateCheckRuns publicBase checkRunPrefix conn evalId owner repo sha rows = d
         [Only e] -> e
         _ -> Nothing
       s = summariseEval evalError rows
-  changed <- recordEvalSummary conn owner repo sha evalId s
-  if not changed
+  transition <- recordEvalSummary conn owner repo sha evalId s
+  queueHydraStatus conn checkRunPrefix owner repo sha (Just $ hydraDetailsUrl publicBase ("/eval/" <> tshow evalId)) s.title transition
+  if isNothing transition
     then pure []
     else do
       _ <- if s.outcome /= HydraPending then execute_ conn "NOTIFY github_gate" else pure 0

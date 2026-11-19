@@ -55,7 +55,9 @@ Monitors Hydra build events and reports status back to GitHub:
 
 An aggregate `hydra` check-run on each commit says when Hydra is done with
 it, and GitHub Actions jobs can wait for it, without a runner, by declaring
-`environment: hydra`. See [Waiting for Hydra in GitHub Actions](docs/hydra-gate.md).
+`environment: hydra`. The same state is posted as a `hydra` commit status,
+so workflows can also start `on: status`. See
+[Waiting for Hydra in GitHub Actions](docs/hydra-gate.md).
 
 Periodic reconciliation also repairs missed PR source updates. It refreshes
 only bridge-style immutable GitHub sources for existing open PR jobsets,

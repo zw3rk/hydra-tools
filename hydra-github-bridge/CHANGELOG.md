@@ -17,6 +17,12 @@
   Deployments (read and write) and Actions (read), the "Deployment
   protection rule" event, and a `hydra` environment with the App's rule in
   each repository; see `docs/hydra-gate.md`.
+* The aggregate state is also posted as a commit status with the check-run's
+  name, only when the outcome changes (pending, success, failure).  Being
+  posted by the App, it triggers `on: status` workflows, an alternative to
+  the environment gate that needs only the existing `statuses:write`.
+  Statuses go through a new durable queue, `github_commit_status`, that
+  keeps the newest state per commit and context.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

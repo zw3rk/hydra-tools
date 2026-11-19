@@ -2,7 +2,7 @@
 
 Hydra evaluations and builds can take hours. A GitHub Actions job that needs
 Hydra's results should not sit on a runner polling Hydra until then. The bridge
-offers two things instead:
+offers three things instead:
 
 - **The `hydra` check-run.** There is one per commit. It is `in_progress`
   from the start of the evaluation until the evaluation has finished and no
@@ -27,6 +27,12 @@ offers two things instead:
 
   The job belongs to the workflow's normal `push` or `pull_request` run, so
   its result shows on the commit or pull request as usual.
+- **The `hydra` commit status.** The same state is also posted as a commit
+  status. Its context is the check-run's name. It goes `pending`, then
+  `success` or `failure`, and is only posted when the outcome changes, so
+  build progress does not post it. A workflow can start on it with
+  `on: status` without the App having any extra permission. See
+  [below](#triggering-workflows-without-the-deployments-permission-on-status).
 
 ## How the gate works
 
@@ -82,5 +88,46 @@ webhooks only looks for the `hydra` environment.
 
 ### The bridge
 
-The bridge creates its tables, `github_hydra_state` and `github_gate`, at
-startup.
+The bridge creates its tables at startup: `github_hydra_state`,
+`github_commit_status` and `github_gate`.
+
+## Triggering workflows without the Deployments permission: `on: status`
+
+The `hydra` commit status is posted by the App, not by `GITHUB_TOKEN`, so it
+triggers `status` workflows. That needs no App permission beyond the
+`statuses:write` the bridge already has, and no environment:
+
+```yaml
+on:
+  status:
+jobs:
+  after-hydra:
+    if: github.event.context == 'hydra' && github.event.state == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - run: ...   # the commit is github.event.sha
+```
+
+It coexists with the environment gate, but it is less convenient:
+
+- **The default branch's workflow runs.** `status` runs always use the
+  workflow file from the default branch, with `GITHUB_SHA` and `GITHUB_REF`
+  set to its head, not to the commit Hydra built. That commit is
+  `github.event.sha`.
+- **Results attach to the default branch, not the PR.** The run's own
+  checks attach to the default branch head. To show a result on the commit
+  or pull request, post your own commit status to `github.event.sha`, using
+  `permissions: statuses: write`.
+- **Do not check out PR code with write permissions.** `github.event.sha`
+  can be a pull request commit from a fork, and this run has the default
+  branch's permissions and secrets. Keep jobs that build it read-only.
+- **The event fires once, when the state changes.** A workflow that also
+  starts for other reasons, such as a tag pushed after Hydra had already
+  finished with that commit, must ask for the current state itself:
+  `GET /repos/{owner}/{repo}/commits/{sha}/status` and look for the `hydra`
+  context.
+- **Every commit status triggers the workflow**, from any CI. Filter on
+  `github.event.context`. With a bridge `CHECK_RUN_PREFIX`, the context is
+  `<prefix>hydra`.

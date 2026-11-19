@@ -13,6 +13,7 @@ import Data.Aeson (Value, eitherDecode)
 import Data.ByteString.Lazy.Char8 qualified as LBS
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Lib.Bridge.CommitStatus (CommitState (..), commitStateText, describeStatus)
 import Lib.Bridge.Gates
 import Lib.Bridge.HydraCheck
 import Lib.Bridge.HydraToGitHub (checkRunPriority)
@@ -203,8 +204,26 @@ waitingRuns = do
   assertEqual "pending environments" ["hydra", "prod"] envs
   assertEqual "hydra environment name" "hydra" hydraEnvironment
 
+-- Commit statuses ------------------------------------------------------------
+
+commitStatuses :: IO ()
+commitStatuses = do
+  let t p c = hydraCommitState (Transition p c)
+  assertEqual "first pending posts pending" (Just StatusPending) (t Nothing HydraPending)
+  assertEqual "first failure posts failure" (Just StatusFailure) (t Nothing HydraFailed)
+  assertEqual "pending -> success" (Just StatusSuccess) (t (Just HydraPending) HydraSucceeded)
+  assertEqual "pending -> failure" (Just StatusFailure) (t (Just HydraPending) HydraFailed)
+  assertEqual "restart: success -> pending" (Just StatusPending) (t (Just HydraSucceeded) HydraPending)
+  assertEqual "failure -> success" (Just StatusSuccess) (t (Just HydraFailed) HydraSucceeded)
+  assertEqual "progress within pending posts nothing" Nothing (t (Just HydraPending) HydraPending)
+  assertEqual "title change within success posts nothing" Nothing (t (Just HydraSucceeded) HydraSucceeded)
+  assertEqual "states" ["pending", "success", "failure"] (map commitStateText [StatusPending, StatusSuccess, StatusFailure])
+  assertEqual "description is at most 140 characters" 140 (Text.length (describeStatus (Text.replicate 200 "x")))
+  assertEqual "short description kept" "2 jobs succeeded" (describeStatus "2 jobs succeeded")
+
 main :: IO ()
 main = do
+  commitStatuses
   summaries
   payloads
   signatures

@@ -26,6 +26,7 @@ import Database.PostgreSQL.Simple
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, aggregateReconciler, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.CommitStatus (CommitStatusWorkerConfig (..), commitStatusSchema, commitStatusWorker)
 import Lib.Bridge.Gates (GateWorkerConfig (..), gateSchema, gateWorker)
 import Lib.Bridge.HydraCheck (hydraStateSchema)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
@@ -291,10 +292,11 @@ main = do
         \  )"
     putStrLn $ "Marked " ++ show superseded ++ " superseded payload(s) as sent."
 
-    -- The aggregate hydra check-run's state and the runs waiting for it
-    -- (see Lib.Bridge.HydraCheck and Lib.Bridge.Gates).
-    putStrLn "Ensuring github_hydra_state and github_gate exist..."
-    forM_ (hydraStateSchema ++ gateSchema) $ \stmt -> execute_ migConn (fromString stmt)
+    -- The aggregate hydra check-run's state, its commit statuses and the
+    -- runs waiting for it (see Lib.Bridge.HydraCheck, Lib.Bridge.CommitStatus
+    -- and Lib.Bridge.Gates).
+    putStrLn "Ensuring github_hydra_state, github_commit_status and github_gate exist..."
+    forM_ (hydraStateSchema ++ commitStatusSchema ++ gateSchema) $ \stmt -> execute_ migConn (fromString stmt)
     putStrLn "Tables ready."
 
   Async.mapConcurrently_
@@ -323,6 +325,15 @@ main = do
         -- were missed (see 'aggregateReconciler').
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
           aggregateReconciler 300 groupTracker conn,
+        -- Send the hydra commit statuses (for workflows triggered on: status).
+        withReconnect connStr 5 $
+          commitStatusWorker
+            CommitStatusWorkerConfig
+              { endpoint = ghEndpointUrl,
+                userAgent = ghUserAgent,
+                getTokens = getValidGitHubToken',
+                interval = 60
+              },
         -- Approve or reject the workflow runs waiting for Hydra.
         withReconnect connStr 5 $
           gateWorker

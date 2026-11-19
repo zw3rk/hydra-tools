@@ -45,7 +45,7 @@ import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
 import Data.List (intercalate, singleton)
-import Data.Maybe (isNothing)
+import Data.Maybe (isJust, isNothing)
 import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
@@ -70,7 +70,7 @@ import GitHub.REST
 import Lib (binarySearch)
 import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markAggregateDirty, markGroupDirty)
 import Lib.Bridge.DB qualified as BridgeDB
-import Lib.Bridge.HydraCheck (hydraCheckName, isHydraCheckName, recordEvalFailed, recordEvalStarted)
+import Lib.Bridge.HydraCheck (hydraCheckName, isHydraCheckName, queueHydraStatus, recordEvalFailed, recordEvalStarted)
 import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Lib.Connection (guardedGetNotification)
 import Lib.Data.Duration (humanReadableDuration)
@@ -325,7 +325,10 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
     withGithubFlake flake $ \owner repo hash -> do
-      hydraStarted <- recordEvalStarted conn owner repo hash
+      started <- recordEvalStarted conn owner repo hash
+      let jobsetUrl = hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)
+          hydraStarted = isJust started
+      queueHydraStatus conn checkRunPrefix owner repo hash (Just jobsetUrl) "Evaluating" started
       pure $
         [ GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
@@ -362,7 +365,9 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
     [(proj, name, flake, fetcherrormsg, errormsg, errortime)] <- query conn "select project, name, flake, fetcherrormsg, errormsg, errortime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
     withGithubFlake flake $ \owner repo hash -> do
-      hydraFailed <- recordEvalFailed conn owner repo hash
+      failedEval <- recordEvalFailed conn owner repo hash
+      let hydraFailed = isJust failedEval
+      queueHydraStatus conn checkRunPrefix owner repo hash (Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)) "Evaluation failed" failedEval
       when hydraFailed $ void $ execute_ conn "NOTIFY github_gate"
       let completedAt = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (errortime :: Int)
       pure $
