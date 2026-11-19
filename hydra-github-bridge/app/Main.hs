@@ -16,6 +16,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef)
 import Data.Set qualified as Set
+import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -24,7 +25,8 @@ import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import Database.PostgreSQL.Simple
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
-import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, aggregateReconciler, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.HydraCheck (hydraStateSchema)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.JobsetKeepnr (noPrJobsetKeepnr, parsePrJobsetKeepnr)
@@ -288,6 +290,11 @@ main = do
         \  )"
     putStrLn $ "Marked " ++ show superseded ++ " superseded payload(s) as sent."
 
+    -- The aggregate hydra check-run's state (see Lib.Bridge.HydraCheck).
+    putStrLn "Ensuring github_hydra_state exists..."
+    forM_ hydraStateSchema $ \stmt -> execute_ migConn (fromString stmt)
+    putStrLn "Tables ready."
+
   Async.mapConcurrently_
     id
     $ [ Async.replicateConcurrently_
@@ -310,6 +317,10 @@ main = do
             groupTracker
             (\runs -> broadcastCheckRuns cache runs >> mapM_ (queueCheckRun conn) runs)
             conn,
+        -- Keep unfinished aggregates moving even when their notifications
+        -- were missed (see 'aggregateReconciler').
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          aggregateReconciler 300 groupTracker conn,
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
           run port (app allowedOrgs jobsetAllowlist repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
         -- Periodically prune stale notifications for old commits that

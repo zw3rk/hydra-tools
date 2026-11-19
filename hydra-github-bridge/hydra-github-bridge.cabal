@@ -55,6 +55,7 @@ library
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.DB
+                      , Lib.Bridge.HydraCheck
                       , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
@@ -86,6 +87,7 @@ executable hydra-github-bridge
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
                       , Lib.Bridge.DB
+                      , Lib.Bridge.HydraCheck
                       , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
