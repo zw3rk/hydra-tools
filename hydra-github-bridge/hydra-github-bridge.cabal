@@ -54,7 +54,10 @@ library
     exposed-modules:    Lib
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.CommitStatus
                       , Lib.Bridge.DB
+                      , Lib.Bridge.Gates
+                      , Lib.Bridge.HydraCheck
                       , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
@@ -85,7 +88,10 @@ executable hydra-github-bridge
     other-modules:      Lib
                       , Lib.Bridge
                       , Lib.Bridge.CheckRunGroups
+                      , Lib.Bridge.CommitStatus
                       , Lib.Bridge.DB
+                      , Lib.Bridge.Gates
+                      , Lib.Bridge.HydraCheck
                       , Lib.Connection
                       , Lib.Bridge.GitHubToHydra
                       , Lib.Bridge.HydraToGitHub
@@ -132,6 +138,13 @@ test-suite public-url
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          PublicUrlSpec.hs
+    build-depends:    hydra-github-bridge
+
+test-suite hydra-gate
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          HydraGateSpec.hs
     build-depends:    hydra-github-bridge
 
 test-suite bridge-status

@@ -43,9 +43,12 @@ Use the following settings:
    * Commit Statuses: Read and Write
    * Contents: Read-only
    * Metadata: Read-only (automatically set)
+   * Deployments: Read and Write (for the `hydra` environment gate)
+   * Actions: Read-only (for the `hydra` environment gate)
  * Subscribe to Events: Select the following events
    * Check run
    * Check suite
+   * Deployment protection rule (for the `hydra` environment gate)
    * Pull request
    * Push
  * Where can this GitHub App be installed?: Select _Any account_ to allow installation
@@ -122,6 +125,10 @@ database:
         tries INTEGER DEFAULT 0,
         FOREIGN KEY (status_id) REFERENCES github_status (id) ON DELETE CASCADE
     );
+
+The bridge creates the tables of the `hydra` check-run and environment gate
+(`github_hydra_state`, `github_gate`) itself at startup; see
+[Waiting for Hydra in GitHub Actions](hydra-gate.md).
 
 ## Step 6: Install GitHub Bridge
 Import the NixOS modules:

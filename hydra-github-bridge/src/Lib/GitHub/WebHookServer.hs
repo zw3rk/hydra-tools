@@ -24,7 +24,7 @@ import GitHub.Data.Webhooks.Events
     PullRequestEvent,
     PushEvent,
   )
-import Servant (Context (..), HasContextEntry (..), JSON, Post, (:<|>), (:>))
+import Servant (Context (..), HasContextEntry (..), JSON, Post, Raw, (:<|>), (:>))
 import Servant.GitHub.Webhook (GitHubEvent, GitHubSignedReqBody, RepoWebhookEvent (..))
 import qualified Servant.GitHub.Webhook as GitHub
 
@@ -65,6 +65,10 @@ type SingleHookEndpointAPI =
            :<|> PullRequestHookAPI
            :<|> CheckSuiteHookAPI
            :<|> CheckRunHookAPI
+           -- Events servant-github-webhook has no type for (currently
+           -- deployment_protection_rule, see "Lib.Bridge.Gates").  Only
+           -- reached when no route above matches the X-GitHub-Event header.
+           :<|> Raw
        )
 
 newtype GitHubKey = GitHubKey (forall result. GitHub.GitHubKey result)

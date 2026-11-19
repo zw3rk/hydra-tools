@@ -15,6 +15,7 @@ module Lib.Bridge.HydraToGitHub
     queueCheckRun,
     statusHandlers,
     parseGitHubFlakeURI,
+    checkRunPriority,
     -- Exposed for testing.
     EmitDecision (..),
     decideEmit,
@@ -44,7 +45,7 @@ import Data.Duration (oneSecond)
 import Data.Foldable (foldr')
 import Data.Functor ((<&>))
 import Data.List (intercalate, singleton)
-import Data.Maybe (isNothing)
+import Data.Maybe (isJust, isNothing)
 import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
@@ -67,8 +68,9 @@ import GitHub.REST
     queryGitHub,
   )
 import Lib (binarySearch)
-import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markGroupDirty)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupKey (..), GroupTracker, jobGroup, markAggregateDirty, markGroupDirty)
 import Lib.Bridge.DB qualified as BridgeDB
+import Lib.Bridge.HydraCheck (hydraCheckName, isHydraCheckName, queueHydraStatus, recordEvalFailed, recordEvalStarted)
 import Lib.Bridge.PublicUrl (hydraDetailsUrl, normalizePublicBase)
 import Lib.Connection (guardedGetNotification)
 import Lib.Data.Duration (humanReadableDuration)
@@ -108,19 +110,27 @@ notificationWatcher host stateDir checkRunPrefix filterJobs groups tracker conn 
         statuses <- handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs groups tracker note
         forM_ statuses (queueCheckRun conn)
 
--- | Queue a check-run for 'statusHandlers' to send.  The priority column
--- (0 = ci/eval and per-job ci/eval:<job>, 1 = *required, 2 = everything
--- else) is the order in which the queue is drained.
+-- | Queue a check-run for 'statusHandlers' to send, at 'checkRunPriority'.
 queueCheckRun :: Connection -> GitHub.CheckRun -> IO ()
 queueCheckRun conn (GitHub.CheckRun owner repo payload) = do
   Text.putStrLn $ "QUEUEING [" <> owner <> "/" <> repo <> "/" <> payload.headSha <> "] " <> payload.name <> ":" <> Text.pack (show payload.status)
   [Only _id'] <-
     query
       conn
-      "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload, priority) select (select id from status_upsert), ?, case when ? like 'ci/eval%' then 0 when ? like '%required' then 1 else 2 end returning id"
-      (owner, repo, payload.headSha, payload.name, toJSON payload, payload.name, payload.name) ::
+      "with status_upsert as (insert into github_status (owner, repo, headSha, name) values (?, ?, ?, ?) on conflict (owner, repo, headSha, name) do update set name = excluded.name returning id) insert into github_status_payload (status_id, payload, priority) select (select id from status_upsert), ?, ? returning id"
+      (owner, repo, payload.headSha, payload.name, toJSON payload, checkRunPriority payload.name) ::
       IO [Only Int]
   void $ execute_ conn "NOTIFY github_status"
+
+-- | The order in which the queue is drained: 0 = ci/eval and per-job
+-- ci/eval:<job>, 1 = *required and the aggregate @hydra@ check-run, 2 =
+-- everything else.  Downstream consumers wait on the first two, so they
+-- must not queue behind hundreds of per-build check-runs.
+checkRunPriority :: Text -> Int
+checkRunPriority name
+  | "ci/eval" `Text.isPrefixOf` name = 0
+  | "required" `Text.isSuffixOf` name || isHydraCheckName name = 1
+  | otherwise = 2
 
 statusHandlers ::
   -- | Seconds without a notification before the connection is checked
@@ -314,52 +324,91 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
-    withGithubFlake flake $ \owner repo hash ->
+    withGithubFlake flake $ \owner repo hash -> do
+      started <- recordEvalStarted conn owner repo hash
+      let jobsetUrl = hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)
+          hydraStarted = isJust started
+      queueHydraStatus conn checkRunPrefix owner repo hash (Just jobsetUrl) "Evaluating" started
       pure $
-        singleton $
-          GitHub.CheckRun owner repo $
+        [ GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/eval",
+              { name = hydraCheckName checkRunPrefix,
                 headSha = hash,
                 detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
                 externalId = Just $ tshow jid,
                 status = GitHub.InProgress,
                 conclusion = Nothing,
-                -- `triggertime` is `Nothing` if the evaluation is cached.
                 startedAt = (triggertime :: Maybe Int) >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral,
                 completedAt = Nothing,
-                output = Nothing
+                output = Just $ GitHub.CheckRunOutput {title = "Evaluating", summary = "", text = Nothing}
               }
+        | hydraStarted
+        ]
+          ++ singleton
+            ( GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = "ci/eval",
+                    headSha = hash,
+                    detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
+                    externalId = Just $ tshow jid,
+                    status = GitHub.InProgress,
+                    conclusion = Nothing,
+                    -- `triggertime` is `Nothing` if the evaluation is cached.
+                    startedAt = triggertime >>= Just . posixSecondsToUTCTime . secondsToNominalDiffTime . fromIntegral,
+                    completedAt = Nothing,
+                    output = Nothing
+                  }
+            )
   (Hydra.EvalAdded jid eid) -> handleEvalDone jid eid "Added"
   (Hydra.EvalCached jid eid) -> handleEvalDone jid eid "Cached"
   (Hydra.EvalFailed jid) -> do
     [(proj, name, flake, fetcherrormsg, errormsg, errortime)] <- query conn "select project, name, flake, fetcherrormsg, errormsg, errortime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
-    withGithubFlake flake $ \owner repo hash ->
+    withGithubFlake flake $ \owner repo hash -> do
+      failedEval <- recordEvalFailed conn owner repo hash
+      let hydraFailed = isJust failedEval
+      queueHydraStatus conn checkRunPrefix owner repo hash (Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)) "Evaluation failed" failedEval
+      when hydraFailed $ void $ execute_ conn "NOTIFY github_gate"
+      let completedAt = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (errortime :: Int)
       pure $
-        singleton $
-          GitHub.CheckRun owner repo $
+        [ GitHub.CheckRun owner repo $
             GitHub.CheckRunPayload
-              { name = "ci/eval",
+              { name = hydraCheckName checkRunPrefix,
                 headSha = hash,
                 detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
                 externalId = Just $ tshow jid,
                 status = GitHub.Completed,
                 conclusion = Just GitHub.Failure,
-                startedAt = Nothing, -- Hydra does not record this information but GitHub still has it
-                completedAt = Just . posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral (errortime :: Int),
-                output =
-                  Just $
-                    GitHub.CheckRunOutput
-                      { title = "Evaluation failed",
-                        summary = "",
-                        text =
-                          maybe
-                            (errormsg >>= mkEvalErrorSummary)
-                            mkFetchErrorSummary
-                            fetcherrormsg
-                      }
+                startedAt = Nothing,
+                completedAt = completedAt,
+                output = Just $ GitHub.CheckRunOutput {title = "Evaluation failed", summary = "See the ci/eval check-run.", text = Nothing}
               }
+        | hydraFailed
+        ]
+          ++ singleton
+            ( GitHub.CheckRun owner repo $
+                GitHub.CheckRunPayload
+                  { name = "ci/eval",
+                    headSha = hash,
+                    detailsUrl = Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name),
+                    externalId = Just $ tshow jid,
+                    status = GitHub.Completed,
+                    conclusion = Just GitHub.Failure,
+                    startedAt = Nothing, -- Hydra does not record this information but GitHub still has it
+                    completedAt = completedAt,
+                    output =
+                      Just $
+                        GitHub.CheckRunOutput
+                          { title = "Evaluation failed",
+                            summary = "",
+                            text =
+                              maybe
+                                (errormsg >>= mkEvalErrorSummary)
+                                mkFetchErrorSummary
+                                fetcherrormsg
+                          }
+                  }
+            )
 
   -- Builds
   (Hydra.BuildQueued bid) -> do
@@ -367,6 +416,8 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
     Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
     withGithubFlake flake $ \owner repo hash -> do
       let checkRunName = checkRunPrefix <> job
+      -- A (re)queued build makes its evaluation unfinished again.
+      markAggregateDirty tracker (GroupKey eid owner repo hash)
       reportJob eid job False owner repo hash $
         whenStatusOrJob filterJobs Nothing (BridgeDB.hasPriorReportedFailure conn owner repo hash checkRunName) job $
           pure $
@@ -411,6 +462,8 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
     [(proj, name, eid, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
     withGithubFlake flake $ \owner repo hash -> do
+      -- The dependent builds below belong to the same evaluation.
+      markAggregateDirty tracker (GroupKey eid owner repo hash)
       checkRun <- handleBuildDone eid bid job status (finished == (1 :: Int)) owner repo hash
       depCheckRuns <-
         sequence $
@@ -632,6 +685,23 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
             [eid, jid, eid] ::
             IO [(Int, Int, Text, Int)]
         buildStatuses <- sequence $ rows <&> \(prevEid, bid, job, status) -> handleBuildDone prevEid bid job status True owner repo hash
+        -- The aggregate hydra check-run: from this evaluation's builds, or
+        -- (like the build statuses above) from those of the latest previous
+        -- evaluation that had builds when this one is identical to it.  An
+        -- evaluation with neither is done as soon as it exists.
+        aggregateEval <-
+          query
+            conn
+            "\
+            \SELECT e.id FROM jobsetevals e      \
+            \WHERE e.jobset_id = ? AND e.id <= ? \
+            \  AND (e.id = ? OR e.hasnewbuilds = 1) \
+            \ORDER BY (e.hasnewbuilds = 1) DESC, e.id DESC \
+            \FETCH FIRST ROW ONLY"
+            (jid, eid, eid) ::
+            IO [Only Int]
+        forM_ aggregateEval $ \(Only aggEid) ->
+          markAggregateDirty tracker (GroupKey aggEid owner repo hash)
         pure $ evalStatuses ++ concat buildStatuses
 
     handleBuildDone :: Int -> Hydra.BuildId -> Text -> Int -> Bool -> Text -> Text -> Text -> IO [GitHub.CheckRun]

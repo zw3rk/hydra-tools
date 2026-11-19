@@ -16,6 +16,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef)
 import Data.Set qualified as Set
+import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -24,7 +25,10 @@ import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import Database.PostgreSQL.Simple
 import Debug.Trace (traceShowId)
 import Lib.Bridge (app, hydraClient, hydraClientEnv, statusHandlers)
-import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.CheckRunGroups (CheckRunGroups, GroupTracker, aggregateReconciler, groupFlusher, newGroupTracker, noCheckRunGroups, parseCheckRunGroups)
+import Lib.Bridge.CommitStatus (CommitStatusWorkerConfig (..), commitStatusSchema, commitStatusWorker)
+import Lib.Bridge.Gates (GateWorkerConfig (..), gateSchema, gateWorker)
+import Lib.Bridge.HydraCheck (hydraStateSchema)
 import Lib.Bridge.HydraToGitHub (handleHydraNotification, queueCheckRun, toHydraNotification)
 import Lib.Bridge.JobsetAllowlist (noJobsetAllowlist, parseJobsetAllowlist)
 import Lib.Bridge.JobsetKeepnr (noPrJobsetKeepnr, parsePrJobsetKeepnr)
@@ -288,6 +292,13 @@ main = do
         \  )"
     putStrLn $ "Marked " ++ show superseded ++ " superseded payload(s) as sent."
 
+    -- The aggregate hydra check-run's state, its commit statuses and the
+    -- runs waiting for it (see Lib.Bridge.HydraCheck, Lib.Bridge.CommitStatus
+    -- and Lib.Bridge.Gates).
+    putStrLn "Ensuring github_hydra_state, github_commit_status and github_gate exist..."
+    forM_ (hydraStateSchema ++ commitStatusSchema ++ gateSchema) $ \stmt -> execute_ migConn (fromString stmt)
+    putStrLn "Tables ready."
+
   Async.mapConcurrently_
     id
     $ [ Async.replicateConcurrently_
@@ -310,8 +321,31 @@ main = do
             groupTracker
             (\runs -> broadcastCheckRuns cache runs >> mapM_ (queueCheckRun conn) runs)
             conn,
+        -- Keep unfinished aggregates moving even when their notifications
+        -- were missed (see 'aggregateReconciler').
+        withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn ->
+          aggregateReconciler 300 groupTracker conn,
+        -- Send the hydra commit statuses (for workflows triggered on: status).
+        withReconnect connStr 5 $
+          commitStatusWorker
+            CommitStatusWorkerConfig
+              { endpoint = ghEndpointUrl,
+                userAgent = ghUserAgent,
+                getTokens = getValidGitHubToken',
+                interval = 60
+              },
+        -- Approve or reject the workflow runs waiting for Hydra.
+        withReconnect connStr 5 $
+          gateWorker
+            GateWorkerConfig
+              { publicBase = publicBase,
+                endpoint = ghEndpointUrl,
+                userAgent = ghUserAgent,
+                getTokens = getValidGitHubToken',
+                interval = 60
+              },
         withConnect (ConnectInfo db 5432 db_user db_pass "hydra") $ \conn -> do
-          run port (app allowedOrgs jobsetAllowlist repoFlakeDirs (hceClientEnv env) conn (gitHubKey ghKey)),
+          run port (app allowedOrgs jobsetAllowlist repoFlakeDirs (hceClientEnv env) conn ghKey (gitHubKey ghKey)),
         -- Periodically prune stale notifications for old commits that
         -- have already been superseded by newer evaluations.  Only marks
         -- a payload as sent when a later payload for the same

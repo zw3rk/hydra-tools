@@ -9,6 +9,7 @@ module Lib.Bridge.Source
     validRepoPath,
     flakeSourceUri,
     flakeSourceUriFor,
+    escapeHydraName,
   )
 where
 
@@ -79,3 +80,7 @@ renderSourceUri repo directory sha =
   "github:" <> repo <> "/" <> sha <> maybe "" ("?dir=" <>) encodedDir
   where
     encodedDir = decodeUtf8 . urlEncode False . encodeUtf8 <$> directory
+
+-- | The Hydra project (or jobset) name for a GitHub @owner/repo@ (or ref).
+escapeHydraName :: Text -> Text
+escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
