@@ -28,6 +28,7 @@ import Control.Monad (forM_, forever, void)
 import Control.Monad.Except (MonadError (..))
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson qualified as Aeson
+import Data.ByteString (ByteString)
 import Data.Char (isNumber)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
@@ -38,9 +39,10 @@ import Data.Text qualified as Text
 import Database.PostgreSQL.Simple (Connection)
 import GitHub.Data.Webhooks.Events (CheckRunEvent (..), CheckRunEventAction (..), CheckSuiteEvent (..), CheckSuiteEventAction (..), IssueCommentEvent (..), PullRequestEvent (..), PullRequestEventAction (..), PushEvent (..))
 import GitHub.Data.Webhooks.Payload (HookCheckRun (..), HookCheckSuite (..), HookChecksPullRequest (..), HookChecksPullRequestTarget (..), HookIssueComment (..), HookPullRequest (..), HookRepository (..), HookUser (..), PullRequestTarget (..))
+import Lib.Bridge.Gates (gateHookApp)
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, whenJobsetAllowed)
 import Lib.Bridge.JobsetKeepnr (PrJobsetKeepnr, prJobsetKeepnr)
-import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri)
+import Lib.Bridge.Source (RepoFlakeDirs, escapeHydraName, flakeSourceUri)
 import Lib.GitHub (GitHubKey, SingleHookEndpointAPI)
 import Lib.Hydra (Command, HydraClientEnv)
 import Lib.Hydra qualified as Hydra
@@ -48,27 +50,31 @@ import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (Status (..))
 import Network.URI (parseURI)
-import Servant (Application, Context (..), Handler, Server, (:<|>) (..))
+import Servant (Application, Context (..), Handler, Server, Tagged (..), (:<|>) (..))
 import Servant.Client (BaseUrl (..), ClientEnv (..), ClientError (..), ClientM, ResponseF (..), Scheme (..), mkClientEnv, parseBaseUrl, runClientM, showBaseUrl)
 import Servant.GitHub.Webhook (RepoWebhookEvent)
 import Servant.Server (serveWithContext)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-app :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> GitHubKey -> Application
-app orgs allowlist flakeDirs env conn key =
+-- | The webhook server.  The raw secret is needed as well as the
+-- 'GitHubKey' for the events servant-github-webhook cannot route (see
+-- 'gateHookApp').
+app :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> ByteString -> GitHubKey -> Application
+app orgs allowlist flakeDirs env conn secret key =
   serveWithContext
     (Proxy :: Proxy SingleHookEndpointAPI)
     (key :. EmptyContext)
-    (singleEndpoint orgs allowlist flakeDirs env conn)
+    (singleEndpoint orgs allowlist flakeDirs env conn secret)
 
-singleEndpoint :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> Server SingleHookEndpointAPI
-singleEndpoint orgs allowlist flakeDirs env conn =
+singleEndpoint :: Set Text -> JobsetAllowlist -> RepoFlakeDirs -> ClientEnv -> Connection -> ByteString -> Server SingleHookEndpointAPI
+singleEndpoint orgs allowlist flakeDirs env conn secret =
   (pushHook orgs allowlist flakeDirs conn)
     :<|> issueCommentHook
     :<|> (pullRequestHook orgs allowlist flakeDirs conn)
     :<|> (checkSuiteHook orgs allowlist flakeDirs env conn)
     :<|> (checkRunHook orgs allowlist conn)
+    :<|> Tagged (gateHookApp orgs secret conn)
 
 -- | Check if a repo's org is in the allowed set. Extracts the org from
 -- "org/repo" format and checks membership. Returns True if allowed.
@@ -151,9 +157,6 @@ parseMergeQueueRef ref = do
   prNumber <- readMaybe (Text.unpack prNumberText) :: Maybe Int
 
   return (branchName, prNumber)
-
-escapeHydraName :: Text -> Text
-escapeHydraName = Text.replace "/" "-" . Text.replace "." "-"
 
 issueCommentHook :: RepoWebhookEvent -> ((), IssueCommentEvent) -> Handler ()
 issueCommentHook _ (_, ev) = liftIO $ do
