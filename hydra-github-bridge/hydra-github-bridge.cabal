@@ -138,6 +138,13 @@ test-suite public-url
     main-is:          PublicUrlSpec.hs
     build-depends:    hydra-github-bridge
 
+test-suite hydra-gate
+    import:           common
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          HydraGateSpec.hs
+    build-depends:    hydra-github-bridge
+
 test-suite bridge-status
     import:           common
     type:             exitcode-stdio-1.0
