@@ -20,6 +20,9 @@
 -- Recomputing a group on every build notification would scan the whole
 -- evaluation each time, so notifications only mark the group dirty and
 -- 'groupFlusher' recomputes the dirty groups of an evaluation in one query.
+-- The same query also feeds the aggregate @hydra@ check-run of the
+-- evaluation (see "Lib.Bridge.HydraCheck"), which is tracked for every
+-- repository, grouped or not.
 module Lib.Bridge.CheckRunGroups
   ( CheckRunGroups,
     noCheckRunGroups,
@@ -29,7 +32,9 @@ module Lib.Bridge.CheckRunGroups
     GroupTracker,
     newGroupTracker,
     markGroupDirty,
+    markAggregateDirty,
     groupFlusher,
+    aggregateReconciler,
   )
 where
 
@@ -48,6 +53,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), query)
+import Lib.Bridge.HydraCheck (aggregateCheckRuns, unfinishedHydraEvals)
 import Lib.Bridge.PublicUrl (hydraDetailsUrl)
 import Lib.GitHub qualified as GitHub
 import Network.HTTP.Types.URI (urlEncode)
@@ -90,16 +96,45 @@ data GroupKey = GroupKey
   }
   deriving (Eq, Ord, Show)
 
+-- | What is out of date for an evaluation: some of its groups, and/or its
+-- aggregate @hydra@ check-run.
+data Dirty = Dirty (Set Text) Bool
+
+instance Semigroup Dirty where
+  Dirty g a <> Dirty g' a' = Dirty (g <> g') (a || a')
+
 -- | Groups whose check-runs are out of date.  This is only held in memory;
--- after a restart a group is brought up to date by its next notification.
-newtype GroupTracker = GroupTracker (IORef (Map GroupKey (Set Text)))
+-- after a restart a group is brought up to date by its next notification,
+-- and an unfinished aggregate by 'aggregateReconciler'.
+newtype GroupTracker = GroupTracker (IORef (Map GroupKey Dirty))
 
 newGroupTracker :: IO GroupTracker
 newGroupTracker = GroupTracker <$> newIORef Map.empty
 
 markGroupDirty :: GroupTracker -> GroupKey -> Text -> IO ()
 markGroupDirty (GroupTracker ref) key grp =
-  atomicModifyIORef' ref $ \dirty -> (Map.insertWith Set.union key (Set.singleton grp) dirty, ())
+  atomicModifyIORef' ref $ \dirty -> (Map.insertWith (<>) key (Dirty (Set.singleton grp) False) dirty, ())
+
+-- | Mark the aggregate @hydra@ check-run of an evaluation out of date.
+markAggregateDirty :: GroupTracker -> GroupKey -> IO ()
+markAggregateDirty (GroupTracker ref) key =
+  atomicModifyIORef' ref $ \dirty -> (Map.insertWith (<>) key (Dirty Set.empty True) dirty, ())
+
+-- | Every @interval@ seconds, mark the aggregate of every evaluation that is
+-- still unfinished according to @github_hydra_state@ out of date, for the
+-- flusher to recompute.  Notifications only reach the latest evaluation a
+-- build belongs to, and the tracker is lost on restart; this keeps a
+-- pending @hydra@ check-run (and the jobs gated on it) from being stranded.
+aggregateReconciler :: Int -> GroupTracker -> Connection -> IO ()
+aggregateReconciler interval tracker conn = forever $ do
+  threadDelay (interval * 1000000)
+  ( do
+      evals <- unfinishedHydraEvals conn
+      forM_ evals $ \(evalId, owner, repo, sha) -> markAggregateDirty tracker (GroupKey evalId owner repo sha)
+    )
+    `catch` \e -> case fromException e of
+      Just (async :: SomeAsyncException) -> throwIO async
+      Nothing -> putStrLn $ "ERROR: hydra aggregate reconcile: " ++ displayException (e :: SomeException)
 
 -- | Every @interval@ seconds, recompute the check-runs of the groups marked
 -- dirty since the last flush and pass them to @report@.
@@ -107,14 +142,14 @@ groupFlusher :: Int -> Text -> Text -> CheckRunGroups -> GroupTracker -> ([GitHu
 groupFlusher interval publicBase checkRunPrefix groups (GroupTracker ref) report conn = forever $ do
   threadDelay (interval * 1000000)
   dirty <- atomicModifyIORef' ref (Map.empty,)
-  forM_ (Map.toList dirty) $ \(key, grps) ->
-    (groupCheckRuns publicBase checkRunPrefix groups key grps conn >>= report)
+  forM_ (Map.toList dirty) $ \(key, Dirty grps aggregate) ->
+    (groupCheckRuns publicBase checkRunPrefix groups key grps aggregate conn >>= report)
       `catch` \e -> case fromException e of
         Just (async :: SomeAsyncException) -> throwIO async
         Nothing -> putStrLn $ "ERROR: check-run groups " ++ show key ++ ": " ++ displayException (e :: SomeException)
 
-groupCheckRuns :: Text -> Text -> CheckRunGroups -> GroupKey -> Set Text -> Connection -> IO [GitHub.CheckRun]
-groupCheckRuns publicBase checkRunPrefix groups key grps conn = do
+groupCheckRuns :: Text -> Text -> CheckRunGroups -> GroupKey -> Set Text -> Bool -> Connection -> IO [GitHub.CheckRun]
+groupCheckRuns publicBase checkRunPrefix groups key grps aggregate conn = do
   rows <-
     query
       conn
@@ -131,7 +166,11 @@ groupCheckRuns publicBase checkRunPrefix groups key grps conn = do
             Just grp <- [jobGroup groups key.gkOwner key.gkRepo job],
             grp `Set.member` grps
           ]
-  pure [GitHub.CheckRun key.gkOwner key.gkRepo (groupPayload grp builds) | (grp, builds) <- Map.toList members]
+  aggregateRuns <-
+    if aggregate
+      then aggregateCheckRuns publicBase checkRunPrefix conn key.gkEval key.gkOwner key.gkRepo key.gkHeadSha rows
+      else pure []
+  pure $ [GitHub.CheckRun key.gkOwner key.gkRepo (groupPayload grp builds) | (grp, builds) <- Map.toList members] ++ aggregateRuns
   where
     groupPayload grp builds =
       let finished = [b | b@(_, 1, _, _, _) <- builds]

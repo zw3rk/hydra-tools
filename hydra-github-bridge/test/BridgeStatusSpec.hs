@@ -20,9 +20,12 @@ import Data.Aeson (object, toJSON, (.=))
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (sort)
+import Data.String (fromString)
 import Data.Text (Text)
-import Database.PostgreSQL.Simple (Connection, close, connectPostgreSQL, execute, execute_)
+import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute, execute_, query, query_)
+import Lib.Bridge.CommitStatus (commitStatusSchema)
 import Lib.Bridge.DB qualified as BridgeDB
+import Lib.Bridge.HydraCheck
 import Lib.Bridge.HydraToGitHub (EmitDecision (..), decideEmit, hasRequiredKeyword, whenStatusOrJob)
 import Lib.GitHub.Client (CheckRunConclusion (..), conclusionText, failureConclusions)
 import System.Environment (getEnv)
@@ -216,6 +219,54 @@ retryTransitions = withBridgeDb $ \conn -> do
     ["failed", "queued", "started", "success", "unfiltered", "required"]
     =<< readIORef emitted
 
+-- The aggregate hydra state: transitions read in the same statement as the
+-- upsert, older evaluations never overriding newer ones, and commit
+-- statuses queued only when the outcome changes (newest state per commit).
+hydraStateTransitions :: IO ()
+hydraStateTransitions = withBridgeDb $ \conn -> do
+  void $ execute_ conn "DROP TABLE IF EXISTS github_hydra_state"
+  void $ execute_ conn "DROP TABLE IF EXISTS github_commit_status"
+  mapM_ (execute_ conn . fromString) (hydraStateSchema ++ commitStatusSchema)
+  let summary o t = EvalSummary o t "" [] Nothing Nothing
+      statusOf sha = do
+        rows <- query conn "SELECT state, version, sent IS NULL, description FROM github_commit_status WHERE owner = 'o' AND repo = 'r' AND head_sha = ? AND context = 'hydra'" (Only (sha :: Text)) :: IO [(Text, Int, Bool, Text)]
+        pure rows
+      queue sha desc t = queueHydraStatus conn "" "o" "r" sha (Just "https://hydra.example/eval/5") desc t >> pure t
+
+  started <- queue "c1" "Evaluating" =<< recordEvalStarted conn "o" "r" "c1"
+  assertEqual "first start is a transition" (Just (Transition Nothing HydraPending)) started
+  assertEqual "pending status queued" [("pending", 1, True, "Evaluating")] =<< statusOf "c1"
+
+  assertEqual "re-check of the same commit changes nothing" Nothing =<< recordEvalStarted conn "o" "r" "c1"
+
+  progress <- queue "c1" "1 of 2 jobs finished" =<< recordEvalSummary conn "o" "r" "c1" 5 (summary HydraPending "1 of 2 jobs finished")
+  assertEqual "progress is recorded" (Just (Transition (Just HydraPending) HydraPending)) progress
+  assertEqual "progress posts no status" [("pending", 1, True, "Evaluating")] =<< statusOf "c1"
+
+  done <- queue "c1" "2 jobs succeeded" =<< recordEvalSummary conn "o" "r" "c1" 5 (summary HydraSucceeded "2 jobs succeeded")
+  assertEqual "finishing is a transition" (Just (Transition (Just HydraPending) HydraSucceeded)) done
+  assertEqual "success replaces the queued pending" [("success", 2, True, "2 jobs succeeded")] =<< statusOf "c1"
+
+  assertEqual "eval_started does not reset a finished commit" Nothing =<< recordEvalStarted conn "o" "r" "c1"
+  assertEqual "an older evaluation never overrides" Nothing =<< recordEvalSummary conn "o" "r" "c1" 4 (summary HydraFailed "1 of 1 jobs failed")
+  assertEqual "eval_failed does not override an evaluation" Nothing =<< recordEvalFailed conn "o" "r" "c1"
+  assertEqual "same summary again changes nothing" Nothing =<< recordEvalSummary conn "o" "r" "c1" 5 (summary HydraSucceeded "2 jobs succeeded")
+
+  -- Mark it sent, then a restart sends the commit back to pending.
+  void $ execute_ conn "UPDATE github_commit_status SET sent = NOW()"
+  restarted <- queue "c1" "1 of 2 jobs finished" =<< recordEvalSummary conn "o" "r" "c1" 5 (summary HydraPending "1 of 2 jobs finished")
+  assertEqual "restart is a transition back" (Just (Transition (Just HydraSucceeded) HydraPending)) restarted
+  assertEqual "pending queued again, unsent" [("pending", 3, True, "1 of 2 jobs finished")] =<< statusOf "c1"
+
+  failedEval <- queue "c2" "Evaluation failed" =<< recordEvalFailed conn "o" "r" "c2"
+  assertEqual "eval failure of a new commit" (Just (Transition Nothing HydraFailed)) failedEval
+  assertEqual "failure status" [("failure", 1, True, "Evaluation failed")] =<< statusOf "c2"
+
+  assertEqual
+    "state rows"
+    [("c1", Just 5, "pending"), ("c2", Nothing, "failure")]
+    =<< (query_ conn "SELECT head_sha, eval_id, outcome FROM github_hydra_state ORDER BY head_sha" :: IO [(Text, Maybe Int, Text)])
+
 withBridgeDb :: (Connection -> IO ()) -> IO ()
 withBridgeDb action = do
   -- This must name the throwaway cluster created by run-sync-source.sh.
@@ -235,4 +286,6 @@ main = do
   putStrLn "Retry transition and filtering regressions passed"
   failedEvalJobs
   putStrLn "Failed-eval cleanup regressions passed"
+  hydraStateTransitions
+  putStrLn "Hydra state transition and commit status regressions passed"
   putStrLn "All bridge-status regressions passed"

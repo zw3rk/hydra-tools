@@ -17,6 +17,8 @@
 --   3. Compares against enabled @pullrequest-*@ jobsets in Hydra
 --   4. Refreshes stale immutable PR sources without changing jobset settings
 --   5. Queues create/disable/evaluation commands via the existing pipeline
+--   6. Records workflow runs waiting on the @hydra@ environment whose
+--      @deployment_protection_rule@ webhook was missed ("Lib.Bridge.Gates")
 module Lib.Bridge.Sync
   ( SyncConfig (..),
     SyncStats (..),
@@ -54,9 +56,10 @@ import GitHub.REST
     StdMethod (..),
   )
 import GitHub.REST.PageLinks (PageLinks)
+import Lib.Bridge.Gates (discoverWaitingGates)
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
-import Lib.Exception (tryNonAsync)
+import Lib.Exception (briefHttpError, httpStatusOf, tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
     TokenLease,
@@ -296,6 +299,22 @@ reconcileProject cfg conn (project, org, repo) = do
   -- but only after its missing jobsets were created and stale ones disabled.
   refreshed <- sum <$> mapM (refreshJobsetSource cfg conn project) refreshes
 
+  -- Waiting runs are recovered independently of the PR sync: an
+  -- installation that has not granted actions:read only loses this step.
+  gates <- tryNonAsync $ do
+    ghCfg <- orgRestConfig cfg org
+    discoverWaitingGates ghCfg conn org repo
+  case gates of
+    Right 0 -> pure ()
+    Right n -> putStrLn $ "[sync] " <> Text.unpack repoFullName <> ": recorded " <> show n <> " waiting run(s) for the hydra gate"
+    Left (e :: SomeException)
+      -- 403: the installation has not granted actions:read (the gate's
+      -- permissions; the token fallback already logs that), or the repo has
+      -- Actions disabled.  Either way there is nothing to recover, every
+      -- sync, so say nothing.
+      | httpStatusOf e == Just 403 -> pure ()
+      | otherwise -> putStrLn $ "[sync] " <> Text.unpack repoFullName <> ": could not list waiting runs: " <> briefHttpError e
+
   pure
     SyncStats
       { ssProjectsSynced = 1,
@@ -317,6 +336,12 @@ shouldSkipDraft repoFullName pr =
 -- | Fetch all open PRs for a repo, paginating through all results.
 fetchOpenPRs :: SyncConfig -> Text -> Text -> IO [PRInfo]
 fetchOpenPRs cfg org repo = do
+  ghCfg <- orgRestConfig cfg org
+  fetchAllPages ghCfg org repo 1
+
+-- | A GitHub REST configuration with the installation token for @org@.
+orgRestConfig :: SyncConfig -> Text -> IO GitHubRestConfig
+orgRestConfig cfg org = do
   tokens <- scGetTokens cfg
   let owner = Text.unpack org
   case find ((owner ==) . fst) tokens of
@@ -331,8 +356,7 @@ fetchOpenPRs cfg org repo = do
                 userAgent = scUserAgent cfg,
                 apiVersion = gitHubApiVersion
               }
-      ghCfg <- gitHubRestConfig settings (scEndpoint cfg)
-      fetchAllPages ghCfg org repo 1
+      gitHubRestConfig settings (scEndpoint cfg)
 
 -- | Paginated fetch of open PRs from the GitHub REST API.
 fetchAllPages :: GitHubRestConfig -> Text -> Text -> Int -> IO [PRInfo]

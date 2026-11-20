@@ -385,19 +385,33 @@ fetchInstallations ghEndpointUrl appId appKeyFile ghUserAgent = do
       response
 
 fetchAppInstallationToken :: Text -> Int -> FilePath -> ByteString -> Int -> IO TokenLease
-fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId = do
-  -- Try extended permissions first (needed for PR sync on private repos).
-  -- If the installation doesn't grant them, fall back to basic permissions.
-  result <- tryNonAsync $ requestToken extendedPermissions
-  case result of
-    Right lease -> return lease
-    Left (_e :: SomeException) -> do
-      putStrLn $
-        "Extended permissions not available for installation "
-          <> show appInstallationId
-          <> ", falling back to basic permissions"
-      requestToken basicPermissions
+fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstallationId =
+  -- Ask for the most an installation may have granted, falling back while it
+  -- has not (yet) accepted them:
+  --   gate permissions: review runs waiting on the hydra environment
+  --     (deployments:write) and list them (actions:read), see Lib.Bridge.Gates;
+  --   extended permissions: PR sync on private repos;
+  --   basic permissions: check-runs and statuses.
+  tryInOrder
+    [ ("gate", gatePermissions),
+      ("extended", extendedPermissions),
+      ("basic", basicPermissions)
+    ]
   where
+    tryInOrder [] = fail "no permission set to request"
+    tryInOrder [(_, perms)] = requestToken perms
+    tryInOrder ((label, perms) : rest) = do
+      result <- tryNonAsync $ requestToken perms
+      case result of
+        Right lease -> return lease
+        Left (_e :: SomeException) -> do
+          putStrLn $
+            "Permissions ("
+              <> label
+              <> ") not available for installation "
+              <> show appInstallationId
+              <> ", falling back"
+          tryInOrder rest
     basicPermissions =
       [ "checks" := ("write" :: String),
         "statuses" := ("write" :: String)
@@ -406,6 +420,11 @@ fetchAppInstallationToken ghEndpointUrl appId appKeyFile ghUserAgent appInstalla
       basicPermissions
         ++ [ "pull_requests" := ("read" :: String),
              "contents" := ("read" :: String)
+           ]
+    gatePermissions =
+      extendedPermissions
+        ++ [ "deployments" := ("write" :: String),
+             "actions" := ("read" :: String)
            ]
     requestToken perms = do
       signer <- loadSigner appKeyFile
