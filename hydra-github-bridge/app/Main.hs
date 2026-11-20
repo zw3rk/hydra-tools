@@ -11,10 +11,12 @@ module Main where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async as Async
+import Control.Exception (SomeException)
 import Control.Monad
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as C8
 import Data.IORef (IORef, newIORef)
+import Data.Maybe (catMaybes)
 import Data.Set qualified as Set
 import Data.String (fromString)
 import Data.String.Conversions (cs)
@@ -36,6 +38,7 @@ import Lib.Bridge.PublicUrl (normalizePublicBase)
 import Lib.Bridge.Source (parseRepoFlakeDirs)
 import Lib.Bridge.Sync (SyncConfig (..), syncLoop)
 import Lib.Connection (guardedGetNotification, mkConnectionString, withReconnect)
+import Lib.Exception (briefHttpError, tryNonAsync)
 import Lib.GitHub (TokenLease (..), fetchAppInstallationToken, fetchInstallations, gitHubKey)
 import Lib.GitHub.TokenCache (refreshTokensAt, retainConfiguredOwners)
 import Lib.Hydra (HydraClientEnv (..))
@@ -113,10 +116,25 @@ fetchGitHubTokens ghAppId ghAppKeyFile ghEndpointUrl ghUserAgent ghAppInstallIds
         <> ")"
         <> if configured inst then "" else " skipped: not in GITHUB_APP_INSTALL_IDS"
 
-  forM ghAppInstalls $ \(owner, installId) -> do
-    lease <- fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
-    Text.putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> Text.pack (show lease.expiry)
-    return (Text.unpack owner, lease)
+  -- One installation that cannot issue a token (an owner suspended the
+  -- App: 403 "This installation has been suspended") must not stop the
+  -- bridge for every other owner.  Skip it; its repos are then handled like
+  -- an owner without a token ("No GitHub token for org ...").
+  fmap catMaybes $ forM ghAppInstalls $ \(owner, installId) -> do
+    result <- tryNonAsync $ fetchAppInstallationToken ghEndpointUrl ghAppId ghAppKeyFile ghUserAgent installId
+    case result of
+      Left (e :: SomeException) -> do
+        Text.putStrLn $
+          "Skipping installation "
+            <> owner
+            <> " ("
+            <> Text.pack (show installId)
+            <> "): could not fetch a token: "
+            <> Text.pack (briefHttpError e)
+        return Nothing
+      Right lease -> do
+        Text.putStrLn $ "Fetched new GitHub App installation token valid for " <> owner <> " until " <> Text.pack (show lease.expiry)
+        return $ Just (Text.unpack owner, lease)
 
 getValidGitHubToken ::
   IORef [(String, TokenLease)] ->
