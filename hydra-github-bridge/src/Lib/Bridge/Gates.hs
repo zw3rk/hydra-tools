@@ -85,12 +85,10 @@ import Lib.Bridge.HydraCheck (HydraOutcome (..), HydraState (..), lookupHydraSta
 import Lib.Bridge.PublicUrl (hydraDetailsUrl)
 import Lib.Bridge.Source (escapeHydraName)
 import Lib.Connection (guardedGetNotification)
-import Lib.Exception (tryNonAsync)
+import Lib.Exception (briefHttpError, httpStatusOf, tryNonAsync)
 import Lib.GitHub.Client (GitHubRestConfig, TokenLease, gitHubApiVersion, gitHubRestConfig, queryGitHubRestPage)
 import Lib.GitHub.Client qualified as GHClient
-import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Types (status200, status400, status401, status404)
-import Network.HTTP.Types.Status (statusCode)
 import Network.Wai (Application, requestHeaders, responseLBS, strictRequestBody)
 
 -- | The environment name the sync looks for when recovering missed
@@ -460,7 +458,7 @@ processGates cfg conn = do
         res <- reviewRun cfg owner repo runId env Nothing msg
         case res of
           Right () -> pure ()
-          Left e -> putStrLn $ "Gate status report failed: " <> Text.unpack (owner <> "/" <> repo) <> " run " <> show runId <> ": " <> displayException e
+          Left e -> putStrLn $ "Gate status report failed: " <> Text.unpack (owner <> "/" <> repo) <> " run " <> show runId <> ": " <> briefHttpError e
         void $ execute conn "UPDATE github_gate SET reported = ? WHERE id = ?" (msg, gateId)
       GateApprove msg ->
         review (Just "approved") msg $ resolve gateId owner repo runId "approved" msg
@@ -477,18 +475,13 @@ processGates cfg conn = do
     -- permissions, GitHub errors) is retried on the next pass.
     reviewFailed :: Int -> Text -> Text -> Int -> SomeException -> IO ()
     reviewFailed gateId owner repo runId e
-      | Just code <- httpStatus e,
+      | Just code <- httpStatusOf e,
         code `elem` [404, 410, 422] = do
           putStrLn $ "Gate gone (HTTP " <> show code <> "): " <> Text.unpack (owner <> "/" <> repo) <> " run " <> show runId
           void $ execute conn "UPDATE github_gate SET resolved_at = NOW(), outcome = ? WHERE id = ?" ("gone: HTTP " <> tshow code, gateId)
       | otherwise = do
-          putStrLn $ "Gate review failed: " <> Text.unpack (owner <> "/" <> repo) <> " run " <> show runId <> ": " <> displayException e
+          putStrLn $ "Gate review failed: " <> Text.unpack (owner <> "/" <> repo) <> " run " <> show runId <> ": " <> briefHttpError e
           void $ execute conn "UPDATE github_gate SET tries = tries + 1 WHERE id = ?" (Only gateId)
-
-    httpStatus :: SomeException -> Maybe Int
-    httpStatus e = case fromException e of
-      Just (HTTP.HttpExceptionRequest _ (HTTP.StatusCodeException resp _)) -> Just (statusCode (HTTP.responseStatus resp))
-      _ -> Nothing
 
 -- | Hydra will not build @sha@ for pull request @n@ when the PR's jobset
 -- now points at another commit.
