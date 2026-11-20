@@ -49,7 +49,7 @@ import GitHub.REST
   )
 import GitHub.REST.PageLinks (PageLinks)
 import Lib.Connection (guardedGetNotification)
-import Lib.Exception (tryNonAsync)
+import Lib.Exception (briefHttpError, tryNonAsync)
 import Lib.GitHub.Client (TokenLease, gitHubApiVersion, gitHubRestConfig, queryGitHubRestPage)
 import Lib.GitHub.Client qualified as GHClient
 
@@ -143,7 +143,7 @@ sendPending cfg conn = do
             \WHERE owner = ? AND repo = ? AND head_sha = ? AND context = ? AND version = ?"
             (owner, repo, sha, context, version)
       Left e -> do
-        putStrLn $ "STATUS FAIL [" <> Text.unpack (owner <> "/" <> repo <> "/" <> sha) <> "] " <> Text.unpack context <> ": " <> displayException e
+        putStrLn $ "STATUS FAIL [" <> Text.unpack (owner <> "/" <> repo <> "/" <> sha) <> "] " <> Text.unpack context <> ": " <> briefHttpError e
         void $
           execute
             conn

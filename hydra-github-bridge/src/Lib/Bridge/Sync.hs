@@ -59,7 +59,7 @@ import GitHub.REST.PageLinks (PageLinks (..))
 import Lib.Bridge.Gates (discoverWaitingGates)
 import Lib.Bridge.JobsetAllowlist (JobsetAllowlist, isJobsetAllowed)
 import Lib.Bridge.Source (RepoFlakeDirs, flakeSourceUri, flakeSourceUriFor)
-import Lib.Exception (tryNonAsync)
+import Lib.Exception (briefHttpError, httpStatusOf, tryNonAsync)
 import Lib.GitHub.Client
   ( GitHubRestConfig,
     TokenLease,
@@ -307,7 +307,13 @@ reconcileProject cfg conn (project, org, repo) = do
   case gates of
     Right 0 -> pure ()
     Right n -> putStrLn $ "[sync] " <> Text.unpack repoFullName <> ": recorded " <> show n <> " waiting run(s) for the hydra gate"
-    Left (e :: SomeException) -> putStrLn $ "[sync] " <> Text.unpack repoFullName <> ": could not list waiting runs: " <> show e
+    Left (e :: SomeException)
+      -- 403: the installation has not granted actions:read (the gate's
+      -- permissions; the token fallback already logs that), or the repo has
+      -- Actions disabled.  Either way there is nothing to recover, every
+      -- sync, so say nothing.
+      | httpStatusOf e == Just 403 -> pure ()
+      | otherwise -> putStrLn $ "[sync] " <> Text.unpack repoFullName <> ": could not list waiting runs: " <> briefHttpError e
 
   pure
     SyncStats
