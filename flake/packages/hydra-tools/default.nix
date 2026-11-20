@@ -20,7 +20,7 @@
         (final: prev: {
           hydra-tools = final.haskell-nix.project' {
             src = ../../../.;
-            compiler-nix-name = "ghc9122";
+            compiler-nix-name = "ghc912";
             modules = [
               {
                 packages.hydra-github-bridge.components.tests.sync-source.testWrapper = [
