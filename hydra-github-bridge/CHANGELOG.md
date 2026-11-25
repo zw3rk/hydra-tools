@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+* Deliver checks and commit statuses to the repository in
+  `gf_org_project_map`, not the owner parsed from the flake URI. A fork
+  pull request still fetches `github:<head-owner>/<repo>/<sha>`. The
+  checks are posted on the base repository, which is the one the pull
+  request shows and the installation can write. A project with no
+  mapping keeps the flake repository.
 * New aggregate `hydra` check-run per commit (with the `CHECK_RUN_PREFIX`).
   It is in progress until the evaluation has finished and none of its builds
   is unfinished, then succeeds when the evaluation had no errors and every

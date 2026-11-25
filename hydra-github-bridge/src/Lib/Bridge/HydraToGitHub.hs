@@ -20,6 +20,7 @@ module Lib.Bridge.HydraToGitHub
     EmitDecision (..),
     decideEmit,
     hasRequiredKeyword,
+    notificationTarget,
     whenStatusOrJob,
   )
 where
@@ -289,9 +290,59 @@ whenStatusOrJob filterEnabled status priorFailureSentIO job action
           then action
           else Text.putStrLn ("Ignoring job: " <> job) >> pure []
 
-withGithubFlake :: Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
-withGithubFlake flake action
-  | Just (owner, repo, hash) <- parseGitHubFlakeURI flake = action owner repo hash
+-- | Repository that receives a jobset's GitHub checks and commit statuses.
+--
+-- The first argument is the @gf_org_project_map@ row for the Hydra project:
+-- the base repository whose pull request shows the checks, and the account
+-- the GitHub App installation can write. The second is the owner and repo
+-- parsed from the flake URI. A fork pull request's flake names the head
+-- repository so Nix can fetch the commit; checks posted there are not shown
+-- on the base pull request. An absent or blank mapping keeps the flake
+-- repository, which is the same repository for a same-repo pull request.
+notificationTarget :: Maybe (Text, Text) -> (Text, Text) -> (Text, Text)
+notificationTarget (Just mapped@(org, repo)) flakeRepo
+  | Text.null org || Text.null repo = flakeRepo
+  | otherwise = mapped
+notificationTarget Nothing flakeRepo = flakeRepo
+
+-- | The SHA comes from the flake. The owner and repo come from
+-- @gf_org_project_map@ when this Hydra project has a row. A missing table
+-- or a failed lookup keeps the flake repository so notifications still flow.
+lookupMappedRepo :: Connection -> Text -> (Text, Text) -> IO (Text, Text)
+lookupMappedRepo conn project flakeRepo = do
+  result <-
+    tryNonAsync
+      ( query
+          conn
+          "SELECT org_name, repo_name FROM gf_org_project_map WHERE project_name = ?"
+          (Only project) ::
+          IO [(Text, Text)]
+      )
+  case result of
+    Right [mapped] -> pure (notificationTarget (Just mapped) flakeRepo)
+    Right [] -> pure flakeRepo
+    Right rows -> do
+      Text.putStrLn $
+        "Ambiguous gf_org_project_map for "
+          <> project
+          <> " ("
+          <> tshow (length rows)
+          <> " rows); delivering to the flake repository"
+      pure flakeRepo
+    Left err -> do
+      Text.putStrLn $
+        "Could not query gf_org_project_map for "
+          <> project
+          <> ": "
+          <> Text.pack (displayException err)
+          <> "; delivering to the flake repository"
+      pure flakeRepo
+
+withGithubFlake :: Connection -> Text -> Text -> (Text -> Text -> Text -> IO [GitHub.CheckRun]) -> IO [GitHub.CheckRun]
+withGithubFlake conn project flake action
+  | Just (flakeOwner, flakeRepo, hash) <- parseGitHubFlakeURI flake = do
+      (owner, repo) <- lookupMappedRepo conn project (flakeOwner, flakeRepo)
+      action owner repo hash
   | "github:" `Text.isPrefixOf` flake
       || "git+https://github.com/" `Text.isPrefixOf` flake =
       Text.putStrLn ("Failed to parse GitHub flake: " <> flake) >> pure []
@@ -324,7 +375,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.EvalStarted jid) -> do
     [(proj, name, flake, triggertime)] <- query conn "select project, name, flake, triggertime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Started (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow flake
-    withGithubFlake flake $ \owner repo hash -> do
+    withGithubFlake conn proj flake $ \owner repo hash -> do
       started <- recordEvalStarted conn owner repo hash
       let jobsetUrl = hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)
           hydraStarted = isJust started
@@ -364,7 +415,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.EvalFailed jid) -> do
     [(proj, name, flake, fetcherrormsg, errormsg, errortime)] <- query conn "select project, name, flake, fetcherrormsg, errormsg, errortime from jobsets where id = ?" (Only jid)
     Text.putStrLn $ "Eval Failed (" <> tshow jid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> tshow (parseGitHubFlakeURI flake)
-    withGithubFlake flake $ \owner repo hash -> do
+    withGithubFlake conn proj flake $ \owner repo hash -> do
       failedEval <- recordEvalFailed conn owner repo hash
       let hydraFailed = isJust failedEval
       queueHydraStatus conn checkRunPrefix owner repo hash (Just $ hydraDetailsUrl publicBase ("/jobset/" <> proj <> "/" <> name)) "Evaluation failed" failedEval
@@ -414,7 +465,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.BuildQueued bid) -> do
     [(proj, name, eid, flake, job, desc)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Queued (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-    withGithubFlake flake $ \owner repo hash -> do
+    withGithubFlake conn proj flake $ \owner repo hash -> do
       let checkRunName = checkRunPrefix <> job
       -- A (re)queued build makes its evaluation unfinished again.
       markAggregateDirty tracker (GroupKey eid owner repo hash)
@@ -437,7 +488,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.BuildStarted bid) -> do
     [(proj, name, eid, flake, job, desc, starttime)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.starttime" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Started (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-    withGithubFlake flake $ \owner repo hash -> do
+    withGithubFlake conn proj flake $ \owner repo hash -> do
       let checkRunName = checkRunPrefix <> job
       reportJob eid job False owner repo hash $
         whenStatusOrJob filterJobs Nothing (BridgeDB.hasPriorReportedFailure conn owner repo hash checkRunName) job $
@@ -461,7 +512,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
   (Hydra.BuildFinished bid depBids) -> do
     [(proj, name, eid, flake, job, desc, finished, status)] <- query conn ("select j.project, j.name, e.id, e.flake, b.job, b.description, b.finished, b.buildstatus" <> sqlFromBuild) (Only bid)
     Text.putStrLn $ "Build Finished (" <> tshow bid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> (job :: Text) <> "(" <> maybe "" id (desc :: Maybe Text) <> ")" <> " " <> tshow (parseGitHubFlakeURI flake)
-    withGithubFlake flake $ \owner repo hash -> do
+    withGithubFlake conn proj flake $ \owner repo hash -> do
       -- The dependent builds below belong to the same evaluation.
       markAggregateDirty tracker (GroupKey eid owner repo hash)
       checkRun <- handleBuildDone eid bid job status (finished == (1 :: Int)) owner repo hash
@@ -518,7 +569,7 @@ handleHydraNotification conn publicBase stateDir checkRunPrefix filterJobs group
           (Only eid)
       [(flake', timestamp, checkouttime, evaltime)] <- query conn "select flake, timestamp, checkouttime, evaltime from jobsetevals where id = ?" (Only eid) :: IO [(Text, Int, Int, Int)]
       Text.putStrLn $ "Eval " <> eventName <> " (" <> tshow jid <> ", " <> tshow eid <> "): " <> (proj :: Text) <> ":" <> (name :: Text) <> " " <> flake <> " eval for: " <> flake'
-      withGithubFlake flake' $ \owner repo hash -> do
+      withGithubFlake conn proj flake' $ \owner repo hash -> do
         let startedAt = posixSecondsToUTCTime . secondsToNominalDiffTime $ fromIntegral timestamp
             fetchCompletedAt = addUTCTime (fromIntegral checkouttime) startedAt
             evalCompletedAt = addUTCTime (fromIntegral evaltime) fetchCompletedAt

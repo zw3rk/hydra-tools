@@ -26,7 +26,7 @@ import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreS
 import Lib.Bridge.CommitStatus (commitStatusSchema)
 import Lib.Bridge.DB qualified as BridgeDB
 import Lib.Bridge.HydraCheck
-import Lib.Bridge.HydraToGitHub (EmitDecision (..), decideEmit, hasRequiredKeyword, whenStatusOrJob)
+import Lib.Bridge.HydraToGitHub (EmitDecision (..), decideEmit, hasRequiredKeyword, notificationTarget, whenStatusOrJob)
 import Lib.GitHub.Client (CheckRunConclusion (..), conclusionText, failureConclusions)
 import System.Environment (getEnv)
 
@@ -78,6 +78,15 @@ purePolicy = do
   assertEqual "quiet action-required defers" CheckPriorFailure (decideEmit (Just ActionRequired) quietJob)
   assertEqual "quiet skipped defers" CheckPriorFailure (decideEmit (Just Skipped) quietJob)
   assertEqual "quiet no-status defers" CheckPriorFailure (decideEmit Nothing quietJob)
+
+  -- Fork PRs fetch from the head repo and report on the mapped base repo.
+  let forkFlake = ("angerman", "simplex-chat")
+      baseRepo = ("simplex-chat", "simplex-chat")
+  assertEqual "fork PR reports on the mapped base repo" baseRepo (notificationTarget (Just baseRepo) forkFlake)
+  assertEqual "same-repo PR stays on that repo" baseRepo (notificationTarget (Just baseRepo) baseRepo)
+  assertEqual "missing map keeps the flake repo" forkFlake (notificationTarget Nothing forkFlake)
+  assertEqual "blank org keeps the flake repo" forkFlake (notificationTarget (Just ("", "simplex-chat")) forkFlake)
+  assertEqual "blank repo keeps the flake repo" forkFlake (notificationTarget (Just ("simplex-chat", "")) forkFlake)
 
   -- Single source of truth: encoding and failure list cannot drift.
   assertEqual "failure list" [Failure, Cancelled, Stale, TimedOut] failureConclusions
